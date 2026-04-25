@@ -1,0 +1,1144 @@
+"use client";
+
+import * as React from "react";
+import { toast } from "sonner";
+import { ChevronLeft, ChevronRight, Loader2, Mail, Send, Server, Trash2, X } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { cn } from "@/lib/utils";
+import { ServerIpPanel } from "./server-ip-panel";
+import {
+  deleteSmtpServer,
+  listSmtpServers,
+  saveSmtpServer,
+  sendSmtpTestEmail,
+  sendTestEmailFromSaved,
+  testSmtpConnection,
+  type SavedSmtpRow,
+  type SmtpProvider,
+} from "@/app/actions/smtp";
+
+type PresetId = "gmail" | "yahoo" | "outlook";
+
+type PresetDef = {
+  id: PresetId;
+  label: string;
+  host: string;
+  port: number;
+  secure: boolean;
+  hint: string;
+  /** Provider-specific guide (shown once the preset is selected). */
+  appPasswordHelp: { url: string; text: string };
+};
+
+const PRESETS: readonly PresetDef[] = [
+  {
+    id: "gmail",
+    label: "Gmail",
+    host: "smtp.gmail.com",
+    port: 587,
+    secure: true,
+    hint: "smtp.gmail.com · 587 · STARTTLS",
+    appPasswordHelp: {
+      url: "https://myaccount.google.com/apppasswords",
+      text:
+        "Gmail requires an App Password. Enable 2-Step Verification on your Google account, " +
+        "then generate a 16-character App Password and paste it below — not your regular Gmail password.",
+    },
+  },
+  {
+    id: "yahoo",
+    label: "Yahoo",
+    host: "smtp.mail.yahoo.com",
+    port: 587,
+    secure: true,
+    hint: "smtp.mail.yahoo.com · 587 · STARTTLS",
+    appPasswordHelp: {
+      url: "https://login.yahoo.com/account/security",
+      text:
+        "Yahoo requires an App Password. In Account Security, turn on 2-Step Verification, then generate an App Password and paste it below.",
+    },
+  },
+  {
+    id: "outlook",
+    label: "Outlook",
+    host: "smtp.office365.com",
+    port: 587,
+    secure: true,
+    hint: "smtp.office365.com · 587 · STARTTLS",
+    appPasswordHelp: {
+      url: "https://account.microsoft.com/security",
+      text:
+        "Outlook / Microsoft 365 accounts with 2FA need an App Password (Security → Advanced → App passwords). Paste that below instead of your normal password.",
+    },
+  },
+] as const;
+
+function findPreset(id: string | null): PresetDef | null {
+  if (!id) return null;
+  return PRESETS.find((p) => p.id === id) ?? null;
+}
+
+const BULK_PAGE_SIZE = 10;
+
+type BulkSmtpFormat = "simple" | "advanced";
+
+type BulkSmtpRow = {
+  id: string;
+  lineNo: number;
+  raw: string;
+  format: BulkSmtpFormat | null;
+  host?: string;
+  port?: string;
+  username?: string;
+  password?: string;
+  invalid?: boolean;
+  reason?: string;
+};
+
+type BulkSmtpParseResult = {
+  rows: BulkSmtpRow[];
+  format: BulkSmtpFormat | null;
+  invalidCount: number;
+};
+
+function parseAdvancedLine(line: string): Omit<BulkSmtpRow, "id" | "lineNo" | "raw"> | null {
+  const parts = line.split(",").map((p) => p.trim());
+  if (parts.length < 4) return null;
+  const [host, port, username, ...passParts] = parts;
+  if (!host || !port || !username || passParts.length === 0) return null;
+  if (!/^\d+$/.test(port)) return null;
+  const password = passParts.join(",");
+  if (!password) return null;
+  return { format: "advanced", host, port, username, password };
+}
+
+function parseSimpleLine(line: string): Omit<BulkSmtpRow, "id" | "lineNo" | "raw"> | null {
+  const idx = line.indexOf(":");
+  if (idx <= 0 || idx === line.length - 1) return null;
+  const username = line.slice(0, idx).trim();
+  const password = line.slice(idx + 1).trim();
+  if (!username || !password) return null;
+  return { format: "simple", username, password };
+}
+
+function parseBulkSmtpText(text: string): BulkSmtpParseResult {
+  const lines = text.split(/\r?\n/);
+  const rows: BulkSmtpRow[] = [];
+  let advancedCount = 0;
+  let simpleCount = 0;
+
+  lines.forEach((original, i) => {
+    const trimmed = original.trim();
+    if (!trimmed) return;
+    if (trimmed.startsWith("#") || trimmed.startsWith("//")) return;
+
+    const id = `line-${i + 1}`;
+    const lineNo = i + 1;
+
+    const advanced = parseAdvancedLine(trimmed);
+    if (advanced) {
+      advancedCount++;
+      rows.push({ id, lineNo, raw: trimmed, ...advanced });
+      return;
+    }
+    const simple = parseSimpleLine(trimmed);
+    if (simple) {
+      simpleCount++;
+      rows.push({ id, lineNo, raw: trimmed, ...simple });
+      return;
+    }
+    rows.push({
+      id,
+      lineNo,
+      raw: trimmed,
+      format: null,
+      invalid: true,
+      reason: "Expected user:pass or host,port,user,pass",
+    });
+  });
+
+  const format: BulkSmtpFormat | null =
+    advancedCount === 0 && simpleCount === 0
+      ? null
+      : advancedCount >= simpleCount
+        ? "advanced"
+        : "simple";
+
+  const invalidCount = rows.filter((r) => r.invalid).length;
+  return { rows, format, invalidCount };
+}
+
+type SmtpBulkFileItem = {
+  key: string;
+  file: File;
+  parsed: BulkSmtpParseResult;
+};
+
+function smtpFileKey(f: File) {
+  return `${f.name}-${f.size}-${f.lastModified}`;
+}
+
+function mergeBulkPreviews(items: SmtpBulkFileItem[]): {
+  rows: BulkSmtpRow[];
+  format: BulkSmtpFormat | null;
+  invalidCount: number;
+  sourceNames: string[];
+} {
+  const sourceNames = items.map((i) => i.file.name);
+  let advancedCount = 0;
+  let simpleCount = 0;
+  for (const item of items) {
+    for (const r of item.parsed.rows) {
+      if (r.format === "advanced") advancedCount++;
+      else if (r.format === "simple") simpleCount++;
+    }
+  }
+  const format: BulkSmtpFormat | null =
+    advancedCount === 0 && simpleCount === 0
+      ? null
+      : advancedCount >= simpleCount
+        ? "advanced"
+        : "simple";
+
+  const allRows: BulkSmtpRow[] = [];
+  let lineCounter = 0;
+  for (const item of items) {
+    for (const r of item.parsed.rows) {
+      lineCounter++;
+      allRows.push({
+        ...r,
+        id: `${item.key}-${r.id}`,
+        lineNo: lineCounter,
+      });
+    }
+  }
+  const invalidCount = allRows.filter((r) => r.invalid).length;
+  return { rows: allRows, format, invalidCount, sourceNames };
+}
+
+function readFileAsText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("read failed"));
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.readAsText(file);
+  });
+}
+
+export function SmtpForm({
+  previewMode = false,
+  onGoToComposer,
+}: {
+  previewMode?: boolean;
+  onGoToComposer?: () => void;
+}) {
+  const [nexting, setNexting] = React.useState(false);
+  const [preset, setPreset] = React.useState<PresetId | null>(null);
+  const [smtpHost, setSmtpHost] = React.useState("");
+  const [smtpPort, setSmtpPort] = React.useState("");
+  const [smtpUsername, setSmtpUsername] = React.useState("");
+  const [smtpPassword, setSmtpPassword] = React.useState("");
+  const [smtpLabel, setSmtpLabel] = React.useState("");
+  const [secure, setSecure] = React.useState(true);
+  const [rotation, setRotation] = React.useState("round-robin");
+
+  const [testing, setTesting] = React.useState(false);
+  const [saving, setSaving] = React.useState(false);
+  const [sendingTest, setSendingTest] = React.useState(false);
+
+  const [savedRows, setSavedRows] = React.useState<SavedSmtpRow[]>([]);
+  const [savedLoading, setSavedLoading] = React.useState(false);
+  const [savedError, setSavedError] = React.useState<string | null>(null);
+  const [rowBusyId, setRowBusyId] = React.useState<string | null>(null);
+
+  const refreshSaved = React.useCallback(async () => {
+    setSavedLoading(true);
+    setSavedError(null);
+    try {
+      const res = await listSmtpServers();
+      if (res.ok) {
+        setSavedRows(res.data ?? []);
+      } else {
+        setSavedError(res.error);
+      }
+    } finally {
+      setSavedLoading(false);
+    }
+  }, []);
+
+  // Initial async fetch of saved SMTP servers — setState happens after await.
+  React.useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void refreshSaved();
+  }, [refreshSaved]);
+
+  async function handleNextToComposer() {
+    if (previewMode) {
+      toast.message("Sign in to continue.");
+      return;
+    }
+    if (!onGoToComposer) {
+      return;
+    }
+    const missing = requireFilled();
+    if (missing == null) {
+      setNexting(true);
+      const res = await saveSmtpServer(currentInput());
+      setNexting(false);
+      if (res.ok) {
+        toast.success("SMTP saved.", {
+          description: "Opening Email Composer.",
+        });
+        setSmtpPassword("");
+        await refreshSaved();
+        onGoToComposer();
+      } else {
+        toast.error("Could not save SMTP.", { description: res.error });
+      }
+      return;
+    }
+    if (savedRows.length > 0) {
+      onGoToComposer();
+      return;
+    }
+    toast.error("Finish SMTP setup", { description: missing });
+  }
+
+  const activePreset = findPreset(preset);
+
+  function applyPreset(id: PresetId) {
+    const p = PRESETS.find((x) => x.id === id);
+    if (!p) return;
+    setPreset(id);
+    setSmtpHost(p.host);
+    setSmtpPort(String(p.port));
+    setSecure(p.secure);
+    if (!smtpLabel.trim()) setSmtpLabel(p.label);
+  }
+
+  function currentInput(): {
+    host: string;
+    port: string;
+    secure: boolean;
+    username: string;
+    password: string;
+    label: string | null;
+    provider: SmtpProvider;
+  } {
+    return {
+      host: smtpHost.trim(),
+      port: smtpPort.trim(),
+      secure,
+      username: smtpUsername.trim(),
+      password: smtpPassword,
+      label: smtpLabel.trim() || null,
+      provider: (preset ?? "custom") as SmtpProvider,
+    };
+  }
+
+  function requireFilled(): string | null {
+    const i = currentInput();
+    if (!i.host) return "Host is required. Click a preset or enter one manually.";
+    if (!i.port) return "Port is required.";
+    if (!i.username) return "Username (your email) is required.";
+    if (!i.password) return "Password (App Password for Gmail/Yahoo/Outlook) is required.";
+    return null;
+  }
+
+  async function onTest() {
+    const missing = requireFilled();
+    if (missing) {
+      toast.error(missing);
+      return;
+    }
+    setTesting(true);
+    const res = await testSmtpConnection(currentInput());
+    setTesting(false);
+    if (res.ok) {
+      toast.success("SMTP verified.", {
+        description: `${smtpHost}:${smtpPort} accepted the credentials.`,
+      });
+    } else {
+      toast.error("SMTP test failed.", { description: res.error });
+    }
+  }
+
+  async function onSendTestEmail() {
+    const missing = requireFilled();
+    if (missing) {
+      toast.error(missing);
+      return;
+    }
+    setSendingTest(true);
+    const res = await sendSmtpTestEmail({ ...currentInput() });
+    setSendingTest(false);
+    if (res.ok) {
+      const who = res.data?.accepted?.[0] ?? "your inbox";
+      toast.success("Test email sent.", { description: `Delivered to ${who}.` });
+    } else {
+      toast.error("Could not send test email.", { description: res.error });
+    }
+  }
+
+  async function onSave() {
+    const missing = requireFilled();
+    if (missing) {
+      toast.error(missing);
+      return;
+    }
+    setSaving(true);
+    const res = await saveSmtpServer(currentInput());
+    setSaving(false);
+    if (res.ok) {
+      toast.success("SMTP saved.", {
+        description: "Credentials encrypted at rest. Ready to use in campaigns.",
+      });
+      setSmtpPassword("");
+      void refreshSaved();
+    } else {
+      toast.error("Could not save SMTP.", { description: res.error });
+    }
+  }
+
+  async function onDeleteSaved(id: string, label: string | null) {
+    if (typeof window !== "undefined") {
+      const name = label || "this SMTP";
+      if (!window.confirm(`Delete ${name}? This cannot be undone.`)) return;
+    }
+    setRowBusyId(id);
+    const res = await deleteSmtpServer(id);
+    setRowBusyId(null);
+    if (res.ok) {
+      toast.success("SMTP deleted.");
+      setSavedRows((prev) => prev.filter((r) => r.id !== id));
+    } else {
+      toast.error("Could not delete.", { description: res.error });
+    }
+  }
+
+  async function onSendTestFromSaved(id: string) {
+    setRowBusyId(id);
+    const res = await sendTestEmailFromSaved({ id });
+    setRowBusyId(null);
+    if (res.ok) {
+      const who = res.data?.accepted?.[0] ?? "your inbox";
+      toast.success("Test email sent.", { description: `Delivered to ${who}.` });
+    } else {
+      toast.error("Could not send test email.", { description: res.error });
+    }
+  }
+
+  // --- Bulk SMTP upload (UI-only: read + parse client-side, no backend)
+  const [smtpFiles, setSmtpFiles] = React.useState<SmtpBulkFileItem[]>([]);
+  const [bulkFileError, setBulkFileError] = React.useState<string | null>(null);
+  const [bulkPage, setBulkPage] = React.useState(1);
+  const bulkUploadRef = React.useRef<HTMLInputElement>(null);
+  const smtpFilesPrevLen = React.useRef(0);
+
+  const mergedBulk = React.useMemo(() => mergeBulkPreviews(smtpFiles), [smtpFiles]);
+  const bulkRows = mergedBulk.rows;
+  const bulkFormat = mergedBulk.format;
+  const bulkInvalidCount = mergedBulk.invalidCount;
+  const bulkValidCount = bulkRows.length - bulkInvalidCount;
+  const bulkSourceNames = mergedBulk.sourceNames;
+
+  const bulkTotalPages = Math.max(1, Math.ceil(bulkRows.length / BULK_PAGE_SIZE));
+  const bulkPageRows = React.useMemo(
+    () => bulkRows.slice((bulkPage - 1) * BULK_PAGE_SIZE, bulkPage * BULK_PAGE_SIZE),
+    [bulkRows, bulkPage],
+  );
+  const bulkStart = bulkRows.length === 0 ? 0 : (bulkPage - 1) * BULK_PAGE_SIZE + 1;
+  const bulkEnd = Math.min(bulkPage * BULK_PAGE_SIZE, bulkRows.length);
+
+  // Clamp bulk page if rows shrink — adjusted during render to avoid the
+  // cascading re-render that setState-in-effect would cause.
+  const bulkClampedTotal = Math.max(1, Math.ceil(bulkRows.length / BULK_PAGE_SIZE));
+  if (bulkPage > bulkClampedTotal) {
+    setBulkPage(bulkClampedTotal);
+  }
+
+  React.useEffect(() => {
+    if (smtpFiles.length > smtpFilesPrevLen.current) {
+      setBulkPage(1);
+    }
+    smtpFilesPrevLen.current = smtpFiles.length;
+  }, [smtpFiles.length]);
+
+  async function processBulkSmtpPicked(picked: File[]) {
+    if (!picked.length) return;
+    setBulkFileError(null);
+
+    const errors: string[] = [];
+    const newItems: SmtpBulkFileItem[] = [];
+    const batchKeys = new Set<string>();
+
+    for (const file of picked) {
+      const k = smtpFileKey(file);
+      if (batchKeys.has(k)) continue;
+      batchKeys.add(k);
+
+      if (file.size === 0) {
+        errors.push(`${file.name} is empty`);
+        continue;
+      }
+      try {
+        const text = await readFileAsText(file);
+        if (!text.trim()) {
+          errors.push(`${file.name} is empty`);
+          continue;
+        }
+        const parsed = parseBulkSmtpText(text);
+        if (parsed.rows.length === 0) {
+          errors.push(`${file.name}: no usable lines`);
+          continue;
+        }
+        newItems.push({ key: k, file, parsed });
+      } catch {
+        errors.push(`${file.name}: could not read`);
+      }
+    }
+
+    if (newItems.length) {
+      setSmtpFiles((prev) => {
+        const keys = new Set(prev.map((x) => x.key));
+        const next = [...prev];
+        for (const item of newItems) {
+          if (!keys.has(item.key)) {
+            keys.add(item.key);
+            next.push(item);
+          }
+        }
+        return next;
+      });
+    }
+
+    if (errors.length) {
+      setBulkFileError(errors.join("; "));
+    } else if (newItems.length === 0 && picked.length > 0) {
+      setBulkFileError(
+        "No new files added (duplicates or invalid). Expected `user:pass` or `host,port,user,pass` per line.",
+      );
+    }
+  }
+
+  function onBulkSmtpFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const picked = e.target.files ? Array.from(e.target.files) : [];
+    e.target.value = "";
+    if (picked.length === 0) return;
+    void processBulkSmtpPicked(picked);
+  }
+
+  function removeSmtpFileAt(index: number) {
+    setBulkFileError(null);
+    setSmtpFiles((prev) => {
+      const next = prev.filter((_, i) => i !== index);
+      if (next.length === 0 && bulkUploadRef.current) {
+        bulkUploadRef.current.value = "";
+      }
+      return next;
+    });
+  }
+
+  return (
+    <div className="space-y-6">
+      <ServerIpPanel />
+
+      <Card className="border-zinc-800 bg-zinc-900/40 ring-zinc-800">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-zinc-100">
+            <Mail className="size-5 text-zinc-400" />
+            Preset providers
+          </CardTitle>
+          <CardDescription>
+            Click a provider to auto-fill the host, port and TLS settings below. Then enter your
+            email + App Password and hit <span className="text-zinc-300">Test SMTP</span>.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-3">
+            {PRESETS.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => applyPreset(p.id)}
+                className={cn(
+                  "rounded-xl border px-4 py-4 text-left text-sm transition-colors",
+                  preset === p.id
+                    ? "border-emerald-600/80 bg-emerald-950/30 text-zinc-100"
+                    : "border-zinc-800 bg-zinc-950/50 text-zinc-300 hover:border-zinc-600",
+                )}
+              >
+                <span className="block font-semibold">{p.label}</span>
+                <span className="mt-1 block text-xs text-zinc-500">{p.hint}</span>
+              </button>
+            ))}
+          </div>
+          {activePreset && (
+            <div className="rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-2.5 text-xs leading-relaxed text-amber-200/90">
+              <p className="font-medium text-amber-200">{activePreset.label} — App Password required</p>
+              <p className="mt-1 text-amber-200/80">{activePreset.appPasswordHelp.text}</p>
+              <a
+                href={activePreset.appPasswordHelp.url}
+                target="_blank"
+                rel="noreferrer noopener"
+                className="mt-1.5 inline-block font-medium text-amber-200 underline decoration-amber-500/40 underline-offset-2 hover:text-amber-100"
+              >
+                Open the {activePreset.label} App Password page →
+              </a>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="border-zinc-800 bg-zinc-900/40 ring-zinc-800">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-zinc-100">
+            <Server className="size-5 text-zinc-400" />
+            {activePreset ? `${activePreset.label} SMTP` : "Custom SMTP"}
+          </CardTitle>
+          <CardDescription>
+            Host, port and credentials. Click <span className="text-zinc-300">Test SMTP</span> to
+            verify — nothing is persisted until you press <span className="text-zinc-300">Save</span>.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2 sm:col-span-2">
+              <Label htmlFor="smtp-label">Label (optional)</Label>
+              <Input
+                id="smtp-label"
+                type="text"
+                autoComplete="off"
+                placeholder={
+                  activePreset ? `${activePreset.label} – work` : "My main Gmail"
+                }
+                className="bg-zinc-950/50"
+                value={smtpLabel}
+                onChange={(e) => setSmtpLabel(e.target.value)}
+                maxLength={80}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="smtp-host">Host</Label>
+              <Input
+                id="smtp-host"
+                type="text"
+                autoComplete="off"
+                placeholder="smtp.example.com"
+                className="bg-zinc-950/50"
+                value={smtpHost}
+                onChange={(e) => setSmtpHost(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="smtp-port">Port</Label>
+              <Input
+                id="smtp-port"
+                type="text"
+                inputMode="numeric"
+                autoComplete="off"
+                placeholder="587"
+                className="bg-zinc-950/50"
+                value={smtpPort}
+                onChange={(e) => setSmtpPort(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="smtp-user">Username (email)</Label>
+              <Input
+                id="smtp-user"
+                type="email"
+                autoComplete="username"
+                placeholder={activePreset?.id === "gmail" ? "you@gmail.com" : "you@example.com"}
+                className="bg-zinc-950/50"
+                value={smtpUsername}
+                onChange={(e) => setSmtpUsername(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="smtp-pass">
+                {activePreset ? "App Password" : "Password"}
+              </Label>
+              <Input
+                id="smtp-pass"
+                type="password"
+                autoComplete="new-password"
+                placeholder={
+                  activePreset ? "16-character App Password" : "Enter password"
+                }
+                className="bg-zinc-950/50 font-mono"
+                value={smtpPassword}
+                onChange={(e) => setSmtpPassword(e.target.value)}
+              />
+              {activePreset && (
+                <p className="text-xs text-zinc-500">
+                  Paste the 16-character App Password (spaces OK — they’re stripped server-side).
+                </p>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-950/40 px-4 py-3">
+            <div>
+              <p className="text-sm font-medium text-zinc-200">Secure (TLS / SSL)</p>
+              <p className="text-xs text-zinc-500">
+                Port 465 uses implicit TLS; 587 uses STARTTLS. Leave on for Gmail/Yahoo/Outlook.
+              </p>
+            </div>
+            <Switch checked={secure} onCheckedChange={setSecure} />
+          </div>
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={onTest}
+              disabled={testing || saving || sendingTest}
+            >
+              {testing && <Loader2 className="mr-2 size-4 animate-spin" />}
+              Test SMTP
+            </Button>
+            <Button
+              type="button"
+              onClick={onSave}
+              disabled={saving || testing}
+              className="bg-emerald-600 text-white hover:bg-emerald-500"
+            >
+              {saving && <Loader2 className="mr-2 size-4 animate-spin" />}
+              Save SMTP
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onSendTestEmail}
+              disabled={sendingTest || testing || saving}
+              className="border-zinc-700"
+              title="Sends one real email from this SMTP to your own account email."
+            >
+              {sendingTest ? (
+                <Loader2 className="mr-2 size-4 animate-spin" />
+              ) : (
+                <Send className="mr-2 size-4" />
+              )}
+              Send test email to myself
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-zinc-800 bg-zinc-900/40 ring-zinc-800">
+        <CardHeader>
+          <CardTitle className="text-zinc-100">Saved SMTP servers</CardTitle>
+          <CardDescription>
+            Passwords are encrypted with AES-256-GCM and stored in{" "}
+            <span className="font-mono text-zinc-400">smtp_servers.password_enc</span>.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {savedError && (
+            <p className="mb-3 rounded-md border border-red-900/60 bg-red-950/30 px-3 py-2 text-sm text-red-300">
+              {savedError}
+            </p>
+          )}
+          {savedLoading && savedRows.length === 0 ? (
+            <div className="flex items-center gap-2 py-6 text-sm text-zinc-500">
+              <Loader2 className="size-4 animate-spin" />
+              Loading saved SMTP servers…
+            </div>
+          ) : savedRows.length === 0 ? (
+            <div className="rounded-md border border-dashed border-zinc-800 px-4 py-8 text-center">
+              <p className="text-sm text-zinc-400">No SMTP servers saved yet.</p>
+              <p className="mt-1 text-xs text-zinc-500">
+                Click a preset above, fill in your credentials, then press <span className="text-zinc-300">Save SMTP</span>.
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto rounded-lg border border-zinc-800">
+              <Table>
+                <TableHeader>
+                  <TableRow className="border-zinc-800 hover:bg-transparent">
+                    <TableHead className="text-zinc-400">Label</TableHead>
+                    <TableHead className="text-zinc-400">Provider</TableHead>
+                    <TableHead className="text-zinc-400">Host</TableHead>
+                    <TableHead className="text-zinc-400">Port</TableHead>
+                    <TableHead className="text-zinc-400">Username</TableHead>
+                    <TableHead className="text-zinc-400">TLS</TableHead>
+                    <TableHead className="w-[220px] text-right text-zinc-400">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {savedRows.map((r) => {
+                    const busy = rowBusyId === r.id;
+                    return (
+                      <TableRow key={r.id} className="border-zinc-800">
+                        <TableCell className="font-medium text-zinc-200">
+                          {r.label ?? "—"}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="border-zinc-700 text-xs">
+                            {r.provider ?? "custom"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="font-mono text-sm text-zinc-300">{r.host}</TableCell>
+                        <TableCell className="font-mono text-sm text-zinc-300">{r.port}</TableCell>
+                        <TableCell className="font-mono text-sm text-zinc-300">
+                          {r.username}
+                        </TableCell>
+                        <TableCell className="text-sm text-zinc-400">
+                          {r.secure ? "yes" : "no"}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="border-zinc-700"
+                              onClick={() => onSendTestFromSaved(r.id)}
+                              disabled={busy}
+                              title="Send a test email using this saved SMTP"
+                            >
+                              {busy ? (
+                                <Loader2 className="size-4 animate-spin" />
+                              ) : (
+                                <Send className="size-4" />
+                              )}
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="border-zinc-700 hover:border-red-900 hover:bg-red-950/30 hover:text-red-300"
+                              onClick={() => onDeleteSaved(r.id, r.label)}
+                              disabled={busy}
+                              aria-label={`Delete ${r.label ?? r.host}`}
+                            >
+                              {busy ? (
+                                <Loader2 className="size-4 animate-spin" />
+                              ) : (
+                                <Trash2 className="size-4" />
+                              )}
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="border-zinc-800 bg-zinc-900/40 ring-zinc-800">
+        <CardHeader>
+          <CardTitle className="text-zinc-100">Bulk SMTP upload</CardTitle>
+          <CardDescription>
+            Paste one entry per line — <span className="font-mono text-zinc-400">user:pass</span> or{" "}
+            <span className="font-mono text-zinc-400">host,port,user,pass</span>.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-0">
+          <input
+            ref={bulkUploadRef}
+            id="bulk-smtp-upload"
+            type="file"
+            multiple
+            accept=".txt,.csv,.log,text/plain,text/csv"
+            className="hidden"
+            tabIndex={-1}
+            onChange={onBulkSmtpFileChange}
+          />
+          <div
+            className={cn(
+              "flex w-full min-w-0 items-center gap-3 rounded-lg border border-[#374151] bg-[#0F172A] px-4 py-3 shadow-none transition-[border-color,box-shadow]",
+              "focus-within:border-emerald-500/45 focus-within:ring-2 focus-within:ring-emerald-500/15",
+            )}
+          >
+            <button
+              type="button"
+              onClick={() => bulkUploadRef.current?.click()}
+              className="inline-flex h-9 shrink-0 cursor-pointer items-center justify-center rounded-md border-0 bg-[#1f2937] px-3.5 text-sm font-medium leading-none text-white transition-colors hover:bg-[#374151] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/35"
+            >
+              Choose Files
+            </button>
+            <span
+              className="min-w-0 flex-1 truncate pl-0.5 text-sm leading-normal text-white"
+              title={
+                smtpFiles.length === 0
+                  ? undefined
+                  : smtpFiles.map((s) => s.file.name).join(", ")
+              }
+            >
+              {smtpFiles.length === 0
+                ? "No file selected"
+                : `${smtpFiles.length} file${smtpFiles.length === 1 ? "" : "s"} selected`}
+            </span>
+          </div>
+
+          {smtpFiles.length > 0 && (
+            <ul className="mt-1.5 space-y-1.5" aria-label="SMTP list files">
+              {smtpFiles.map((item, index) => (
+                <li
+                  key={item.key}
+                  className="flex items-center justify-between gap-3 rounded-lg border border-[#2a2a2a] bg-[#0f172a] px-3 py-2"
+                >
+                  <span className="min-w-0 flex-1 truncate text-sm text-white" title={item.file.name}>
+                    {item.file.name}
+                  </span>
+                  <button
+                    type="button"
+                    className="shrink-0 cursor-pointer rounded-md p-1 text-[#9ca3af] transition-colors hover:text-[#ef4444] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/35"
+                    aria-label={`Remove ${item.file.name}`}
+                    onClick={() => removeSmtpFileAt(index)}
+                  >
+                    <X className="size-4" strokeWidth={2} aria-hidden />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {bulkFileError && (
+            <p className="mt-3 text-xs text-red-400" role="alert">
+              {bulkFileError}
+            </p>
+          )}
+          {!bulkFileError && smtpFiles.length === 0 && (
+            <p className="mt-3 text-xs text-zinc-500">
+              Lines starting with <span className="font-mono">#</span> or{" "}
+              <span className="font-mono">{"//"}</span> are ignored. Credentials are parsed locally only.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {bulkRows.length > 0 && (
+        <Card className="border-zinc-800 bg-zinc-900/40 ring-zinc-800">
+          <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="space-y-1">
+              <CardTitle className="flex flex-wrap items-center gap-2 text-zinc-100">
+                Preview
+                <Badge
+                  variant="secondary"
+                  className="border-zinc-700 bg-zinc-800/80 text-zinc-200"
+                >
+                  Total SMTPs: {bulkValidCount}
+                </Badge>
+                {bulkInvalidCount > 0 && (
+                  <Badge variant="destructive" className="text-xs">
+                    {bulkInvalidCount} invalid
+                  </Badge>
+                )}
+                {bulkFormat && (
+                  <Badge
+                    variant="outline"
+                    className="border-zinc-700 text-xs uppercase tracking-wide text-zinc-400"
+                  >
+                    {bulkFormat === "advanced" ? "host,port,user,pass" : "user:pass"}
+                  </Badge>
+                )}
+              </CardTitle>
+              <CardDescription>
+                Parsed from{" "}
+                <span className="font-mono text-zinc-300" title={bulkSourceNames.join(", ")}>
+                  {bulkSourceNames.length <= 2
+                    ? bulkSourceNames.join(", ")
+                    : `${bulkSourceNames.length} files`}
+                </span>{" "}
+                — UI only, nothing is uploaded.
+              </CardDescription>
+            </div>
+            <div className="flex items-center gap-2 text-sm text-zinc-500">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="border-zinc-700"
+                disabled={bulkPage <= 1}
+                onClick={() => setBulkPage((p) => Math.max(1, p - 1))}
+                aria-label="Previous page"
+              >
+                <ChevronLeft className="size-4" />
+              </Button>
+              <span className="tabular-nums text-zinc-400">
+                Page {bulkPage} of {bulkTotalPages}
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="border-zinc-700"
+                disabled={bulkPage >= bulkTotalPages}
+                onClick={() => setBulkPage((p) => Math.min(bulkTotalPages, p + 1))}
+                aria-label="Next page"
+              >
+                <ChevronRight className="size-4" />
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="overflow-x-auto rounded-lg border border-zinc-800">
+              <Table>
+                <TableHeader>
+                  <TableRow className="border-zinc-800 hover:bg-transparent">
+                    <TableHead className="w-16 text-zinc-400">#</TableHead>
+                    {bulkFormat === "advanced" && (
+                      <>
+                        <TableHead className="text-zinc-400">Host</TableHead>
+                        <TableHead className="text-zinc-400">Port</TableHead>
+                      </>
+                    )}
+                    <TableHead className="text-zinc-400">
+                      {bulkFormat === "advanced" ? "Username" : "Email / Username"}
+                    </TableHead>
+                    <TableHead className="text-zinc-400">Password</TableHead>
+                    <TableHead className="w-[120px] text-right text-zinc-400">Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {bulkPageRows.map((row) => (
+                    <TableRow
+                      key={row.id}
+                      className={cn("border-zinc-800", row.invalid && "bg-red-950/30")}
+                    >
+                      <TableCell className="text-xs tabular-nums text-zinc-500">
+                        {row.lineNo}
+                      </TableCell>
+                      {bulkFormat === "advanced" && (
+                        <>
+                          <TableCell className="font-mono text-sm text-zinc-200">
+                            {row.host ?? "—"}
+                          </TableCell>
+                          <TableCell className="font-mono text-sm text-zinc-300">
+                            {row.port ?? "—"}
+                          </TableCell>
+                        </>
+                      )}
+                      <TableCell
+                        className={cn(
+                          "font-mono text-sm",
+                          row.invalid ? "text-red-300" : "text-zinc-200",
+                        )}
+                      >
+                        {row.invalid ? row.raw : (row.username ?? "—")}
+                      </TableCell>
+                      <TableCell className="font-mono text-sm text-zinc-400">
+                        {row.invalid
+                          ? "—"
+                          : row.password
+                            ? "•".repeat(Math.min(row.password.length, 10))
+                            : "—"}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {row.invalid ? (
+                          <Badge variant="destructive" className="text-xs" title={row.reason}>
+                            Invalid
+                          </Badge>
+                        ) : (
+                          <Badge
+                            variant="secondary"
+                            className="border-emerald-800/80 bg-emerald-950/60 text-emerald-200"
+                          >
+                            OK
+                          </Badge>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+            <p className="text-center text-sm text-zinc-500">
+              Showing {bulkStart}–{bulkEnd} of {bulkRows.length}
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      <Card className="border-zinc-800 bg-zinc-900/40 ring-zinc-800">
+        <CardHeader>
+          <CardTitle className="text-zinc-100">Rotation strategy</CardTitle>
+          <CardDescription>Choose how outbound SMTP accounts rotate.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="rotation">Strategy</Label>
+            <Select
+              value={rotation}
+              onValueChange={(v) => {
+                if (v != null) setRotation(v);
+              }}
+            >
+              <SelectTrigger variant="devtool" id="rotation" className="w-full max-w-md">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent variant="devtool">
+                <SelectItem value="round-robin">Round Robin</SelectItem>
+                <SelectItem value="random">Random</SelectItem>
+                <SelectItem value="threshold">Threshold-based</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <Separator className="bg-zinc-800" />
+          <p className="text-xs text-zinc-500">
+            Rotation applies when multiple SMTPs are saved and selected on a campaign.
+          </p>
+        </CardContent>
+      </Card>
+
+      {onGoToComposer && (
+        <Card className="border-zinc-800 border-emerald-500/25 bg-zinc-900/40 ring-1 ring-emerald-500/20">
+          <CardHeader>
+            <CardTitle className="text-zinc-100">Continue</CardTitle>
+            <CardDescription>
+              If the form above is complete, Next saves that SMTP, then opens Email Composer. If
+              you already have a saved server, Next goes there without re-saving the form.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-wrap items-center justify-end gap-3 border-t border-zinc-800 pt-4">
+            <Button
+              type="button"
+              size="lg"
+              disabled={nexting}
+              onClick={() => void handleNextToComposer()}
+              className="min-w-[7rem] bg-emerald-600 text-white hover:bg-emerald-500"
+            >
+              {nexting ? (
+                <Loader2 className="me-1 size-4 shrink-0 animate-spin" />
+              ) : null}
+              Next
+              <ChevronRight className="ms-1 size-4" />
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
