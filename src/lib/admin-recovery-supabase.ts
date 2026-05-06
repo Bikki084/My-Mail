@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { supabaseProjectUrl } from "@/lib/supabase/project-url";
 
 /**
  * Sends Supabase's built-in password recovery email (Auth → Email templates).
@@ -10,7 +11,7 @@ export async function sendAdminRecoveryViaSupabaseAuth(
   adminEmail: string,
   redirectTo: string,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const url = supabaseProjectUrl(process.env.NEXT_PUBLIC_SUPABASE_URL);
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
   if (!url || !anon) {
     return { ok: false, message: "Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY" };
