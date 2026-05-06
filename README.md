@@ -11,7 +11,7 @@ A single Next.js application that hosts both the **Admin** and **Client** panels
 
 ## Routing
 
-Role-based routing is enforced in `middleware.ts` (which delegates to `src/lib/supabase/middleware.ts`):
+Role-based routing is enforced in `src/middleware.ts` (which delegates to `src/lib/supabase/middleware.ts`):
 
 | Path                | Audience               | Notes                                                       |
 | ------------------- | ---------------------- | ----------------------------------------------------------- |
@@ -26,7 +26,7 @@ The middleware reads the user's role from the `profiles` table on every request 
 
 ## Getting Started
 
-1. Copy `env.example` to `.env.local` and fill in Supabase + Redis credentials.
+1. **Environment (required for Supabase + Gmail):** Real secrets must never be committed. After `git clone`, run `npm run setup:env` to create `.env.local` from `.env.example`, then edit `.env.local` with your Supabase URL/keys and (if needed) `ADMIN_RESET_SMTP_*` Gmail values. `.env.local` is gitignored.
 2. Install deps and run the dev server:
 
    ```bash
@@ -44,6 +44,7 @@ Open [http://localhost:3000](http://localhost:3000).
 
 | Script              | What it does                                        |
 | ------------------- | --------------------------------------------------- |
+| `npm run setup:env` | Create `.env.local` from `.env.example` if missing (safe local secrets). |
 | `npm run dev`       | Next.js dev server; if `REDIS_URL` is set, also starts the email worker. |
 | `npm run dev:next`  | Next.js only (no worker), same as old `npm run dev`. |
 | `npm run dev:clean` | Wipe `.next/` first, then same as `npm run dev`.    |

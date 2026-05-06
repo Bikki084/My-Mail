@@ -76,7 +76,7 @@ export async function sendAdminPasswordResetEmail(
   if (!transporter) {
     throw new Error(
       "Admin reset SMTP is not configured. Set ADMIN_RESET_SMTP_USER, ADMIN_RESET_SMTP_PASS " +
-        "(and for non-Gmail hosts ADMIN_RESET_SMTP_HOST). See env.example.",
+        "(and for non-Gmail hosts ADMIN_RESET_SMTP_HOST). See .env.example.",
     );
   }
 
