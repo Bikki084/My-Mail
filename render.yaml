@@ -1,11 +1,46 @@
-# Blueprint for https://render.com — connect this repo, then apply the Blueprint.
-# Set environment variables in the Render dashboard before the first deploy (see `.env.example` in repo).
-# For Docker builds, enable passing service env into the build so NEXT_PUBLIC_* are available at `npm run build`.
+# Render Blueprint — web + BullMQ worker + Redis (Key Value).
+# https://render.com/docs/infrastructure-as-code
+#
+# After apply: set the SAME Supabase + SMTP secrets on BOTH web and worker:
+#   NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY (build + runtime),
+#   SUPABASE_SERVICE_ROLE_KEY, SMTP_ENCRYPTION_KEY, NEXT_PUBLIC_APP_URL, etc.
+# For Docker web builds, enable "include environment variables during build".
+#
+# Note: Render free instances spin down; Background Workers may require a paid
+# instance type — if the worker cannot be created on free tier, upgrade the
+# worker plan or run a second service manually with dockerCommand: npm run worker.
 
 services:
+  # Redis-compatible queue backend (private network only).
+  - type: keyvalue
+    name: mymail-redis
+    ipAllowList: []
+    maxmemoryPolicy: noeviction
+
   - type: web
     name: mymail-web
     runtime: docker
     dockerfilePath: ./Dockerfile
     dockerContext: .
     healthCheckPath: /
+    envVars:
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: mymail-redis
+          property: connectionString
+
+  - type: worker
+    name: mymail-worker
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    dockerCommand: npm run worker
+    # Let in-flight campaign jobs drain on redeploy when possible.
+    maxShutdownDelaySeconds: 120
+    envVars:
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: mymail-redis
+          property: connectionString

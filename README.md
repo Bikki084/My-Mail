@@ -51,9 +51,16 @@ Open [http://localhost:3000](http://localhost:3000).
 | `npm run build`     | Production build.                                   |
 | `npm run start`     | Run the production build.                           |
 | `npm run lint`      | ESLint.                                             |
-| `npm run worker`    | Email worker only (BullMQ); use in prod or extra terminal. |
+| `npm run worker`    | Email worker only (BullMQ); required in production whenever `REDIS_URL` is set (see below). |
 
-**Production:** `npm run start` runs only Next.js — run the worker as a separate service or container (same `REDIS_URL` and env as the app).
+**Production (bulk / BullMQ):** `npm run start` only serves Next.js. The API **enqueues** sends to Redis when `REDIS_URL` is set and Redis is reachable; the **`npm run worker`** process **consumes** those jobs (same Docker image, different command).
+
+On **Render** (see repo `render.yaml`):
+
+1. Use a **Render Key Value** (Redis) instance — Blueprint wires `REDIS_URL` from its private `connectionString`.
+2. Add a **Background Worker** with the same repo/image and **`dockerCommand: npm run worker`**.
+3. Copy every secret the worker needs from your **Web** service to the **Worker**: at minimum `SUPABASE_SERVICE_ROLE_KEY`, `SMTP_ENCRYPTION_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, plus any mail vars (`ADMIN_RESET_SMTP_*`, etc.). Without **`SUPABASE_SERVICE_ROLE_KEY`**, the worker exits immediately.
+4. Large campaigns (`> 200` recipients) **require** a working queue + worker; smaller sends can fall back to in-process delivery if Redis is unset.
 
 ## Project Structure
 
