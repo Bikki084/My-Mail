@@ -42,20 +42,20 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
 import type { RecipientRow } from "@/lib/merge-tags";
+import {
+  MAIL_ENCODING_LABELS,
+  MAIL_ENCODING_UI,
+} from "@/lib/mail-encoding";
 const PROVIDERS = ["Gmail", "Yahoo", "Outlook", "Custom"] as const;
 const ROTATION = [
   { value: "round_robin", label: "Round Robin" },
   { value: "random", label: "Random" },
   { value: "threshold", label: "Threshold" },
 ] as const;
-const ENCODINGS = [
-  { value: "none", label: "NONE (Default)" },
-  { value: "base64", label: "Base64" },
-  { value: "quoted-printable", label: "Quoted-Printable" },
-  { value: "7bit", label: "7-bit" },
-  { value: "8bit", label: "8-bit" },
-  { value: "binary", label: "Binary" },
-] as const;
+const ENCODINGS = MAIL_ENCODING_UI.map((value) => ({
+  value,
+  label: MAIL_ENCODING_LABELS[value],
+}));
 
 const MERGE_FIELDS: { key: keyof RecipientRow; label: string }[] = [
   { key: "email", label: "{{{email}}}" },
@@ -107,7 +107,7 @@ export function ComposeConsole() {
   const [textBody, setTextBody] = useState("");
   const [htmlBody, setHtmlBody] = useState("");
   const [autoFromHtml, setAutoFromHtml] = useState(true);
-  const [encoding, setEncoding] = useState("none");
+  const [encoding, setEncoding] = useState("auto");
   const [headersOpen, setHeadersOpen] = useState(false);
   const [headerDraft, setHeaderDraft] = useState<{ name: string; value: string }[]>([
     { name: "X-Priority", value: "1" },
@@ -476,7 +476,7 @@ export function ComposeConsole() {
           <div className="space-y-2">
             <div className="flex flex-wrap items-end gap-3">
               <div className="min-w-[200px] space-y-1">
-                <Label className="text-zinc-400">HTML encoding</Label>
+                <Label className="text-zinc-400">Encoding</Label>
                 <Select
                   value={encoding}
                   onValueChange={(v) => {

@@ -25,7 +25,7 @@ This is a test from My Mail.`,
   html: `<p>Hi {{{name}}},</p><p><strong>HTML</strong> body.</p>`,
   senderName: "MyMail Campaigns",
   streamName: "",
-  encoding: "none",
+  encoding: "auto",
 };
 
 type EmailCampaignContextValue = {

@@ -568,7 +568,7 @@ export function SmtpForm({
 
   return (
     <div className="space-y-6">
-      <ServerIpPanel />
+      <ServerIpPanel previewMode={previewMode} />
 
       <Card className="border-zinc-800 bg-zinc-900/40 ring-zinc-800">
         <CardHeader>

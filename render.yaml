@@ -1,0 +1,11 @@
+# Blueprint for https://render.com — connect this repo, then apply the Blueprint.
+# Set environment variables in the Render dashboard before the first deploy (see repo env.example).
+# For Docker builds, enable passing service env into the build so NEXT_PUBLIC_* are available at `npm run build`.
+
+services:
+  - type: web
+    name: mymail-web
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /
