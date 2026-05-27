@@ -31,6 +31,7 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { listSmtpServers } from "@/app/actions/smtp";
+import { getLastBulkImportedSmtpIds } from "@/lib/bulk-smtp-session";
 import {
   previewCampaignEmail,
   queueCampaignSend,
@@ -326,6 +327,43 @@ export function EmailEditor({
     }
     setSending(true);
     try {
+      const smtpRes = await listSmtpServers();
+      if (!smtpRes.ok) {
+        throw new Error(smtpRes.error);
+      }
+      const smtpRows = smtpRes.data ?? [];
+      const savedIdSet = new Set(smtpRows.map((r) => r.id));
+      const bulkScope = getLastBulkImportedSmtpIds();
+      const scopedBulkIds =
+        bulkScope?.filter((id) => savedIdSet.has(id)) ?? [];
+      const smtpServerIds =
+        scopedBulkIds.length > 0 ? scopedBulkIds : smtpRows.map((r) => r.id);
+      if (smtpServerIds.length === 0) {
+        toast.error("No SMTP server", {
+          description: "Open SMTP Configuration, save at least one server, then return here to send.",
+        });
+        return;
+      }
+
+      const rowsForSend = smtpRows.filter((r) => smtpServerIds.includes(r.id));
+      const distinctLogins = new Set(
+        rowsForSend.map((r) => `${r.username.trim().toLowerCase()}|${r.host.trim().toLowerCase()}`),
+      );
+      if (rowsForSend.length > 1 && distinctLogins.size === 1) {
+        toast.warning("SMTP accounts look identical", {
+          description:
+            "Every server in this send uses the same email + host. Rotation will not change the sender mailbox — use different accounts in your CSV.",
+          duration: 12_000,
+        });
+      }
+
+      if (scopedBulkIds.length > 0) {
+        toast.message("SMTP scope: last bulk import", {
+          description: `This send uses ${scopedBulkIds.length} account(s) from your latest bulk import (not every saved server). Import another CSV to change the set.`,
+          duration: 8_000,
+        });
+      }
+
       const res = await queueCampaignSend({
         streamName: stream,
         subject: composeDraft.subject,
@@ -334,6 +372,8 @@ export function EmailEditor({
         encoding: composeDraft.encoding,
         recipients: campaignRecipients,
         htmlAttachment: htmlAttachmentPayload,
+        smtpServerIds,
+        rotationStrategy: "round_robin",
       });
       if (!res.ok) {
         throw new Error(res.error);

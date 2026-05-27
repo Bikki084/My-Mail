@@ -92,6 +92,14 @@ export type QueueCampaignOptions = {
   encoding: string;
   recipients: RecipientRow[];
   /**
+   * When set (recommended from the Email Composer), stored on the campaign so delivery
+   * uses exactly these SMTP rows — same snapshot as "Saved SMTP servers" at send time.
+   * Omit for tests / API clients that want "all servers for this user" (empty array on insert).
+   */
+  smtpServerIds?: string[];
+  /** Stored on the campaign; defaults to `round_robin` (even blocks per SMTP). */
+  rotationStrategy?: "round_robin" | "random" | "threshold" | "alternating";
+  /**
    * Stored on the campaign; rendered to PDF or PNG per recipient when sent.
    */
   htmlAttachment?: HtmlAttachmentPayload | null;
@@ -121,6 +129,17 @@ export async function queueCampaignSend(
   const nAttachLegacy = options.attachments?.length ?? 0;
   const hasHtmlAttachment = Boolean(options.htmlAttachment?.html?.trim());
   const useMultipart = nAttachLegacy > 0;
+  const smtpPayload =
+    options.smtpServerIds && options.smtpServerIds.length > 0
+      ? {
+          smtp_server_ids: options.smtpServerIds,
+          ...(options.rotationStrategy
+            ? { rotation_strategy: options.rotationStrategy }
+            : {}),
+        }
+      : options.rotationStrategy
+        ? { rotation_strategy: options.rotationStrategy }
+        : {};
 
   let create: Response;
   if (useMultipart) {
@@ -135,6 +154,7 @@ export async function queueCampaignSend(
         encoding: enc,
         recipients: options.recipients,
         html_attachment: hasHtmlAttachment ? options.htmlAttachment : undefined,
+        ...smtpPayload,
       }),
     );
     create = await fetch("/api/campaigns", {
@@ -163,6 +183,7 @@ export async function queueCampaignSend(
         recipients: options.recipients,
         attachments: options.attachments,
         html_attachment: hasHtmlAttachment ? options.htmlAttachment : undefined,
+        ...smtpPayload,
       }),
     });
   }

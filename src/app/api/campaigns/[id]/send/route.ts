@@ -47,6 +47,13 @@ export async function POST(_req: Request, { params }: Params) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  if (campaign.status === "cancelled") {
+    return NextResponse.json(
+      { error: "This campaign was cancelled and cannot be sent again." },
+      { status: 409 },
+    );
+  }
+
   const need = Math.max(0, campaign.total_emails ?? 0);
   if (need === 0) {
     return NextResponse.json(

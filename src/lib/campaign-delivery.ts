@@ -3,32 +3,20 @@
  * when Redis is not configured, for local development).
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { decryptSmtpPassword } from "@/lib/crypto/smtp-secret";
 import type { Browser } from "puppeteer";
-import { applyMergeTags, type RecipientRow } from "@/lib/merge-tags";
+import { type RecipientRow } from "@/lib/merge-tags";
 import { nodemailerAttachmentsFromCampaignField } from "@/lib/campaign-attachments";
-import {
-  htmlToPlainText,
-  sanitizeAttachmentRenderHtml,
-  sanitizeEmailHtml,
-} from "@/lib/html-email";
-import {
-  launchRenderBrowser,
-  renderHtmlToJpegBuffer,
-  renderHtmlToPdfBuffer,
-  renderHtmlToPngBuffer,
-} from "@/lib/html-attachment-render";
-import { resolveMailEncoding } from "@/lib/mail-encoding";
-import { buildSmtpUserTransport } from "@/lib/smtp/transport";
+import { launchRenderBrowser } from "@/lib/html-attachment-render";
 import { hasNonExpiredActivePlan } from "@/lib/active-plan-guard";
 import {
   DEFAULT_ROTATION_THRESHOLD,
   getOrCreateOutboundIp,
 } from "@/lib/outbound-ip";
+import { deliverCampaignInParallel } from "@/lib/campaign-delivery-parallel";
 import {
-  appendUnsubscribeFooter,
-  buildDeliverabilityHeaders,
-} from "@/lib/deliverability";
+  createCampaignAbortChecker,
+  isCampaignCancelled,
+} from "@/lib/campaign-cancel";
 
 type SmtpRow = {
   id: string;
@@ -41,6 +29,72 @@ type SmtpRow = {
   rotation_order: number;
 };
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Normalise `campaigns.smtp_server_ids` (uuid[]) from PostgREST — handles a plain
+ * array of strings, Postgres `{uuid,uuid}` text, or JSON string.
+ */
+export function normalizeCampaignSmtpServerIds(raw: unknown): string[] {
+  if (raw == null) return [];
+  if (Array.isArray(raw)) {
+    return raw.filter(
+      (x): x is string => typeof x === "string" && UUID_RE.test(x.trim()),
+    );
+  }
+  if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) {
+    const vals = Object.values(raw as Record<string, unknown>).filter(
+      (x): x is string => typeof x === "string" && UUID_RE.test(x.trim()),
+    );
+    if (vals.length > 0) return vals;
+  }
+  if (typeof raw === "string") {
+    const s = raw.trim();
+    if (s.startsWith("{") && s.endsWith("}")) {
+      const inner = s.slice(1, -1).trim();
+      if (!inner) return [];
+      return inner
+        .split(",")
+        .map((p) => p.trim().replace(/^"|"$/g, ""))
+        .filter((x) => UUID_RE.test(x));
+    }
+    try {
+      const j = JSON.parse(s) as unknown;
+      if (Array.isArray(j)) return normalizeCampaignSmtpServerIds(j);
+    } catch {
+      /* ignore */
+    }
+    if (UUID_RE.test(s)) return [s];
+  }
+  return [];
+}
+
+/** Log + UI: disambiguate rows that share the same username@host (e.g. duplicate imports). */
+function smtpAccountLabel(smtp: SmtpRow): string {
+  const user = smtp.username.trim();
+  const host = smtp.host.trim();
+  const lab = smtp.label?.trim();
+  const idShort = smtp.id.replace(/-/g, "").slice(0, 8);
+  const core = `${user} @ ${host}`;
+  const withLab =
+    lab && lab.length > 0 && !lab.includes(user)
+      ? `${lab} — ${core}`
+      : core;
+  return `${withLab} [id:${idShort}]`.slice(0, 500);
+}
+
+function dedupeSmtpRowsById(rows: SmtpRow[]): SmtpRow[] {
+  const seen = new Set<string>();
+  const out: SmtpRow[] = [];
+  for (const r of rows) {
+    if (!r.id || seen.has(r.id)) continue;
+    seen.add(r.id);
+    out.push(r);
+  }
+  return out;
+}
+
 function friendlyErr(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
@@ -49,8 +103,6 @@ function friendlyErr(err: unknown): string {
 type HtmlAttachmentKind = "pdf" | "png" | "jpeg";
 type HtmlAttachmentSpec = { kind: HtmlAttachmentKind; html: string };
 
-const GENERATED_ATTACH_MAX_BYTES = 8 * 1024 * 1024;
-
 function parseHtmlAttachment(raw: unknown): HtmlAttachmentSpec | null {
   if (raw == null || typeof raw !== "object") return null;
   const o = raw as Record<string, unknown>;
@@ -58,21 +110,6 @@ function parseHtmlAttachment(raw: unknown): HtmlAttachmentSpec | null {
   const html = typeof o.html === "string" ? o.html.trim() : "";
   if (!html) return null;
   return { kind: o.kind, html };
-}
-
-function htmlAttachmentMeta(kind: HtmlAttachmentKind): {
-  filename: string;
-  contentType: string;
-} {
-  switch (kind) {
-    case "pdf":
-      return { filename: "attachment.pdf", contentType: "application/pdf" };
-    case "jpeg":
-      return { filename: "attachment.jpg", contentType: "image/jpeg" };
-    case "png":
-    default:
-      return { filename: "attachment.png", contentType: "image/png" };
-  }
 }
 
 export async function deductOneEmailCredit(
@@ -121,15 +158,16 @@ type IpHistoryEntry = {
  * Load campaign, send each message via saved SMTP, write logs, update status.
  * Expects a Supabase client with service role.
  *
- * IP-rotation pause/resume contract:
+ * IP rotation after each burst of successful sends (`ip_rotation_threshold`):
  *   - On entry, the user's current outbound IP is snapshotted onto the
  *     campaign and prepended to `outbound_ip_history`.
- *   - After every successful send, an "in this batch" counter is bumped.
- *     When it reaches the configured `ip_rotation_threshold`, the campaign
- *     is set to `status='paused'`, `pause_reason='rotate_ip'`, and the
- *     function returns cleanly. Already-sent recipients have rows in
- *     `sending_logs`, so the next call to `runSendCampaign` skips them and
- *     resumes from the cursor naturally (existing idempotency check below).
+ *   - After every successful send, a per-burst counter is bumped. When it
+ *     reaches the threshold and more recipients remain, either the campaign
+ *     pauses for manual rotation (env `CAMPAIGN_MANUAL_IP_ROTATION_PAUSE=1`)
+ *     or `rotateOutboundIp` runs automatically and sending continues
+ *     (`OUTBOUND_IP_ROTATION_URL` for a real egress IP from your provider).
+ *   - Already-sent recipients have rows in `sending_logs`, so any re-entry
+ *     skips them (idempotency).
  */
 export async function runSendCampaign(
   supabase: SupabaseClient,
@@ -139,7 +177,7 @@ export async function runSendCampaign(
   const { data: campaign, error: cErr } = await supabase
     .from("campaigns")
     .select(
-      "id, user_id, subject, body_html, body_text, sender_name, stream_name, recipients, smtp_server_ids, total_emails, attachment_paths, html_attachment, encoding, ip_rotation_threshold, outbound_ip_history",
+      "id, user_id, status, subject, body_html, body_text, sender_name, stream_name, recipients, smtp_server_ids, total_emails, attachment_paths, html_attachment, encoding, ip_rotation_threshold, outbound_ip_history, rotation_strategy",
     )
     .eq("id", campaignId)
     .single();
@@ -159,6 +197,15 @@ export async function runSendCampaign(
   if (campaign.user_id !== userId) {
     throw new Error("Campaign user mismatch");
   }
+
+  if ((campaign as { status?: string }).status === "cancelled") {
+    console.log(
+      `[campaign-delivery] campaign=${campaignId} already cancelled — skipping delivery.`,
+    );
+    return;
+  }
+
+  const shouldAbort = createCampaignAbortChecker(supabase, campaignId);
 
   const recipients = (campaign.recipients as RecipientRow[]) ?? [];
   if (recipients.length === 0) {
@@ -197,14 +244,37 @@ export async function runSendCampaign(
     .select("id, host, port, secure, username, password_enc, label, rotation_order")
     .eq("user_id", userId);
 
-  const serverIds = campaign.smtp_server_ids as string[] | null;
-  if (serverIds && serverIds.length > 0) {
+  const serverIds = normalizeCampaignSmtpServerIds(campaign.smtp_server_ids);
+  if (serverIds.length > 0) {
     q = q.in("id", serverIds);
   }
 
-  const { data: smtps, error: sErr } = await q.order("rotation_order", { ascending: true });
+  const { data: smtps, error: sErr } = await q
+    .order("rotation_order", { ascending: true })
+    .order("created_at", { ascending: true });
   if (sErr) throw sErr;
-  const smtpList = (smtps ?? []) as SmtpRow[];
+  let smtpList = dedupeSmtpRowsById((smtps ?? []) as SmtpRow[]);
+  let smtpFilterFallback = false;
+
+  // Campaign snapshot lists multiple SMTP ids but only one row matched (stale
+  // UUIDs, partial import, or PostgREST filter oddities). Using that single row
+  // would send everything through one account — fall back to all saved SMTPs.
+  if (serverIds.length > 1 && smtpList.length === 1) {
+    smtpFilterFallback = true;
+    console.warn(
+      `[campaign-delivery] campaign=${campaignId} smtp_server_ids had ${serverIds.length} id(s) ` +
+        `but only 1 row matched user_id=${userId}; loading all SMTP servers for this user instead.`,
+    );
+    const { data: allSmtps, error: allErr } = await supabase
+      .from("smtp_servers")
+      .select("id, host, port, secure, username, password_enc, label, rotation_order")
+      .eq("user_id", userId)
+      .order("rotation_order", { ascending: true })
+      .order("created_at", { ascending: true });
+    if (allErr) throw allErr;
+    smtpList = dedupeSmtpRowsById((allSmtps ?? []) as SmtpRow[]);
+  }
+
   if (smtpList.length === 0) {
     const msg = "No SMTP server configured. Add one under SMTP Configuration.";
     await supabase
@@ -212,6 +282,31 @@ export async function runSendCampaign(
       .update({ status: "failed", updated_at: new Date().toISOString() })
       .eq("id", campaignId);
     throw new Error(msg);
+  }
+
+  const rotationStrategy = (campaign as { rotation_strategy?: string | null })
+    .rotation_strategy;
+  const identityKeys = new Set(
+    smtpList.map((s) => `${s.username.trim().toLowerCase()}|${s.host.trim().toLowerCase()}`),
+  );
+  if (smtpList.length > 1 && identityKeys.size === 1) {
+    console.warn(
+      `[campaign-delivery] campaign=${campaignId} ${smtpList.length} SMTP rows share the same login ` +
+        `(${[...identityKeys][0]}). Rotation uses different DB rows but the same mailbox — use distinct accounts.`,
+    );
+  }
+  console.log(
+    `[campaign-delivery] campaign=${campaignId} smtp_accounts=${smtpList.length} ` +
+      `rotation=${String(rotationStrategy ?? "round_robin")} ` +
+      `smtp_filter=${serverIds.length > 0 ? `${serverIds.length} id(s)` : "all for user"}` +
+      `${smtpFilterFallback ? " (expanded: snapshot matched 1 row)" : ""}`,
+  );
+
+  if (await shouldAbort()) {
+    console.log(
+      `[campaign-delivery] campaign=${campaignId} cancelled before send loop — exiting.`,
+    );
+    return;
   }
 
   await supabase
@@ -225,7 +320,8 @@ export async function runSendCampaign(
       outbound_ip_history: ipHistory,
       updated_at: new Date().toISOString(),
     })
-    .eq("id", campaignId);
+    .eq("id", campaignId)
+    .neq("status", "cancelled");
 
   // Load this sender's suppression list once. Recipients on it are silently
   // skipped (logged with status='failed', error_message='unsubscribed') so we
@@ -307,206 +403,44 @@ export async function runSendCampaign(
       `[campaign-delivery] campaign=${campaignId} attachment_paths has ${rawAttachLen} rows but 0 decoded attachments — contentBase64 was empty or invalid.`,
     );
   }
-  // `failed` is the per-batch counter only; running totals (across resumes)
-  // are re-derived from `sending_logs` after the loop so the campaign row is
-  // always in sync with the audit log even when paused/resumed multiple times.
+  const manualIpRotationPause =
+    process.env.CAMPAIGN_MANUAL_IP_ROTATION_PAUSE === "1";
+
   let failed = 0;
+  let failedInBurst = 0;
   let sentInBurst = 0;
   let pausedForRotation = false;
 
   try {
-  for (let i = 0; i < recipients.length; i++) {
-    const row = recipients[i];
-    const smtp = smtpList[i % smtpList.length];
-
-    const { data: already } = await supabase
-      .from("sending_logs")
-      .select("id")
-      .eq("campaign_id", campaignId)
-      .eq("recipient_email", row.email)
-      .maybeSingle();
-    if (already) {
-      continue;
-    }
-
-    // Honour the suppression list — recipients who clicked Unsubscribe on a
-    // prior campaign get a "failed" log row (so the UI surfaces it) and we
-    // skip the actual SMTP send. Counted as `failed` so the running total in
-    // the campaign row stays consistent with the audit log.
-    if (suppressed.has(row.email.trim().toLowerCase())) {
-      failed += 1;
-      await supabase.from("sending_logs").insert({
-        campaign_id: campaignId,
-        user_id: userId,
-        recipient_email: row.email,
-        smtp_used: null,
-        status: "failed",
-        error_message: "Recipient previously unsubscribed (skipped).",
-      });
-      continue;
-    }
-
-    let pass: string;
-    try {
-      pass = decryptSmtpPassword(smtp.password_enc);
-    } catch (e) {
-      failed += 1;
-      await supabase.from("sending_logs").insert({
-        campaign_id: campaignId,
-        user_id: userId,
-        recipient_email: row.email,
-        smtp_used: smtp.host,
-        status: "failed",
-        error_message: `SMTP password decrypt: ${friendlyErr(e)}`.slice(0, 2000),
-      });
-      continue;
-    }
-
-    const subj = applyMergeTags(
-      (campaign.subject as string | null) ?? "No subject",
-      row,
-    );
-    const sourceHtml = (campaign.body_html as string | null) ?? "";
-    const safeHtml = sourceHtml ? sanitizeEmailHtml(sourceHtml) : "";
-    const html = applyMergeTags(safeHtml, row);
-    // Always regenerate text from the (sanitised) HTML — ignore any stored body_text so the
-    // two MIME parts never drift out of sync.
-    const text = applyMergeTags(htmlToPlainText(safeHtml), row);
-    const from = `${senderName} <${smtp.username}>`;
-
-    const dynamicAttachments: NonNullable<typeof mailAttachments> = [];
-    if (renderBrowser && htmlAttSpec) {
-      const mergedAttachHtml = applyMergeTags(
-        sanitizeAttachmentRenderHtml(htmlAttSpec.html),
-        row,
-      );
-      const buf =
-        htmlAttSpec.kind === "pdf"
-          ? await renderHtmlToPdfBuffer(renderBrowser, mergedAttachHtml)
-          : htmlAttSpec.kind === "jpeg"
-            ? await renderHtmlToJpegBuffer(renderBrowser, mergedAttachHtml)
-            : await renderHtmlToPngBuffer(renderBrowser, mergedAttachHtml);
-      if (buf.length > GENERATED_ATTACH_MAX_BYTES) {
-        throw new Error("Generated attachment is too large (max 8 MB).");
-      }
-      const meta = htmlAttachmentMeta(htmlAttSpec.kind);
-      dynamicAttachments.push({
-        filename: meta.filename,
-        content: buf,
-        contentType: meta.contentType,
-      });
-    }
-    const allAttachments = [...staticAttachments, ...dynamicAttachments];
-    const attachCount = allAttachments.length;
-    const mimeEnc = resolveMailEncoding(
-      (campaign.encoding as string | null) ?? "auto",
-      { isHtml: safeHtml.trim().length > 0 },
-      attachCount,
-    );
-
-    const transporter = buildSmtpUserTransport({
-      host: smtp.host,
-      port: smtp.port,
-      secure: smtp.secure,
-      username: smtp.username,
-      password: pass,
+    const parallelResult = await deliverCampaignInParallel({
+      supabase,
+      campaignId,
+      userId,
+      campaign: campaign as Record<string, unknown>,
+      recipients,
+      smtpList,
+      rotationStrategy,
+      senderName,
+      staticAttachments,
+      htmlAttSpec,
+      renderBrowser,
+      suppressed,
+      ipHistory,
+      rotationThreshold,
+      manualIpRotationPause,
+      onEmailSent: () =>
+        deductOneEmailCredit(
+          supabase,
+          userId,
+          `Email send: campaign ${campaignId}`,
+        ),
+      shouldAbort,
     });
-
-    try {
-      const htmlPart = html.trim();
-      const textPart = text.trim();
-      if (!htmlPart && !allAttachments.length) {
-        throw new Error("Email content (HTML) is required.");
-      }
-      const fallbackText =
-        textPart ||
-        (allAttachments.length && !htmlPart
-          ? "Please see the attached file(s)."
-          : "");
-      const textBody = fallbackText.trim();
-
-      // Per-recipient deliverability headers + Reply-To + stable Message-ID.
-      // Yahoo and Gmail bulk-sender requirements (Feb 2024) lean heavily on
-      // List-Unsubscribe being present, so we set it for every send. The
-      // HTTPS one-click variant is added when MAILER_PUBLIC_URL is configured.
-      const delivery = buildDeliverabilityHeaders({
-        campaignId: campaignId,
-        userId,
-        streamName: (campaign.stream_name as string | null) ?? null,
-        recipientEmail: row.email,
-        fromAddress: from,
-        publicBaseUrl: process.env.MAILER_PUBLIC_URL?.trim() || null,
-        unsubscribeMailbox:
-          process.env.MAILER_UNSUBSCRIBE_MAILBOX?.trim() || null,
-      });
-
-      // Inject a small unsubscribe footer (and optional postal address) when
-      // the template doesn't already ship one. CAN-SPAM + Yahoo both expect a
-      // visible unsubscribe affordance in the body, not just in headers.
-      const withFooter = appendUnsubscribeFooter({
-        html: htmlPart,
-        text: textBody,
-        unsubscribeMailto: delivery.unsubscribeMailto,
-        unsubscribeUrl: delivery.unsubscribeUrl,
-        postalAddress: process.env.MAILER_POSTAL_ADDRESS?.trim() || null,
-      });
-
-      const textPayload =
-        withFooter.text &&
-        ({
-          content: withFooter.text,
-          contentTransferEncoding: mimeEnc.textContentTransferEncoding,
-        } as const);
-      const htmlPayload =
-        withFooter.html &&
-        ({
-          content: withFooter.html,
-          contentTransferEncoding: mimeEnc.htmlContentTransferEncoding,
-        } as const);
-      await transporter.sendMail({
-        from,
-        to: row.email,
-        replyTo: delivery.replyTo,
-        messageId: delivery.messageId,
-        subject: subj,
-        headers: delivery.headers,
-        text: textPayload || undefined,
-        html: htmlPayload || undefined,
-        ...(allAttachments.length ? { attachments: allAttachments } : {}),
-      });
-      transporter.close();
-      await supabase.from("sending_logs").insert({
-        campaign_id: campaignId,
-        user_id: userId,
-        recipient_email: row.email,
-        smtp_used: smtp.host,
-        status: "sent",
-        error_message: null,
-      });
-      await deductOneEmailCredit(supabase, userId, `Email send: campaign ${campaignId}`);
-      sentInBurst += 1;
-
-      // Check whether the next recipient would push us past the burst limit.
-      // We only pause when there's actually more work to do — otherwise the
-      // campaign just completes naturally on the next loop iteration.
-      const remaining = recipients.length - (i + 1);
-      if (sentInBurst >= rotationThreshold && remaining > 0) {
-        pausedForRotation = true;
-        break;
-      }
-    } catch (e) {
-      transporter.close();
-      failed += 1;
-      await supabase.from("sending_logs").insert({
-        campaign_id: campaignId,
-        user_id: userId,
-        recipient_email: row.email,
-        smtp_used: smtp.host,
-        status: "failed",
-        error_message: friendlyErr(e).slice(0, 2000),
-      });
-    }
-  }
+    failed = parallelResult.failed;
+    sentInBurst = parallelResult.sentInBurst;
+    failedInBurst = parallelResult.failedInBurst;
+    pausedForRotation = parallelResult.pausedForRotation;
+    ipHistory.splice(0, ipHistory.length, ...parallelResult.ipHistory);
   } finally {
     if (renderBrowser) {
       await renderBrowser.close().catch(() => {});
@@ -517,7 +451,12 @@ export async function runSendCampaign(
   // the UI can surface a per-burst report later if it wants to.
   const updatedHistory = ipHistory.map((entry, idx) =>
     idx === 0
-      ? { ...entry, sent: sentInBurst, failed, ended_at: new Date().toISOString() }
+      ? {
+          ...entry,
+          sent: sentInBurst,
+          failed: failedInBurst,
+          ended_at: new Date().toISOString(),
+        }
       : entry,
   );
 
@@ -532,6 +471,22 @@ export async function runSendCampaign(
   const totalFailed = allRows.filter(
     (r) => r.status === "failed" || r.status === "bounced",
   ).length;
+
+  if (await isCampaignCancelled(supabase, campaignId)) {
+    await supabase
+      .from("campaigns")
+      .update({
+        sent_count: totalSent,
+        failed_count: totalFailed,
+        outbound_ip_history: updatedHistory,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", campaignId);
+    console.log(
+      `[campaign-delivery] campaign=${campaignId} stopped (cancelled). sent=${totalSent} failed=${totalFailed}`,
+    );
+    return;
+  }
 
   if (pausedForRotation) {
     await supabase

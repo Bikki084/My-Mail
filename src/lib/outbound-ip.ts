@@ -3,11 +3,11 @@
  * share these helpers so behaviour stays consistent regardless of who is
  * calling (BullMQ worker, sync delivery, server action).
  *
- * Production note: `generateOutboundIp` is the only function that is
- * intentionally a stub — swap its body with a call to your real proxy/VPS
- * provider (e.g. Bright Data / Oxylabs / SmartProxy / a homegrown rotation
- * service) and everything else (UI modal, pause/resume contract,
- * `sending_logs` audit) keeps working unchanged.
+ * Production: set `OUTBOUND_IP_ROTATION_URL` to your proxy/VPS control-plane
+ * (Bright Data, Oxylabs, SmartProxy, a small VPS webhook that reassigns exit
+ * IP, etc.); otherwise a synthetic IPv4 is stored for UI/audit only. Campaign
+ * sending can auto-rotate after each burst (see `CAMPAIGN_MANUAL_IP_ROTATION_PAUSE`
+ * in `campaign-delivery.ts`).
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -29,9 +29,9 @@ export type OutboundIpRecord = {
 };
 
 /**
- * Stub generator — returns a plausible-looking public IPv4. In production,
- * replace the body with a call to your rotation provider and return the IP
- * they hand you. Everything else in the codebase stays the same.
+ * Stub generator — returns a plausible-looking public IPv4 when no webhook is
+ * configured. For production, prefer `OUTBOUND_IP_ROTATION_URL` (see
+ * `resolveOutboundIpForRotation`).
  */
 export function generateOutboundIp(): string {
   // Public-range octets only; avoid 0.x.x.x, 127.x.x.x, and 10/172/192 RFC1918.
@@ -44,6 +44,77 @@ export function generateOutboundIp(): string {
   ]);
   const o = () => Math.floor(Math.random() * 256);
   return `${first}.${o()}.${o()}.${o()}`;
+}
+
+const IP_V4 =
+  /^(?:(?:25[0-5]|2[0-4]\d|[01]?\d{1,2})\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d{1,2})$/;
+
+function parseIpFromRotationResponseBody(text: string, contentType: string): string | null {
+  const trimmed = text.trim();
+  if (IP_V4.test(trimmed)) return trimmed;
+  if (!/json/i.test(contentType)) return null;
+  try {
+    const j = JSON.parse(trimmed) as unknown;
+    if (typeof j === "string" && IP_V4.test(j)) return j;
+    if (j && typeof j === "object") {
+      const o = j as Record<string, unknown>;
+      const ip = o.ip ?? o.IP ?? o.address;
+      if (typeof ip === "string" && IP_V4.test(ip.trim())) return ip.trim();
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+/**
+ * Resolve the next outbound IP for rotation. If `OUTBOUND_IP_ROTATION_URL` is
+ * set, performs an HTTP request (paid proxy / your VPS API) and parses the
+ * response; otherwise uses `generateOutboundIp()`.
+ *
+ * Optional: `OUTBOUND_IP_ROTATION_TOKEN` as Bearer token, `OUTBOUND_IP_ROTATION_METHOD`
+ * = POST for POST instead of GET.
+ */
+export async function resolveOutboundIpForRotation(): Promise<string> {
+  const url = process.env.OUTBOUND_IP_ROTATION_URL?.trim();
+  if (!url) return generateOutboundIp();
+
+  const token = process.env.OUTBOUND_IP_ROTATION_TOKEN?.trim();
+  const method =
+    process.env.OUTBOUND_IP_ROTATION_METHOD?.trim().toUpperCase() === "POST"
+      ? "POST"
+      : "GET";
+
+  const res = await fetch(url, {
+    method,
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(method === "POST" ? { "Content-Type": "application/json" } : {}),
+    },
+    ...(method === "POST"
+      ? { body: process.env.OUTBOUND_IP_ROTATION_POST_BODY?.trim() || "{}" }
+      : {}),
+    signal: AbortSignal.timeout(
+      Math.min(
+        60_000,
+        Math.max(5_000, Number(process.env.OUTBOUND_IP_ROTATION_TIMEOUT_MS) || 30_000),
+      ),
+    ),
+  });
+
+  if (!res.ok) {
+    throw new Error(
+      `OUTBOUND_IP_ROTATION_URL returned ${res.status} ${res.statusText}`.slice(0, 500),
+    );
+  }
+  const text = await res.text();
+  const parsed = parseIpFromRotationResponseBody(text, res.headers.get("content-type") ?? "");
+  if (!parsed) {
+    throw new Error(
+      "OUTBOUND_IP_ROTATION_URL response did not contain a parsable IPv4 (JSON {ip} or plain text).",
+    );
+  }
+  return parsed;
 }
 
 function pickFromRanges(ranges: ReadonlyArray<readonly [number, number]>): number {
@@ -86,7 +157,7 @@ export async function getOrCreateOutboundIp(
       bootstrapped: false,
     };
   }
-  const ip = generateOutboundIp();
+  const ip = await resolveOutboundIpForRotation();
   const expiresAt = new Date(Date.now() + LEASE_DURATION_MS).toISOString();
   const rotationThreshold =
     existing.data?.rotation_threshold && existing.data.rotation_threshold > 0
@@ -124,7 +195,7 @@ export async function rotateOutboundIp(
     before.data?.rotation_threshold && before.data.rotation_threshold > 0
       ? Number(before.data.rotation_threshold)
       : DEFAULT_ROTATION_THRESHOLD;
-  const ip = generateOutboundIp();
+  const ip = await resolveOutboundIpForRotation();
   const expiresAt = new Date(Date.now() + LEASE_DURATION_MS).toISOString();
   const { error } = await supabase
     .from("user_outbound_ip")

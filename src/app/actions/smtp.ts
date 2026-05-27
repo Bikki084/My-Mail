@@ -10,6 +10,11 @@ import {
   isValidEncryptionKeyConfigured,
   SmtpSecretConfigError,
 } from "@/lib/crypto/smtp-secret";
+import {
+  DUPLICATE_SMTP_MESSAGE,
+  isUniqueViolation,
+  smtpIdentityKey,
+} from "@/lib/smtp-identity";
 
 export type ActionResult<T = undefined> =
   | { ok: true; data?: T }
@@ -27,6 +32,8 @@ export type SmtpFormInput = {
   password: string;
   label?: string | null;
   provider?: SmtpProvider | null;
+  /** Optional insert order for bulk rotation (lower = earlier in chunk send order). */
+  rotationOrder?: number | null;
 };
 
 const HOST_RE = /^[a-z0-9.-]+\.[a-z]{2,}$/i;
@@ -297,6 +304,9 @@ export async function saveSmtpServer(
     password_enc,
     secure: v.secure,
   };
+  if (input.rotationOrder != null && Number.isFinite(Number(input.rotationOrder))) {
+    payload.rotation_order = Math.max(0, Math.floor(Number(input.rotationOrder)));
+  }
 
   try {
     if (input.id) {
@@ -313,12 +323,29 @@ export async function saveSmtpServer(
       return { ok: true, data: toSavedRow(data as Record<string, unknown>) };
     }
 
+    const { data: existing } = await supabase
+      .from("smtp_servers")
+      .select("id")
+      .eq("user_id", guard.userId)
+      .eq("host", v.host)
+      .eq("port", v.port)
+      .ilike("username", v.username)
+      .maybeSingle();
+    if (existing) {
+      return { ok: false, error: DUPLICATE_SMTP_MESSAGE };
+    }
+
     const { data, error } = await supabase
       .from("smtp_servers")
       .insert(payload)
       .select("id, label, provider, host, port, username, secure, created_at")
       .single();
-    if (error) return { ok: false, error: error.message };
+    if (error) {
+      if (isUniqueViolation(error as { code?: string })) {
+        return { ok: false, error: DUPLICATE_SMTP_MESSAGE };
+      }
+      return { ok: false, error: error.message };
+    }
     revalidatePath("/client");
     revalidatePath("/client/smtp");
     return { ok: true, data: toSavedRow(data as Record<string, unknown>) };
@@ -340,6 +367,155 @@ export async function listSmtpServers(): Promise<ActionResult<SavedSmtpRow[]>> {
     .order("created_at", { ascending: false });
   if (error) return { ok: false, error: error.message };
   return { ok: true, data: (data ?? []).map((r) => toSavedRow(r as Record<string, unknown>)) };
+}
+
+const MAX_BULK_SMTP_IMPORT = 500;
+
+/**
+ * Inserts many SMTP rows in file order (`rotation_order` appended after any
+ * existing max for this user). Re-validates and encrypts each row server-side.
+ */
+export async function importBulkSmtpServers(
+  inputs: SmtpFormInput[],
+): Promise<
+  ActionResult<{
+    imported: number;
+    failed: { index: number; error: string }[];
+    skippedDuplicates: { index: number; reason: string }[];
+    /** Row ids inserted in file order (for composer rotation scope). */
+    insertedIds: string[];
+  }>
+> {
+  const guard = await requireClientUser();
+  if (!guard.ok) return guard;
+
+  if (!isValidEncryptionKeyConfigured()) {
+    return {
+      ok: false,
+      error:
+        "SMTP_ENCRYPTION_KEY is not configured on the server. Add a 32-byte key to .env.local " +
+        "(e.g. `SMTP_ENCRYPTION_KEY=$(openssl rand -base64 32)`) and restart the dev server.",
+    };
+  }
+
+  if (!inputs.length) {
+    return { ok: false, error: "No SMTP rows to import." };
+  }
+  if (inputs.length > MAX_BULK_SMTP_IMPORT) {
+    return {
+      ok: false,
+      error: `Too many rows at once (max ${MAX_BULK_SMTP_IMPORT}). Split into multiple files.`,
+    };
+  }
+
+  const supabase = await createServerSupabase();
+
+  const { data: existingRows } = await supabase
+    .from("smtp_servers")
+    .select("host, port, username")
+    .eq("user_id", guard.userId);
+  const existingKeys = new Set(
+    (existingRows ?? []).map((r) =>
+      smtpIdentityKey(
+        String(r.host),
+        Number(r.port),
+        String(r.username),
+      ),
+    ),
+  );
+
+  const { data: ordRow } = await supabase
+    .from("smtp_servers")
+    .select("rotation_order")
+    .eq("user_id", guard.userId)
+    .order("rotation_order", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  let nextOrder =
+    ordRow && typeof ordRow.rotation_order === "number" && Number.isFinite(ordRow.rotation_order)
+      ? Math.max(0, ordRow.rotation_order) + 1
+      : 0;
+
+  const seenInFile = new Set<string>();
+  const failed: { index: number; error: string }[] = [];
+  const skippedDuplicates: { index: number; reason: string }[] = [];
+  let imported = 0;
+  const insertedIds: string[] = [];
+
+  for (let i = 0; i < inputs.length; i++) {
+    const raw = inputs[i];
+    const v = validateSmtpInput(raw);
+    if (typeof v === "string") {
+      failed.push({ index: i, error: v });
+      continue;
+    }
+
+    const identityKey = smtpIdentityKey(v.host, v.port, v.username);
+    if (seenInFile.has(identityKey)) {
+      skippedDuplicates.push({
+        index: i,
+        reason: "Duplicate line in this import file.",
+      });
+      continue;
+    }
+    seenInFile.add(identityKey);
+
+    if (existingKeys.has(identityKey)) {
+      skippedDuplicates.push({
+        index: i,
+        reason: DUPLICATE_SMTP_MESSAGE,
+      });
+      continue;
+    }
+
+    let password_enc: string;
+    try {
+      password_enc = encryptSmtpPassword(v.password);
+    } catch (err) {
+      failed.push({ index: i, error: friendlySmtpError(err) });
+      continue;
+    }
+
+    const payload = {
+      user_id: guard.userId,
+      label: v.label ?? `${v.provider} — ${v.username}`,
+      provider: v.provider,
+      host: v.host,
+      port: v.port,
+      username: v.username,
+      password_enc,
+      secure: v.secure,
+      rotation_order: nextOrder++,
+    };
+
+    const { data: insRow, error } = await supabase
+      .from("smtp_servers")
+      .insert(payload)
+      .select("id")
+      .single();
+    if (error) {
+      if (isUniqueViolation(error as { code?: string })) {
+        skippedDuplicates.push({
+          index: i,
+          reason: DUPLICATE_SMTP_MESSAGE,
+        });
+        existingKeys.add(identityKey);
+      } else {
+        failed.push({ index: i, error: error.message });
+      }
+      continue;
+    }
+    if (insRow?.id && typeof insRow.id === "string") {
+      insertedIds.push(insRow.id);
+    }
+    existingKeys.add(identityKey);
+    imported += 1;
+  }
+
+  revalidatePath("/client");
+  revalidatePath("/client/smtp");
+  return { ok: true, data: { imported, failed, skippedDuplicates, insertedIds } };
 }
 
 export async function deleteSmtpServer(id: string): Promise<ActionResult> {

@@ -14,6 +14,7 @@
     "create-admin": "tsx scripts/create-admin-user.ts",
     "verify-admin": "tsx scripts/verify-admin-user.ts",
     "smoke-auth": "tsx scripts/smoke-test-auth.ts",
+    "check": "tsx scripts/check-connections.ts",
     "db:migrate": "tsx scripts/apply-migrations.ts",
     "db:migrate:wallet": "tsx scripts/apply-migrations.ts --only=20260428120000_wallet_and_plans.sql"
   },

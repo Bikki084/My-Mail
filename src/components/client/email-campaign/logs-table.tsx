@@ -67,7 +67,7 @@ export function LogsTable({ rows = MOCK_LOGS }: { rows?: LogRow[] }) {
       <TableHeader>
         <TableRow className="border-zinc-800 hover:bg-transparent">
           <TableHead className="text-zinc-400">Email</TableHead>
-          <TableHead className="text-zinc-400">SMTP Used</TableHead>
+          <TableHead className="text-zinc-400">SMTP account</TableHead>
           <TableHead className="text-zinc-400">Status</TableHead>
           <TableHead className="text-zinc-400">Error Message</TableHead>
           <TableHead className="text-zinc-400">Timestamp</TableHead>

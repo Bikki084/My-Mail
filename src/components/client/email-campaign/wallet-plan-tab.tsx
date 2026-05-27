@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Loader2, Server, Timer, Wallet } from "lucide-react";
+import { Loader2, Server, Timer, Trash2, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import {
   Card,
@@ -22,7 +22,17 @@ import {
 } from "@/components/ui/select";
 import { findPlan, formatServerLimit, PLANS, type Plan } from "@/lib/plans";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   activatePlan,
+  cancelActivePlan,
+  getUnfinishedCampaignCount,
   getWalletState,
   type WalletState,
 } from "@/app/actions/wallet";
@@ -43,6 +53,9 @@ export function WalletPlanTab({
   const { state, setState, timer } = useWalletState();
   const [selectedPlanId, setSelectedPlanId] = React.useState<string | null>(null);
   const [isActivating, startActivation] = React.useTransition();
+  const [isCancelling, startCancellation] = React.useTransition();
+  const [cancelDialogOpen, setCancelDialogOpen] = React.useState(false);
+  const [unfinishedCampaigns, setUnfinishedCampaigns] = React.useState(0);
   const [refreshing, setRefreshing] = React.useState(false);
 
   const activePlan = state.activePlan;
@@ -75,6 +88,17 @@ export function WalletPlanTab({
   }, [activePlan, expiresAtMs, now, refreshing, refresh]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
+  React.useEffect(() => {
+    if (!cancelDialogOpen || previewMode) return;
+    let cancelled = false;
+    void getUnfinishedCampaignCount().then((n) => {
+      if (!cancelled) setUnfinishedCampaigns(n);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [cancelDialogOpen, previewMode]);
+
   const balance = state.balance;
   const selectedPlan = selectedPlanId ? findPlan(selectedPlanId) : null;
   const insufficient = selectedPlan ? balance < selectedPlan.cost : false;
@@ -102,6 +126,30 @@ export function WalletPlanTab({
       }
       setSelectedPlanId(null);
       toast.success(`Activated ${selectedPlan.label}.`);
+    });
+  }
+
+  function handleCancelPlan() {
+    if (previewMode) return;
+    startCancellation(async () => {
+      const res = await cancelActivePlan();
+      if (!res.ok) {
+        toast.error("Could not cancel plan.", { description: res.error });
+        return;
+      }
+      if (res.data) {
+        setState({
+          balance: res.data.balance,
+          activePlan: res.data.activePlan,
+        });
+      }
+      setCancelDialogOpen(false);
+      const stopped = res.data?.cancelledCampaigns ?? 0;
+      toast.success(
+        stopped > 0
+          ? `Plan cancelled. ${stopped} unfinished campaign${stopped === 1 ? "" : "s"} stopped.`
+          : "Active plan cancelled. You can activate another plan now.",
+      );
     });
   }
 
@@ -138,7 +186,7 @@ export function WalletPlanTab({
           </div>
           <CardDescription className="text-zinc-500">
             {planRunning
-              ? "Time runs whether or not you send. Plans cannot be stacked."
+              ? "Time runs whether or not you send. Cancel early to switch plans."
               : "Pick a plan to unlock SMTP server slots for a fixed time window."}
           </CardDescription>
         </CardHeader>
@@ -149,6 +197,12 @@ export function WalletPlanTab({
               activePlan={activePlan}
               timeRemainingLabel={timer.formatHMS()}
               elapsedPct={elapsedPct}
+              previewMode={previewMode}
+              cancelDialogOpen={cancelDialogOpen}
+              onCancelDialogOpenChange={setCancelDialogOpen}
+              isCancelling={isCancelling}
+              unfinishedCampaigns={unfinishedCampaigns}
+              onConfirmCancel={handleCancelPlan}
             />
           ) : (
             <ActivatePlanForm
@@ -173,11 +227,23 @@ function ActivePlanPanel({
   activePlan,
   timeRemainingLabel,
   elapsedPct,
+  previewMode,
+  cancelDialogOpen,
+  onCancelDialogOpenChange,
+  isCancelling,
+  unfinishedCampaigns,
+  onConfirmCancel,
 }: {
   plan: Plan | undefined;
   activePlan: NonNullable<WalletState["activePlan"]>;
   timeRemainingLabel: string;
   elapsedPct: number;
+  previewMode: boolean;
+  cancelDialogOpen: boolean;
+  onCancelDialogOpenChange: (open: boolean) => void;
+  isCancelling: boolean;
+  unfinishedCampaigns: number;
+  onConfirmCancel: () => void;
 }) {
   const label = plan?.label ?? activePlan.planId;
   const serverText =
@@ -228,9 +294,87 @@ function ActivePlanPanel({
           className="w-full [&_[data-slot=progress-track]]:h-2 [&_[data-slot=progress-track]]:bg-zinc-800 [&_[data-slot=progress-indicator]]:bg-emerald-500/90"
         />
         <p className="text-[11px] text-zinc-500">
-          The plan ends at the time above. Activate a new one once it expires.
+          End the plan early to pick a different one. Your wallet credits are not
+          refunded.
         </p>
       </div>
+
+      {!previewMode && (
+        <>
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full border-red-900/60 bg-red-950/20 text-red-200 hover:bg-red-950/40 hover:text-red-100"
+            disabled={isCancelling}
+            onClick={() => onCancelDialogOpenChange(true)}
+          >
+            {isCancelling ? (
+              <>
+                <Loader2 className="mr-2 size-4 animate-spin" />
+                Cancelling…
+              </>
+            ) : (
+              <>
+                <Trash2 className="mr-2 size-4" aria-hidden />
+                Cancel plan
+              </>
+            )}
+          </Button>
+
+          <Dialog open={cancelDialogOpen} onOpenChange={onCancelDialogOpenChange}>
+            <DialogContent
+              className="border-zinc-700 bg-zinc-950 text-zinc-100 sm:max-w-md"
+              showCloseButton={!isCancelling}
+            >
+              <DialogHeader>
+                <DialogTitle className="text-zinc-100">Cancel active plan?</DialogTitle>
+                <DialogDescription className="space-y-2 text-zinc-400">
+                  <span className="block">
+                    Are you sure you want to delete this active plan? This action
+                    cannot be undone. Your wallet balance will stay the same; only
+                    the active subscription ends now.
+                  </span>
+                  {unfinishedCampaigns > 0 ? (
+                    <span className="block rounded-md border border-amber-900/50 bg-amber-950/30 px-2.5 py-2 text-amber-100">
+                      You have {unfinishedCampaigns} active campaign
+                      {unfinishedCampaigns === 1 ? "" : "s"} (queued, sending, or
+                      paused). Cancelling this plan will stop{" "}
+                      {unfinishedCampaigns === 1 ? "it" : "them"} immediately.
+                      Already-sent emails stay in your delivery log.
+                    </span>
+                  ) : null}
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter className="gap-2 sm:justify-end">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="text-zinc-400"
+                  disabled={isCancelling}
+                  onClick={() => onCancelDialogOpenChange(false)}
+                >
+                  Keep plan
+                </Button>
+                <Button
+                  type="button"
+                  className="bg-red-700 text-white hover:bg-red-600"
+                  disabled={isCancelling}
+                  onClick={onConfirmCancel}
+                >
+                  {isCancelling ? (
+                    <>
+                      <Loader2 className="mr-2 size-4 animate-spin" />
+                      Cancelling…
+                    </>
+                  ) : (
+                    "Yes, cancel plan"
+                  )}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </>
+      )}
     </div>
   );
 }

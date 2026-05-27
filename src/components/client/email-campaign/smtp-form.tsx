@@ -31,16 +31,23 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { setLastBulkImportedSmtpIds } from "@/lib/bulk-smtp-session";
+import {
+  DUPLICATE_SMTP_MESSAGE,
+  smtpIdentityKey,
+} from "@/lib/smtp-identity";
 import { cn } from "@/lib/utils";
 import { ServerIpPanel } from "./server-ip-panel";
 import {
   deleteSmtpServer,
+  importBulkSmtpServers,
   listSmtpServers,
   saveSmtpServer,
   sendSmtpTestEmail,
   sendTestEmailFromSaved,
   testSmtpConnection,
   type SavedSmtpRow,
+  type SmtpFormInput,
   type SmtpProvider,
 } from "@/app/actions/smtp";
 
@@ -105,6 +112,38 @@ function findPreset(id: string | null): PresetDef | null {
   return PRESETS.find((p) => p.id === id) ?? null;
 }
 
+/** Guess Gmail / Yahoo / Outlook SMTP preset from the address domain (bulk CSV can mix providers). */
+function inferPresetFromEmail(email: string): PresetDef | null {
+  const at = email.lastIndexOf("@");
+  if (at < 0) return null;
+  const domain = email.slice(at + 1).trim().toLowerCase();
+  if (!domain) return null;
+
+  if (domain === "gmail.com" || domain === "googlemail.com") {
+    return findPreset("gmail");
+  }
+  if (
+    domain === "yahoo.com" ||
+    domain === "ymail.com" ||
+    domain === "yahoo.co.uk" ||
+    domain === "rocketmail.com"
+  ) {
+    return findPreset("yahoo");
+  }
+  if (
+    domain === "outlook.com" ||
+    domain === "hotmail.com" ||
+    domain === "live.com" ||
+    domain === "msn.com"
+  ) {
+    return findPreset("outlook");
+  }
+  if (domain.endsWith(".onmicrosoft.com")) {
+    return findPreset("outlook");
+  }
+  return null;
+}
+
 const BULK_PAGE_SIZE = 10;
 
 type BulkSmtpFormat = "simple" | "advanced";
@@ -120,6 +159,9 @@ type BulkSmtpRow = {
   password?: string;
   invalid?: boolean;
   reason?: string;
+  /** Already saved or repeated in the same file — not imported. */
+  duplicate?: boolean;
+  duplicateReason?: string;
 };
 
 type BulkSmtpParseResult = {
@@ -127,6 +169,13 @@ type BulkSmtpParseResult = {
   format: BulkSmtpFormat | null;
   invalidCount: number;
 };
+
+function isLikelyHeaderLine(line: string): boolean {
+  const lower = line.trim().toLowerCase();
+  if (/^(email|user(name)?|login)[,:]/.test(lower)) return true;
+  if (/^(host|server)[,:]/.test(lower)) return true;
+  return false;
+}
 
 function parseAdvancedLine(line: string): Omit<BulkSmtpRow, "id" | "lineNo" | "raw"> | null {
   const parts = line.split(",").map((p) => p.trim());
@@ -139,12 +188,26 @@ function parseAdvancedLine(line: string): Omit<BulkSmtpRow, "id" | "lineNo" | "r
   return { format: "advanced", host, port, username, password };
 }
 
+/** `user:pass` — preset supplies SMTP host/port. */
 function parseSimpleLine(line: string): Omit<BulkSmtpRow, "id" | "lineNo" | "raw"> | null {
   const idx = line.indexOf(":");
   if (idx <= 0 || idx === line.length - 1) return null;
   const username = line.slice(0, idx).trim();
   const password = line.slice(idx + 1).trim();
   if (!username || !password) return null;
+  return { format: "simple", username, password };
+}
+
+/**
+ * CSV-style `email,app-password` (first comma only so Gmail 16-char app passwords
+ * with spaces stay intact). Requires `@` in the email part.
+ */
+function parseCsvSimpleLine(line: string): Omit<BulkSmtpRow, "id" | "lineNo" | "raw"> | null {
+  const idx = line.indexOf(",");
+  if (idx <= 0 || idx === line.length - 1) return null;
+  const username = line.slice(0, idx).trim();
+  const password = line.slice(idx + 1).trim();
+  if (!username || !password || !username.includes("@")) return null;
   return { format: "simple", username, password };
 }
 
@@ -158,6 +221,7 @@ function parseBulkSmtpText(text: string): BulkSmtpParseResult {
     const trimmed = original.trim();
     if (!trimmed) return;
     if (trimmed.startsWith("#") || trimmed.startsWith("//")) return;
+    if (isLikelyHeaderLine(trimmed)) return;
 
     const id = `line-${i + 1}`;
     const lineNo = i + 1;
@@ -168,7 +232,7 @@ function parseBulkSmtpText(text: string): BulkSmtpParseResult {
       rows.push({ id, lineNo, raw: trimmed, ...advanced });
       return;
     }
-    const simple = parseSimpleLine(trimmed);
+    const simple = parseSimpleLine(trimmed) ?? parseCsvSimpleLine(trimmed);
     if (simple) {
       simpleCount++;
       rows.push({ id, lineNo, raw: trimmed, ...simple });
@@ -180,7 +244,7 @@ function parseBulkSmtpText(text: string): BulkSmtpParseResult {
       raw: trimmed,
       format: null,
       invalid: true,
-      reason: "Expected user:pass or host,port,user,pass",
+      reason: "Expected email:pass, email,pass, or host,port,user,pass",
     });
   });
 
@@ -203,6 +267,43 @@ type SmtpBulkFileItem = {
 
 function smtpFileKey(f: File) {
   return `${f.name}-${f.size}-${f.lastModified}`;
+}
+
+function bulkRowToSmtpInput(
+  row: BulkSmtpRow,
+  manualPreset: PresetDef | null,
+): SmtpFormInput | null {
+  if (row.invalid || !row.format) return null;
+  if (row.format === "advanced") {
+    const port = parseInt(String(row.port ?? ""), 10);
+    if (!Number.isFinite(port) || port <= 0) return null;
+    const host = String(row.host ?? "").trim();
+    const username = String(row.username ?? "").trim();
+    if (!host || !username) return null;
+    const usesImplicitTls = port === 465;
+    return {
+      host,
+      port,
+      secure: usesImplicitTls,
+      username,
+      password: String(row.password ?? ""),
+      provider: "custom",
+      label: username.slice(0, 80),
+    };
+  }
+  const username = String(row.username ?? "").trim();
+  if (!username) return null;
+  const preset = inferPresetFromEmail(username) ?? manualPreset;
+  if (!preset) return null;
+  return {
+    host: preset.host,
+    port: preset.port,
+    secure: preset.secure,
+    username,
+    password: String(row.password ?? ""),
+    provider: preset.id,
+    label: `${preset.label} — ${username}`.slice(0, 80),
+  };
 }
 
 function mergeBulkPreviews(items: SmtpBulkFileItem[]): {
@@ -455,19 +556,51 @@ export function SmtpForm({
     }
   }
 
-  // --- Bulk SMTP upload (UI-only: read + parse client-side, no backend)
+  // --- Bulk SMTP upload: parse in browser; import persists via importBulkSmtpServers.
   const [smtpFiles, setSmtpFiles] = React.useState<SmtpBulkFileItem[]>([]);
   const [bulkFileError, setBulkFileError] = React.useState<string | null>(null);
   const [bulkPage, setBulkPage] = React.useState(1);
+  const [bulkImporting, setBulkImporting] = React.useState(false);
   const bulkUploadRef = React.useRef<HTMLInputElement>(null);
   const smtpFilesPrevLen = React.useRef(0);
 
   const mergedBulk = React.useMemo(() => mergeBulkPreviews(smtpFiles), [smtpFiles]);
-  const bulkRows = mergedBulk.rows;
+  const bulkRowsRaw = mergedBulk.rows;
   const bulkFormat = mergedBulk.format;
-  const bulkInvalidCount = mergedBulk.invalidCount;
-  const bulkValidCount = bulkRows.length - bulkInvalidCount;
   const bulkSourceNames = mergedBulk.sourceNames;
+
+  const bulkRows = React.useMemo(() => {
+    const existing = new Set(
+      savedRows.map((r) => smtpIdentityKey(r.host, r.port, r.username)),
+    );
+    const fileSeen = new Set<string>();
+    return bulkRowsRaw.map((row) => {
+      if (row.invalid) return row;
+      const input = bulkRowToSmtpInput(row, activePreset);
+      if (!input) return row;
+      const key = smtpIdentityKey(input.host, input.port, input.username);
+      if (existing.has(key)) {
+        return {
+          ...row,
+          duplicate: true,
+          duplicateReason: DUPLICATE_SMTP_MESSAGE,
+        };
+      }
+      if (fileSeen.has(key)) {
+        return {
+          ...row,
+          duplicate: true,
+          duplicateReason: "Duplicate line in this import file.",
+        };
+      }
+      fileSeen.add(key);
+      return row;
+    });
+  }, [bulkRowsRaw, savedRows, activePreset]);
+
+  const bulkInvalidCount = bulkRows.filter((r) => r.invalid).length;
+  const bulkDuplicateCount = bulkRows.filter((r) => r.duplicate).length;
+  const bulkValidCount = bulkRows.filter((r) => !r.invalid && !r.duplicate).length;
 
   const bulkTotalPages = Math.max(1, Math.ceil(bulkRows.length / BULK_PAGE_SIZE));
   const bulkPageRows = React.useMemo(
@@ -543,7 +676,7 @@ export function SmtpForm({
       setBulkFileError(errors.join("; "));
     } else if (newItems.length === 0 && picked.length > 0) {
       setBulkFileError(
-        "No new files added (duplicates or invalid). Expected `user:pass` or `host,port,user,pass` per line.",
+        "No new files added (duplicates or invalid). Expected `email:pass`, `email,pass`, or `host,port,user,pass` per line.",
       );
     }
   }
@@ -564,6 +697,83 @@ export function SmtpForm({
       }
       return next;
     });
+  }
+
+  async function handleBulkImport() {
+    if (previewMode) {
+      toast.message("Sign in to import SMTP servers.");
+      return;
+    }
+    const unresolvedLines: number[] = [];
+    for (const row of bulkRows) {
+      if (row.invalid || row.format !== "simple") continue;
+      const u = String(row.username ?? "").trim();
+      if (!inferPresetFromEmail(u) && !activePreset) {
+        unresolvedLines.push(row.lineNo);
+      }
+    }
+    if (unresolvedLines.length > 0) {
+      toast.error("Some rows need a preset or full SMTP line", {
+        description:
+          `We auto-detect Gmail, Yahoo, and Outlook from the email domain. For other domains, click a provider preset above, or use host,port,user,pass per line. Problem rows: ${unresolvedLines.slice(0, 8).join(", ")}${unresolvedLines.length > 8 ? "…" : ""}`,
+      });
+      return;
+    }
+    const inputs: SmtpFormInput[] = [];
+    for (const row of bulkRows) {
+      if (row.invalid || row.duplicate) continue;
+      const input = bulkRowToSmtpInput(row, activePreset);
+      if (input) inputs.push(input);
+    }
+    if (inputs.length === 0) {
+      toast.error("Nothing to import", {
+        description: "Fix invalid rows or add a file with valid lines.",
+      });
+      return;
+    }
+    setBulkImporting(true);
+    try {
+      const res = await importBulkSmtpServers(inputs);
+      if (!res.ok) {
+        toast.error("Import failed", { description: res.error });
+        return;
+      }
+      const { imported, failed, skippedDuplicates, insertedIds } = res.data!;
+      if (insertedIds.length > 0) {
+        setLastBulkImportedSmtpIds(insertedIds);
+      }
+      const skipped = skippedDuplicates.length;
+      if (imported === 0 && skipped > 0 && failed.length === 0) {
+        toast.message("No new SMTP servers imported", {
+          description: `${skipped} duplicate(s) skipped — already in Saved SMTP servers.`,
+        });
+      } else if (failed.length || skipped > 0) {
+        const parts: string[] = [];
+        if (imported > 0) parts.push(`${imported} imported`);
+        if (skipped > 0) parts.push(`${skipped} duplicate(s) skipped`);
+        if (failed.length > 0) parts.push(`${failed.length} failed`);
+        toast.message(parts.join(", "), {
+          description:
+            skipped > 0
+              ? "Duplicates were not inserted. Use existing servers or remove them from Saved SMTP first."
+              : failed
+                  .slice(0, 3)
+                  .map((f) => `row ${f.index + 1}: ${f.error}`)
+                  .join(" · "),
+        });
+      } else {
+        toast.success(`Imported ${imported} SMTP server(s).`, {
+          description:
+            "They appear in Saved SMTP below. The next campaign send will rotate through only this batch until you import another file.",
+        });
+      }
+      await refreshSaved();
+      setSmtpFiles([]);
+      setBulkFileError(null);
+      if (bulkUploadRef.current) bulkUploadRef.current.value = "";
+    } finally {
+      setBulkImporting(false);
+    }
   }
 
   return (
@@ -860,8 +1070,17 @@ export function SmtpForm({
         <CardHeader>
           <CardTitle className="text-zinc-100">Bulk SMTP upload</CardTitle>
           <CardDescription>
-            Paste one entry per line — <span className="font-mono text-zinc-400">user:pass</span> or{" "}
-            <span className="font-mono text-zinc-400">host,port,user,pass</span>.
+            One entry per line — <span className="font-mono text-zinc-400">email:pass</span> or{" "}
+            <span className="font-mono text-zinc-400">email,pass</span> (CSV-friendly) or{" "}
+            <span className="font-mono text-zinc-400">host,port,user,pass</span>. Gmail, Yahoo, and
+            Outlook addresses auto-pick the right SMTP host from the domain (mixed CSVs are fine).
+            For other domains, select a preset above or use a full{" "}
+            <span className="font-mono text-zinc-400">host,port,user,pass</span> line. Header rows like{" "}
+            <span className="font-mono text-zinc-400">email,app-password</span> are skipped. Choose files, review
+            the preview, then <span className="text-zinc-300">Import valid SMTP servers</span> to save
+            them to your account. Preview alone does not create servers — you must click Import.
+            After a successful import, the next campaign sends rotate through{" "}
+            <span className="text-zinc-300">only that batch</span> until you run another bulk import.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-0">
@@ -933,9 +1152,38 @@ export function SmtpForm({
           {!bulkFileError && smtpFiles.length === 0 && (
             <p className="mt-3 text-xs text-zinc-500">
               Lines starting with <span className="font-mono">#</span> or{" "}
-              <span className="font-mono">{"//"}</span> are ignored. Credentials are parsed locally only.
+              <span className="font-mono">{"//"}</span> are ignored. Files are read in your browser;
+              import sends only validated rows to the server (encrypted like single Save).
             </p>
           )}
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              disabled={previewMode || bulkImporting || bulkValidCount === 0}
+              className="bg-emerald-700 text-white hover:bg-emerald-600 disabled:opacity-50"
+              onClick={() => void handleBulkImport()}
+            >
+              {bulkImporting ? (
+                <>
+                  <Loader2 className="me-1 size-4 animate-spin" />
+                  Importing…
+                </>
+              ) : (
+                "Import valid SMTP servers"
+              )}
+            </Button>
+            {bulkDuplicateCount > 0 && (
+              <span className="text-xs text-amber-200/90">
+                {bulkDuplicateCount} duplicate(s) will be skipped.
+              </span>
+            )}
+            {bulkInvalidCount > 0 && (
+              <span className="text-xs text-red-300/90">
+                {bulkInvalidCount} invalid row(s) will be skipped.
+              </span>
+            )}
+          </div>
         </CardContent>
       </Card>
 
@@ -951,6 +1199,14 @@ export function SmtpForm({
                 >
                   Total SMTPs: {bulkValidCount}
                 </Badge>
+                {bulkDuplicateCount > 0 && (
+                  <Badge
+                    variant="outline"
+                    className="border-amber-700/80 bg-amber-950/50 text-xs text-amber-200"
+                  >
+                    {bulkDuplicateCount} duplicate
+                  </Badge>
+                )}
                 {bulkInvalidCount > 0 && (
                   <Badge variant="destructive" className="text-xs">
                     {bulkInvalidCount} invalid
@@ -961,7 +1217,9 @@ export function SmtpForm({
                     variant="outline"
                     className="border-zinc-700 text-xs uppercase tracking-wide text-zinc-400"
                   >
-                    {bulkFormat === "advanced" ? "host,port,user,pass" : "user:pass"}
+                    {bulkFormat === "advanced"
+                      ? "host,port,user,pass"
+                      : "email:pass or email,pass"}
                   </Badge>
                 )}
               </CardTitle>
@@ -971,8 +1229,9 @@ export function SmtpForm({
                   {bulkSourceNames.length <= 2
                     ? bulkSourceNames.join(", ")
                     : `${bulkSourceNames.length} files`}
-                </span>{" "}
-                — UI only, nothing is uploaded.
+                </span>
+                . Use <span className="text-zinc-300">Import valid SMTP servers</span> above to persist
+                rows (server encrypts passwords).
               </CardDescription>
             </div>
             <div className="flex items-center gap-2 text-sm text-zinc-500">
@@ -1026,7 +1285,11 @@ export function SmtpForm({
                   {bulkPageRows.map((row) => (
                     <TableRow
                       key={row.id}
-                      className={cn("border-zinc-800", row.invalid && "bg-red-950/30")}
+                      className={cn(
+                        "border-zinc-800",
+                        row.invalid && "bg-red-950/30",
+                        row.duplicate && !row.invalid && "bg-amber-950/25",
+                      )}
                     >
                       <TableCell className="text-xs tabular-nums text-zinc-500">
                         {row.lineNo}
@@ -1060,6 +1323,14 @@ export function SmtpForm({
                         {row.invalid ? (
                           <Badge variant="destructive" className="text-xs" title={row.reason}>
                             Invalid
+                          </Badge>
+                        ) : row.duplicate ? (
+                          <Badge
+                            variant="outline"
+                            className="border-amber-700/80 bg-amber-950/50 text-xs text-amber-200"
+                            title={row.duplicateReason}
+                          >
+                            Duplicate
                           </Badge>
                         ) : (
                           <Badge
@@ -1108,7 +1379,11 @@ export function SmtpForm({
           </div>
           <Separator className="bg-zinc-800" />
           <p className="text-xs text-zinc-500">
-            Rotation applies when multiple SMTPs are saved and selected on a campaign.
+            Campaign sends split recipients across your saved SMTPs in{" "}
+            <span className="text-zinc-400">even blocks</span> (e.g. 100 recipients and 5 SMTPs → 20
+            sends per account in list order). Bulk import assigns{" "}
+            <span className="font-mono text-zinc-400">rotation_order</span> from file order so that
+            order matches your CSV/txt.
           </p>
         </CardContent>
       </Card>

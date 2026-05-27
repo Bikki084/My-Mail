@@ -64,7 +64,7 @@ create table if not exists public.wallet_transactions (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.profiles (id) on delete cascade,
   admin_id uuid references public.profiles (id),
-  kind text not null check (kind in ('topup', 'plan_purchase')),
+  kind text not null check (kind in ('topup', 'plan_purchase', 'plan_cancel')),
   amount integer not null,
   plan_id text,
   note text,
@@ -103,6 +103,14 @@ create table if not exists public.smtp_servers (
 );
 create index if not exists smtp_servers_user_idx on public.smtp_servers (user_id);
 
+create unique index if not exists smtp_servers_user_identity_unique
+  on public.smtp_servers (
+    user_id,
+    host,
+    port,
+    (lower(trim(username)))
+  );
+
 create table if not exists public.campaigns (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.profiles (id) on delete cascade,
@@ -129,9 +137,9 @@ create table if not exists public.campaigns (
   attachment_paths jsonb not null default '[]'::jsonb,
   smtp_server_ids uuid[] not null default '{}',
   rotation_strategy text not null default 'round_robin'
-    check (rotation_strategy in ('round_robin', 'random', 'threshold')),
+    check (rotation_strategy in ('round_robin', 'random', 'threshold', 'alternating')),
   status text not null default 'draft'
-    check (status in ('draft', 'queued', 'sending', 'completed', 'failed', 'paused')),
+    check (status in ('draft', 'queued', 'sending', 'completed', 'failed', 'paused', 'cancelled')),
   total_emails integer not null default 0,
   sent_count integer not null default 0,
   failed_count integer not null default 0,

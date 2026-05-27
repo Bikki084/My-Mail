@@ -37,6 +37,9 @@ const campaignFieldsSchema = z.object({
   /** User-facing (`auto`, …) or legacy MIME tokens; coerced server-side. */
   encoding: z.string().optional(),
   smtp_server_ids: z.array(z.string().uuid()).optional(),
+  rotation_strategy: z
+    .enum(["round_robin", "random", "threshold", "alternating"])
+    .optional(),
   /** Rendered to PDF or PNG per recipient at send time. */
   html_attachment: htmlAttachmentPayloadSchema.optional().nullable(),
   recipients: z.array(
@@ -197,17 +200,28 @@ export async function POST(req: Request) {
       body_text: autoText || null,
       encoding: encPersist,
       smtp_server_ids: smtp_server_ids ?? [],
+      rotation_strategy: rest.rotation_strategy ?? "round_robin",
       attachment_paths: normalizedAttachments,
       html_attachment: htmlAttachment,
       recipients: row,
       total_emails: row.length,
       status: "draft",
     })
-    .select("id, attachment_paths")
+    .select("id, attachment_paths, smtp_server_ids")
     .single();
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  const requestedSmtpIds = (smtp_server_ids ?? []).length;
+  const storedSmtpIds = Array.isArray(data.smtp_server_ids)
+    ? data.smtp_server_ids.length
+    : 0;
+  if (requestedSmtpIds > 0 && storedSmtpIds !== requestedSmtpIds) {
+    console.error(
+      `[api/campaigns] smtp_server_ids count mismatch after insert: requested ${requestedSmtpIds}, stored ${storedSmtpIds} for campaign ${data.id}`,
+    );
   }
   if (normalizedAttachments.length > 0) {
     const saved = data.attachment_paths;

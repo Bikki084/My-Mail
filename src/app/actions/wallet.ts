@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/admin";
 import { findPlan, PLANS, type Plan } from "@/lib/plans";
+import { cancelActivePlanForUser } from "@/lib/wallet-plan-cancel";
+import { countUnfinishedCampaigns } from "@/lib/campaign-cancel";
 
 export type ActionResult<T = undefined> =
   | { ok: true; data?: T }
@@ -21,6 +23,10 @@ export type ActivePlanState = {
 export type WalletState = {
   balance: number;
   activePlan: ActivePlanState | null;
+};
+
+export type CancelPlanResult = WalletState & {
+  cancelledCampaigns: number;
 };
 
 const EMPTY_STATE: WalletState = { balance: 0, activePlan: null };
@@ -250,6 +256,65 @@ export async function activatePlan(
     },
   };
   return { ok: true, data: newState };
+}
+
+/**
+ * Cancels the user's current active plan immediately.
+ * Wallet balance is not refunded; purchase history remains in `wallet_transactions`.
+ */
+/** How many campaigns would be stopped if the user cancels their plan now. */
+export async function getUnfinishedCampaignCount(): Promise<number> {
+  const supabase = await createServerSupabase();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return 0;
+  return countUnfinishedCampaigns(supabase, user.id);
+}
+
+export async function cancelActivePlan(): Promise<ActionResult<CancelPlanResult>> {
+  const supabase = await createServerSupabase();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not signed in." };
+
+  let admin;
+  try {
+    admin = createServiceClient();
+  } catch {
+    return {
+      ok: false,
+      error: "Server is missing SUPABASE_SERVICE_ROLE_KEY. Add it to .env.local.",
+    };
+  }
+
+  const { data: profile, error: profileErr } = await admin
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .maybeSingle();
+  if (profileErr) return { ok: false, error: profileErr.message };
+  if (!profile || profile.role !== "client") {
+    return { ok: false, error: "Only client accounts can cancel plans." };
+  }
+
+  const result = await cancelActivePlanForUser(admin, user.id);
+  if (!result.ok) {
+    return { ok: false, error: result.error };
+  }
+
+  revalidatePath("/client");
+  revalidatePath("/client/overview");
+  revalidatePath("/admin/reports");
+
+  return {
+    ok: true,
+    data: {
+      ...result.state,
+      cancelledCampaigns: result.cancelledCampaigns,
+    },
+  };
 }
 
 /** Re-export the plan list so client components can render the dropdown

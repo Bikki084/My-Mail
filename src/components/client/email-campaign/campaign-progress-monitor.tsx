@@ -22,7 +22,13 @@ import { rotateServerIpAction } from "@/app/actions/server-ip";
  */
 type ActiveCampaign = {
   id: string;
-  status: "queued" | "sending" | "paused" | "completed" | "failed";
+  status:
+    | "queued"
+    | "sending"
+    | "paused"
+    | "completed"
+    | "failed"
+    | "cancelled";
   pauseReason: string | null;
   totalEmails: number;
   sentCount: number;
@@ -151,6 +157,11 @@ export function CampaignProgressMonitor({
   React.useEffect(() => {
     if (!active) {
       setPauseModalOpen(false);
+      return;
+    }
+    if (active.status === "cancelled") {
+      setPauseModalOpen(false);
+      setCompletionModalOpen(false);
       return;
     }
     if (active.status === "paused" && active.pauseReason === "rotate_ip") {
