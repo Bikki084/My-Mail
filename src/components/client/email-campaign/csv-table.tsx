@@ -70,18 +70,44 @@ function isValidEmail(raw: string): boolean {
   return s.length > 0 && EMAIL_RE.test(s);
 }
 
+/** Normalize header cells (BOM, spacing) and match common email column names. */
+function resolveEmailColumnKey(fields: string[]): string | null {
+  const normalized = fields.map((f) => ({
+    raw: f,
+    norm: f.replace(/^\uFEFF/, "").trim().toLowerCase(),
+  }));
+  const exact = normalized.find((f) => f.norm === "email");
+  if (exact) return exact.raw;
+  const loose = normalized.find(
+    (f) =>
+      f.norm === "e-mail" ||
+      f.norm === "email address" ||
+      f.norm === "emailaddress" ||
+      f.norm === "mail" ||
+      f.norm.endsWith(" email") ||
+      f.norm.includes("email"),
+  );
+  return loose?.raw ?? null;
+}
+
 function buildParsedFromParseResult(
   fileName: string,
   res: Papa.ParseResult<Record<string, string>>,
 ): ParsedCsv | { error: string } {
-  const rawFields = res.meta.fields?.filter((f): f is string => f != null && String(f).trim() !== "") ?? [];
+  const rawFields =
+    res.meta.fields
+      ?.map((f) => (f != null ? String(f).replace(/^\uFEFF/, "").trim() : ""))
+      .filter((f) => f !== "") ?? [];
   if (!rawFields.length && res.data.length === 0) {
     return { error: "CSV has no headers or data." };
   }
 
-  const emailKey = rawFields.find((f) => f.trim().toLowerCase() === "email");
+  const emailKey = resolveEmailColumnKey(rawFields);
   if (!emailKey) {
-    return { error: 'CSV must include an "email" column.' };
+    const preview = rawFields.slice(0, 8).join(", ") || "(none)";
+    return {
+      error: `CSV must include an "email" column (first row). Found: ${preview}`,
+    };
   }
 
   const otherKeys = rawFields.filter((f) => f !== emailKey);
@@ -192,11 +218,31 @@ function parseCsvFile(file: File): Promise<Papa.ParseResult<Record<string, strin
   return new Promise((resolve, reject) => {
     Papa.parse<Record<string, string>>(file, {
       header: true,
-      skipEmptyLines: true,
-      complete: resolve,
+      skipEmptyLines: "greedy",
+      /** Auto-detect comma, semicolon (Excel India/EU), tab, etc. */
+      delimiter: "",
+      encoding: "UTF-8",
+      transformHeader: (h) => h.replace(/^\uFEFF/, "").trim(),
+      complete: (res) => {
+        if (res.data.length === 0 && (!res.meta.fields || res.meta.fields.length === 0)) {
+          const detail = res.errors[0]?.message;
+          reject(new Error(detail ?? "No headers or rows found"));
+          return;
+        }
+        resolve(res);
+      },
       error: (err) => reject(err),
     });
   });
+}
+
+function formatCsvParseError(err: unknown): string {
+  const detail = err instanceof Error ? err.message : String(err);
+  return (
+    `Failed to parse CSV: ${detail}. ` +
+    "Use a .csv file (not Excel .xlsx), UTF-8 encoding, first row must include an email column, " +
+    "and one row per recipient."
+  );
 }
 
 /** Set only after a successful parse; used for duplicate detection and cleared when the user removes the file. */
@@ -404,11 +450,11 @@ export function CsvRecipientsTab({ onGoToSmtp }: { onGoToSmtp?: () => void }) {
       } catch {
         setSuccessfulContentHash(null);
       }
-    } catch {
+    } catch (e) {
       setParsedData(null);
       setCurrentPage(1);
       setMergeTags([]);
-      setCsvFileError("Failed to parse CSV. Check the file format and try again.");
+      setCsvFileError(formatCsvParseError(e));
     } finally {
       setParsing(false);
     }
