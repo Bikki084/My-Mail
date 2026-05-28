@@ -38,6 +38,7 @@ import {
 } from "@/lib/campaign-send-client";
 import { applyMergePreview, buildPreviewRecipient, htmlToPlainText } from "@/lib/html-email";
 import { MAIL_ENCODING_LABELS, MAIL_ENCODING_UI } from "@/lib/mail-encoding";
+import { randomId } from "@/lib/random-id";
 import { useEmailCampaign } from "./email-campaign-context";
 import { useWalletState } from "./wallet-state-context";
 
@@ -217,7 +218,7 @@ export function EmailEditor({
     setHeaders((h) => [
       ...h,
       {
-        id: crypto.randomUUID(),
+        id: randomId(),
         name: headerName.trim(),
         value: headerValue,
       },

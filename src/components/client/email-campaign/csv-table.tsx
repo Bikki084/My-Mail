@@ -39,6 +39,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { randomId } from "@/lib/random-id";
 import { cn } from "@/lib/utils";
 import type { CsvPreviewRow, ParsedCsv } from "@/lib/csv-types";
 import { useEmailCampaign } from "./email-campaign-context";
@@ -332,7 +333,7 @@ export function CsvRecipientsTab({ onGoToSmtp }: { onGoToSmtp?: () => void }) {
     setSelectedCsvName(csv.fileName);
     setMergeTags(
       csv.columnOrder.map((key) => ({
-        id: crypto.randomUUID(),
+        id: randomId(),
         key: key.trim(),
       })),
     );
@@ -350,7 +351,7 @@ export function CsvRecipientsTab({ onGoToSmtp }: { onGoToSmtp?: () => void }) {
 
   function tagsFromHeaders(headers: string[]): MergeTagItem[] {
     return headers.map((key) => ({
-      id: crypto.randomUUID(),
+      id: randomId(),
       key: key.trim(),
     }));
   }
@@ -497,7 +498,7 @@ export function CsvRecipientsTab({ onGoToSmtp }: { onGoToSmtp?: () => void }) {
     }
     setTagKeyError(null);
     if (tagDialogMode === "add") {
-      setMergeTags((prev) => [...prev, { id: crypto.randomUUID(), key: raw }]);
+      setMergeTags((prev) => [...prev, { id: randomId(), key: raw }]);
     } else if (editingTagId) {
       setMergeTags((prev) =>
         prev.map((t) => (t.id === editingTagId ? { ...t, key: raw } : t)),
