@@ -223,6 +223,27 @@ async function main() {
     }
   }
 
+  // --- Chromium (HTML → PDF/image attachments) ---
+  console.log("\nHTML attachments (Puppeteer / Chromium)");
+  const chromiumCandidates = [
+    process.env.PUPPETEER_EXECUTABLE_PATH?.trim(),
+    "/usr/bin/chromium-browser",
+    "/usr/bin/chromium",
+  ].filter((p): p is string => Boolean(p?.trim()));
+  const chromiumPath = chromiumCandidates.find((p) => existsSync(p));
+  if (chromiumPath) {
+    row("Chromium binary", "ok", chromiumPath);
+  } else if (process.platform === "linux") {
+    row(
+      "Chromium binary",
+      "warn",
+      "not found — PDF/image attachments need: sudo bash scripts/install-chromium-deps.sh",
+    );
+    warnings++;
+  } else {
+    row("Chromium binary", "ok", "using Puppeteer bundled Chrome (Windows/macOS dev)");
+  }
+
   // --- Worker readiness ---
   console.log("\nEmail worker (npm run worker / auto with npm run dev)");
   const workerReady =

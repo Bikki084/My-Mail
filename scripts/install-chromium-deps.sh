@@ -11,7 +11,7 @@ fi
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 
-# Core libs (22.04 names; apt skips missing packages on newer releases when using || true)
+# Shared libraries required by Chromium/Puppeteer (fixes libatk-1.0.so.0 etc.)
 apt-get install -y --no-install-recommends \
   ca-certificates \
   fonts-liberation \
@@ -41,14 +41,12 @@ apt-get install -y --no-install-recommends \
   libxss1 \
   libxtst6 \
   wget \
-  xdg-utils \
-  || true
+  xdg-utils
 
 if apt-cache show chromium-browser &>/dev/null; then
-  apt-get install -y --no-install-recommends chromium-browser || true
-fi
-if ! command -v chromium-browser &>/dev/null && ! command -v chromium &>/dev/null; then
-  apt-get install -y --no-install-recommends chromium || true
+  apt-get install -y --no-install-recommends chromium-browser
+elif apt-cache show chromium &>/dev/null; then
+  apt-get install -y --no-install-recommends chromium
 fi
 
 CHROME="$(command -v chromium-browser || command -v chromium || true)"

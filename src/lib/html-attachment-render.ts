@@ -1,8 +1,29 @@
 import "server-only";
+import { existsSync } from "node:fs";
 import puppeteer from "puppeteer";
 import type { Browser } from "puppeteer";
 
 const RENDER_TIMEOUT_MS = 45_000;
+
+const LINUX_CHROMIUM_CANDIDATES = [
+  "/usr/bin/chromium-browser",
+  "/usr/bin/chromium",
+  "/usr/bin/google-chrome-stable",
+  "/usr/bin/google-chrome",
+  "/snap/bin/chromium",
+];
+
+/** Prefer explicit env, then system Chromium on Linux VPS, then Puppeteer's bundled Chrome. */
+export function resolveChromiumExecutablePath(): string | undefined {
+  const fromEnv = process.env.PUPPETEER_EXECUTABLE_PATH?.trim();
+  if (fromEnv && existsSync(fromEnv)) return fromEnv;
+  if (process.platform === "linux") {
+    for (const p of LINUX_CHROMIUM_CANDIDATES) {
+      if (existsSync(p)) return p;
+    }
+  }
+  return undefined;
+}
 
 function wrapForRender(html: string): string {
   const t = html.trim();
@@ -11,7 +32,7 @@ function wrapForRender(html: string): string {
 }
 
 export async function launchRenderBrowser(): Promise<Browser> {
-  const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH?.trim() || undefined;
+  const executablePath = resolveChromiumExecutablePath();
   return puppeteer.launch({
     headless: true,
     ...(executablePath ? { executablePath } : {}),
