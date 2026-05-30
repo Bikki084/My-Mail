@@ -367,13 +367,11 @@ export async function runSendCampaign(
     try {
       renderBrowser = await launchRenderBrowser();
     } catch (e) {
-      const msg = `Could not start HTML attachment renderer: ${friendlyErr(e)}`;
-      console.error(`[campaign-delivery] campaign=${campaignId} ${msg}`);
-      await supabase
-        .from("campaigns")
-        .update({ status: "failed", updated_at: new Date().toISOString() })
-        .eq("id", campaignId);
-      throw new Error(msg);
+      console.warn(
+        `[campaign-delivery] campaign=${campaignId} HTML attachment renderer unavailable ` +
+          `(sending email body only): ${friendlyErr(e)}. ` +
+          "On Ubuntu run: bash scripts/install-chromium-deps.sh",
+      );
     }
   }
   const rawAttachLen = Array.isArray(campaign.attachment_paths)
