@@ -2,12 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { runSendCampaign } from "@/lib/campaign-delivery";
 import { createServiceClient } from "@/lib/supabase/admin";
-import {
-  getEmailQueue,
-  isQueueConfigured,
-  pingRedis,
-  disposeEmailQueue,
-} from "@/lib/queue/email-queue";
+import { resolveCampaignSendMode } from "@/lib/queue/send-mode";
 import {
   requireActivePlanForMailOrJson,
   hasNonExpiredActivePlan,
@@ -15,9 +10,6 @@ import {
 
 /** Max recipients delivered synchronously in the request when Redis is not available. */
 const MAX_SYNC_RECIPIENTS = 200;
-
-/** Tight budget for the runtime Redis reachability probe. */
-const REDIS_PROBE_MS = 1_500;
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -89,29 +81,14 @@ export async function POST(_req: Request, { params }: Params) {
     );
   }
 
-  /**
-   * Decide queue vs sync at *runtime*, not just by env var presence. If
-   * REDIS_URL is set but Redis is unreachable (typical for dev when the user
-   * forgot to start their Docker container), fall through to the synchronous
-   * delivery path so the send still succeeds — the Nodemailer code path is
-   * identical to the worker's.
-   */
-  const wantQueue = isQueueConfigured();
-  const queueLive = wantQueue ? await pingRedis(REDIS_PROBE_MS) : false;
-  const queue = queueLive ? getEmailQueue() : null;
+  const sendMode = await resolveCampaignSendMode(need, MAX_SYNC_RECIPIENTS);
 
-  if (wantQueue && !queueLive) {
-    console.warn(
-      `[api/campaigns/send] REDIS_URL is set but Redis is not reachable; ` +
-        `falling back to in-process delivery for campaign ${campaignId}. ` +
-        `Start Redis (e.g. \`docker run -d -p 6379:6379 redis:7\`) and restart \`npm run dev\` to use the queue.`,
-    );
-    // Drop any cached connection / queue stuck in reconnect-loop so the next
-    // request creates a fresh one once Redis is back.
-    await disposeEmailQueue();
+  if (sendMode.mode === "blocked") {
+    return NextResponse.json({ error: sendMode.message }, { status: 503 });
   }
 
-  if (queue) {
+  if (sendMode.mode === "queue") {
+    const queue = sendMode.queue;
     const { error: upErr } = await supabase
       .from("campaigns")
       .update({ status: "queued", updated_at: new Date().toISOString() })
@@ -163,12 +140,14 @@ export async function POST(_req: Request, { params }: Params) {
   }
 
   if (need > MAX_SYNC_RECIPIENTS) {
-    const reason = wantQueue
-      ? `REDIS_URL is set but Redis is not reachable from the server, so the queue cannot be used right now. ` +
-        `This campaign has ${need} recipients (max ${MAX_SYNC_RECIPIENTS} for in-process delivery). ` +
-        `Start Redis (e.g. \`docker run -d -p 6379:6379 redis:7\`) + the worker, or split the campaign into smaller batches.`
-      : `This campaign has ${need} recipients. For more than ${MAX_SYNC_RECIPIENTS}, set REDIS_URL and ensure the email worker is running (npm run dev with REDIS_URL, or npm run worker).`;
-    return NextResponse.json({ error: reason }, { status: 503 });
+    return NextResponse.json(
+      {
+        error:
+          `This campaign has ${need} recipients. For more than ${MAX_SYNC_RECIPIENTS}, ` +
+          "set REDIS_URL, start Redis, and run the email worker (`npm run worker` or PM2 mymail-worker).",
+      },
+      { status: 503 },
+    );
   }
 
   /**

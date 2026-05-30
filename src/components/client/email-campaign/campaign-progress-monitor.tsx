@@ -45,7 +45,9 @@ type ActiveCampaign = {
 };
 
 const POLL_MS = 2_500;
+const STUCK_QUEUED_MS = 30_000;
 const COMPLETION_NOTIFIED_KEY = "mymail.campaign.completion-notified.v1";
+const STUCK_QUEUED_TOAST_KEY = "mymail.campaign.stuck-queued-toast.v1";
 
 function readCompletionMemo(): Set<string> {
   try {
@@ -91,6 +93,7 @@ export function CampaignProgressMonitor({
   // Remember the last schemaError we toasted so a 1-Hz poll loop doesn't fire
   // a fresh toast every 2.5s if the schema is broken (e.g. forgotten migration).
   const schemaErrorMemoRef = React.useRef<string | null>(null);
+  const stuckQueuedToastRef = React.useRef<string | null>(null);
 
   // Hydrate the "already notified" memo from localStorage on mount. Done in
   // an effect (not during render) so the ref access stays out of the render
@@ -185,6 +188,36 @@ export function CampaignProgressMonitor({
         });
         setCompletionModalOpen(true);
       }
+    }
+  }, [active]);
+
+  React.useEffect(() => {
+    if (!active || active.status !== "queued") return;
+    if (active.sentSoFar > 0 || active.failedSoFar > 0) return;
+    const ageMs = Date.now() - Date.parse(active.updatedAt);
+    if (!Number.isFinite(ageMs) || ageMs < STUCK_QUEUED_MS) return;
+    if (stuckQueuedToastRef.current === active.id) return;
+    try {
+      const memo = JSON.parse(
+        localStorage.getItem(STUCK_QUEUED_TOAST_KEY) ?? "[]",
+      );
+      if (Array.isArray(memo) && memo.includes(active.id)) return;
+    } catch {
+      /* ignore */
+    }
+    stuckQueuedToastRef.current = active.id;
+    toast.error("Campaign is stuck in the queue", {
+      duration: 14_000,
+      description:
+        "Redis accepted the job but no email worker is processing it. On the server run `pm2 start npm --name mymail-worker -- run worker` (same .env.local as the web app), or click Send again after deploying the latest app (small sends run in-process without a worker).",
+    });
+    try {
+      const prev = JSON.parse(localStorage.getItem(STUCK_QUEUED_TOAST_KEY) ?? "[]");
+      const ids = Array.isArray(prev) ? prev.filter((v) => typeof v === "string") : [];
+      ids.push(active.id);
+      localStorage.setItem(STUCK_QUEUED_TOAST_KEY, JSON.stringify(ids.slice(-30)));
+    } catch {
+      /* ignore */
     }
   }, [active]);
   /* eslint-enable react-hooks/set-state-in-effect */

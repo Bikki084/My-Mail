@@ -193,6 +193,14 @@ export function SendingLogsTab({ previewMode = false }: { previewMode?: boolean 
     void load(page);
   }, [load, page, refreshKey]);
 
+  React.useEffect(() => {
+    if (previewMode) return;
+    const timer = setInterval(() => {
+      setRefreshKey((k) => k + 1);
+    }, 4_000);
+    return () => clearInterval(timer);
+  }, [previewMode]);
+
   // Clamp the active page if the underlying log set shrinks (e.g. cascade
   // delete after a campaign is removed). Adjusted during render to match the
   // pattern used elsewhere (see csv-table.tsx) instead of a chained effect.

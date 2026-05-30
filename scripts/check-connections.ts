@@ -8,6 +8,7 @@ import net from "node:net";
 import { URL } from "node:url";
 import { createClient } from "@supabase/supabase-js";
 import IORedis from "ioredis";
+import { hasRegisteredEmailWorker } from "../src/lib/queue/worker-presence";
 
 function loadEnvLocal(): void {
   for (const name of [".env.local", ".env"]) {
@@ -251,6 +252,17 @@ async function main() {
       failures++;
     } else {
       row("Worker can start", "ok", "run `npm run dev` (starts worker if Redis up) or `npm run worker`");
+      const workerLive = await hasRegisteredEmailWorker(redisUrl, 2500);
+      if (workerLive) {
+        row("Worker connected", "ok", "BullMQ worker registered in Redis");
+      } else {
+        row(
+          "Worker connected",
+          "warn",
+          "no worker in Redis — start `npm run worker` or PM2 mymail-worker (small sends still work in-process)",
+        );
+        warnings++;
+      }
     }
   }
 

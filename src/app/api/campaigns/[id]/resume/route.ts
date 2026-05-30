@@ -2,19 +2,12 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { runSendCampaign } from "@/lib/campaign-delivery";
 import { createServiceClient } from "@/lib/supabase/admin";
-import {
-  getEmailQueue,
-  isQueueConfigured,
-  pingRedis,
-  disposeEmailQueue,
-} from "@/lib/queue/email-queue";
+import { resolveCampaignSendMode } from "@/lib/queue/send-mode";
 import { requireActivePlanForMailOrJson } from "@/lib/active-plan-guard";
 import { getOrCreateOutboundIp } from "@/lib/outbound-ip";
 
 /** Same recipient cap the original send route uses for in-process delivery. */
 const MAX_SYNC_RECIPIENTS = 200;
-const REDIS_PROBE_MS = 1_500;
-
 type Params = { params: Promise<{ id: string }> };
 
 /**
@@ -76,19 +69,14 @@ export async function POST(_req: Request, { params }: Params) {
   const remaining =
     Math.max(0, (campaign.total_emails ?? 0) - (campaign.sent_count ?? 0));
 
-  const wantQueue = isQueueConfigured();
-  const queueLive = wantQueue ? await pingRedis(REDIS_PROBE_MS) : false;
-  const queue = queueLive ? getEmailQueue() : null;
+  const sendMode = await resolveCampaignSendMode(remaining, MAX_SYNC_RECIPIENTS);
 
-  if (wantQueue && !queueLive) {
-    console.warn(
-      `[api/campaigns/resume] REDIS_URL is set but Redis is unreachable; ` +
-        `falling back to in-process delivery for resume of campaign ${campaignId}.`,
-    );
-    await disposeEmailQueue();
+  if (sendMode.mode === "blocked") {
+    return NextResponse.json({ error: sendMode.message }, { status: 503 });
   }
 
-  if (queue) {
+  if (sendMode.mode === "queue") {
+    const queue = sendMode.queue;
     const { error: upErr } = await supabase
       .from("campaigns")
       .update({
@@ -130,13 +118,14 @@ export async function POST(_req: Request, { params }: Params) {
   }
 
   if (remaining > MAX_SYNC_RECIPIENTS) {
-    const reason = wantQueue
-      ? `REDIS_URL is set but Redis is not reachable, so the queue cannot resume this batch. ` +
-        `Remaining ${remaining} recipients exceed the in-process cap (${MAX_SYNC_RECIPIENTS}). ` +
-        `Start Redis and the worker, then retry.`
-      : `Resume needs to deliver ${remaining} more emails, above the in-process cap (${MAX_SYNC_RECIPIENTS}). ` +
-        `Set REDIS_URL and run the email worker, then retry.`;
-    return NextResponse.json({ error: reason }, { status: 503 });
+    return NextResponse.json(
+      {
+        error:
+          `Resume needs to deliver ${remaining} more emails (max ${MAX_SYNC_RECIPIENTS} in-process). ` +
+          "Start Redis and the email worker, then retry.",
+      },
+      { status: 503 },
+    );
   }
 
   // Flip back to `sending` first so the polling UI sees state change quickly,
