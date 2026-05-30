@@ -3,6 +3,7 @@
  * Run: `npm run worker` (requires REDIS_URL, Supabase service role, SMTP_ENCRYPTION_KEY).
  * Local dev: `npm run dev` starts this automatically when REDIS_URL is set in `.env.local`.
  */
+import "./worker-preload.cjs";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { Worker } from "bullmq";
