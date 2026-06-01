@@ -161,6 +161,7 @@ export function htmlToPlainText(html: string): string {
 export function applyMergePreview(
   template: string,
   row: RecipientRow = PREVIEW_MOCK_RECIPIENT,
+  options?: { missingFormat?: "html" | "plain" },
 ): string {
-  return applyMergeTags(template ?? "", row);
+  return applyMergeTags(template ?? "", row, options);
 }

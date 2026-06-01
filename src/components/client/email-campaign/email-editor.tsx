@@ -91,7 +91,10 @@ export function EmailEditor({
 
   /** Live preview with mock merge data so recipients see substituted values at a glance. */
   const previewSubject = React.useMemo(
-    () => applyMergePreview(composeDraft.subject ?? "", previewRow),
+    () =>
+      applyMergePreview(composeDraft.subject ?? "", previewRow, {
+        missingFormat: "plain",
+      }),
     [composeDraft.subject, previewRow],
   );
   const previewHtmlSource = React.useMemo(
@@ -555,9 +558,9 @@ export function EmailEditor({
         <CardHeader>
           <CardTitle className="text-zinc-100">Attachment (from HTML)</CardTitle>
           <CardDescription>
-            Choose PDF, PDF image (PNG snapshot), PNG, or JPEG. Merge tags in attachment HTML are
-            filled per recipient — use Insert tag. Built-ins: random, id, invoice, date (or CSV
-            columns).
+            Choose PDF, PDF image (PNG snapshot), PNG, or JPEG. Use only merge tags from your CSV
+            (see Recipients tab). Unknown tags show as <strong>Missing tag</strong> in preview and
+            at send time.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

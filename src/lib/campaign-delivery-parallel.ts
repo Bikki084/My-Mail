@@ -331,11 +331,12 @@ export async function deliverCampaignInParallel(
         const subj = applyMergeTags(
           (campaign.subject as string | null) ?? "No subject",
           recipient,
+          { missingFormat: "plain" },
         );
         const sourceHtml = (campaign.body_html as string | null) ?? "";
         const safeHtml = sourceHtml ? sanitizeEmailHtml(sourceHtml) : "";
-        const html = applyMergeTags(safeHtml, recipient);
-        const text = applyMergeTags(htmlToPlainText(safeHtml), recipient);
+        const html = applyMergeTags(safeHtml, recipient, { missingFormat: "html" });
+        const text = htmlToPlainText(html);
         const from = `${senderName} <${smtp.username}>`;
 
         const dynamicAttachments: Attachment[] = [];
@@ -343,6 +344,7 @@ export async function deliverCampaignInParallel(
           const mergedAttachHtml = applyMergeTags(
             sanitizeAttachmentRenderHtml(htmlAttSpec.html),
             recipient,
+            { missingFormat: "html" },
           );
           const render = async () => {
             const buf =
