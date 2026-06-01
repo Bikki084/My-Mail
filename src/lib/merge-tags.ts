@@ -74,21 +74,47 @@ export function applyMergeTags(
   });
 }
 
-/** Column keys available for merge tags from a parsed CSV (for UI pickers). */
-export function mergeTagKeysFromCsv(columnOrder: string[]): string[] {
+function uniqueColumnKeys(columnOrder: string[], excludeEmail = false): string[] {
   const emailKey =
     columnOrder.find((c) => c.trim().toLowerCase() === "email") ?? "email";
-  const fromCsv = columnOrder
-    .filter((c) => c !== emailKey)
-    .map((c) => c.trim())
-    .filter(Boolean);
   const seen = new Set<string>();
   const out: string[] = [];
-  for (const k of fromCsv) {
+  for (const col of columnOrder) {
+    const k = col.trim();
+    if (!k) continue;
+    if (excludeEmail && k.toLowerCase() === emailKey.toLowerCase()) continue;
     const lower = k.toLowerCase();
     if (seen.has(lower)) continue;
     seen.add(lower);
     out.push(k);
   }
-  return out;
+  return out.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+}
+
+/** All CSV header keys for autocomplete (includes email). */
+export function mergeTagKeysForAutocomplete(columnOrder: string[]): string[] {
+  return uniqueColumnKeys(columnOrder, false);
+}
+
+/** Column keys for the merge-tags list / insert menu (excludes email column). */
+export function mergeTagKeysFromCsv(columnOrder: string[]): string[] {
+  return uniqueColumnKeys(columnOrder, true);
+}
+
+export function mergeTagSyntax(key: string): string {
+  return `{{{${key}}}}`;
+}
+
+/** Detect incomplete `{` / `{{` / `{{{` + partial key before the cursor. */
+export function detectMergeTagAtCursor(
+  text: string,
+  cursor: number,
+): { replaceStart: number; query: string } | null {
+  const before = text.slice(0, cursor);
+  const match = before.match(/\{+([\w.-]*)$/);
+  if (!match) return null;
+  return {
+    replaceStart: cursor - match[0].length,
+    query: match[1] ?? "",
+  };
 }

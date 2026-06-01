@@ -6,12 +6,10 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { mergeTagKeysFromCsv } from "@/lib/merge-tags";
+import { mergeTagKeysFromCsv, mergeTagSyntax } from "@/lib/merge-tags";
 import type { ParsedCsv } from "@/lib/csv-types";
 
-export function mergeTagSyntax(key: string): string {
-  return `{{{${key}}}}`;
-}
+export { mergeTagSyntax };
 
 export function MergeTagInsertMenu({
   lastParsedCsv,

@@ -31,7 +31,9 @@ import {
 import { applyMergePreview, buildPreviewRecipient, htmlToPlainText } from "@/lib/html-email";
 import { randomId } from "@/lib/random-id";
 import { useEmailCampaign } from "./email-campaign-context";
+import { MergeTagAutocompleteField } from "./merge-tag-autocomplete-field";
 import { MergeTagInsertMenu } from "./merge-tag-insert";
+import { mergeTagKeysForAutocomplete } from "@/lib/merge-tags";
 import { useWalletState } from "./wallet-state-context";
 
 type HeaderRow = { id: string; name: string; value: string };
@@ -86,6 +88,14 @@ export function EmailEditor({
    */
   const previewRow = React.useMemo(
     () => buildPreviewRecipient(lastParsedCsv),
+    [lastParsedCsv],
+  );
+
+  const autocompleteTagKeys = React.useMemo(
+    () =>
+      lastParsedCsv?.columnOrder?.length
+        ? mergeTagKeysForAutocomplete(lastParsedCsv.columnOrder)
+        : [],
     [lastParsedCsv],
   );
 
@@ -412,11 +422,9 @@ export function EmailEditor({
         <CardHeader>
           <CardTitle className="text-zinc-100">Message</CardTitle>
           <CardDescription>
-            HTML is the primary content; plain text is generated automatically. Merge tags:{" "}
-            <code className="text-xs text-zinc-300">{"{{name}}"}</code>,{" "}
-            <code className="text-xs text-zinc-300">{"{{email}}"}</code>,{" "}
-            <code className="text-xs text-zinc-300">c3</code>…
-            <code className="text-xs text-zinc-300">c6</code>.
+            HTML is the primary content; plain text is generated automatically. Type{" "}
+            <code className="text-xs text-zinc-300">{"{"}</code> in subject or body to pick a
+            merge tag from your CSV.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -442,24 +450,25 @@ export function EmailEditor({
                 }
               />
             </div>
-            <Input
+            <MergeTagAutocompleteField
               id="subject"
-              type="text"
               placeholder="Welcome, {{{name}}}"
               className="bg-zinc-950/50"
+              tagKeys={autocompleteTagKeys}
               value={composeDraft.subject}
-              onChange={(e) => updateCompose({ subject: e.target.value })}
-              autoComplete="off"
+              onChange={(subject) => updateCompose({ subject })}
             />
           </div>
           <div className="space-y-2">
             <Label htmlFor="body-html">Email Content (HTML)</Label>
-            <Textarea
+            <MergeTagAutocompleteField
               id="body-html"
-              className="min-h-40 bg-zinc-950/50 font-mono text-sm"
+              multiline
               placeholder="Write your HTML email here"
+              className="min-h-40"
+              tagKeys={autocompleteTagKeys}
               value={composeDraft.html}
-              onChange={(e) => updateCompose({ html: e.target.value })}
+              onChange={(html) => updateCompose({ html })}
             />
             <p className="text-xs text-zinc-500">
               This is the main email content. A plain-text version will be automatically
@@ -634,16 +643,18 @@ export function EmailEditor({
                   }
                 />
               </div>
-              <Textarea
+              <MergeTagAutocompleteField
                 id="attachment-html"
-                className="field-sizing-fixed h-64 max-h-64 min-h-0 resize-none overflow-auto bg-zinc-950/50 font-mono text-sm"
+                multiline
+                className="field-sizing-fixed h-64 max-h-64 min-h-0 resize-none overflow-auto"
                 placeholder={
                   attachmentKind === "pdf" || attachmentKind === "pdf_image"
-                    ? "<div><h1>Invoice</h1><p>Invoice: {{{invoice}}}</p></div>"
+                    ? "<div><h1>Invoice</h1><p>City: {{{city}}}</p></div>"
                     : '<div style="width:400px"><h2>Banner</h2></div>'
                 }
+                tagKeys={autocompleteTagKeys}
                 value={attachmentHtml}
-                onChange={(e) => updateComposerUi({ attachmentHtml: e.target.value })}
+                onChange={(attachmentHtml) => updateComposerUi({ attachmentHtml })}
               />
               {attachmentKind === "jpeg" ? (
                 <p className="text-xs text-zinc-500">
