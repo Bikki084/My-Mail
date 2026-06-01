@@ -91,9 +91,20 @@ function uniqueColumnKeys(columnOrder: string[], excludeEmail = false): string[]
   return out.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
 }
 
-/** All CSV header keys for autocomplete (includes email). */
-export function mergeTagKeysForAutocomplete(columnOrder: string[]): string[] {
-  return uniqueColumnKeys(columnOrder, false);
+/** All tag keys for autocomplete (CSV columns + custom tags). */
+export function mergeTagKeysForAutocomplete(
+  columnOrder: string[],
+  customTagKeys: string[] = [],
+): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const k of [...uniqueColumnKeys(columnOrder, false), ...customTagKeys]) {
+    const lower = k.toLowerCase();
+    if (seen.has(lower)) continue;
+    seen.add(lower);
+    out.push(k);
+  }
+  return out.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
 }
 
 /** Column keys for the merge-tags list / insert menu (excludes email column). */

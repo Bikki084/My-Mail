@@ -1,26 +1,37 @@
 "use client";
 
+import * as React from "react";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { mergeTagKeysFromCsv, mergeTagSyntax } from "@/lib/merge-tags";
+import type { CustomMergeTag } from "@/lib/custom-merge-tags";
+import { allMergeTagKeys } from "@/lib/custom-merge-tags";
+import { mergeTagSyntax } from "@/lib/merge-tags";
 import type { ParsedCsv } from "@/lib/csv-types";
 
 export { mergeTagSyntax };
 
 export function MergeTagInsertMenu({
   lastParsedCsv,
+  customMergeTags = [],
   onInsert,
   disabled,
 }: {
   lastParsedCsv: ParsedCsv | null;
+  customMergeTags?: CustomMergeTag[];
   onInsert: (tag: string) => void;
   disabled?: boolean;
 }) {
-  const keys = mergeTagKeysFromCsv(lastParsedCsv?.columnOrder ?? ["email", "name"]);
+  const keys = React.useMemo(() => {
+    const columns = lastParsedCsv?.columnOrder ?? [];
+    const fallback = columns.length === 0 && customMergeTags.length === 0 ? ["name"] : [];
+    return allMergeTagKeys(columns.length > 0 ? columns : fallback, customMergeTags).filter(
+      (k) => k.toLowerCase() !== "email",
+    );
+  }, [lastParsedCsv, customMergeTags]);
 
   return (
     <DropdownMenu>

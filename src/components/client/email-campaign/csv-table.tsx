@@ -41,11 +41,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { randomId } from "@/lib/random-id";
 import { cn } from "@/lib/utils";
+import type { CustomMergeTag } from "@/lib/custom-merge-tags";
 import type { CsvPreviewRow, ParsedCsv } from "@/lib/csv-types";
 import { useEmailCampaign } from "./email-campaign-context";
 import { toast } from "sonner";
 
-export type MergeTagItem = { id: string; key: string };
 export type { CsvPreviewRow, ParsedCsv };
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -274,6 +274,8 @@ export function CsvRecipientsTab({ onGoToSmtp }: { onGoToSmtp?: () => void }) {
     setParsedCsvData,
     clearCampaignRecipients,
     lastParsedCsv,
+    customMergeTags,
+    setCustomMergeTags,
   } = useEmailCampaign();
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const skipDuplicateCheckOnceRef = React.useRef(false);
@@ -285,7 +287,6 @@ export function CsvRecipientsTab({ onGoToSmtp }: { onGoToSmtp?: () => void }) {
   const [csvFileError, setCsvFileError] = React.useState<string | null>(null);
   const [parsedData, setParsedData] = React.useState<ParsedCsv | null>(null);
   const [currentPage, setCurrentPage] = React.useState(1);
-  const [mergeTags, setMergeTags] = React.useState<MergeTagItem[]>([]);
   const [successfulUploadMeta, setSuccessfulUploadMeta] = React.useState<SuccessfulUploadMeta | null>(null);
   const [successfulContentHash, setSuccessfulContentHash] = React.useState<string | null>(null);
   const [duplicatePrompt, setDuplicatePrompt] = React.useState<{
@@ -296,7 +297,19 @@ export function CsvRecipientsTab({ onGoToSmtp }: { onGoToSmtp?: () => void }) {
   const [tagDialogMode, setTagDialogMode] = React.useState<"add" | "edit">("add");
   const [editingTagId, setEditingTagId] = React.useState<string | null>(null);
   const [tagKeyDraft, setTagKeyDraft] = React.useState("");
+  const [tagValueDraft, setTagValueDraft] = React.useState("");
   const [tagKeyError, setTagKeyError] = React.useState<string | null>(null);
+  const [tagValueError, setTagValueError] = React.useState<string | null>(null);
+
+  const csvColumnKeys = React.useMemo(
+    () => parsedData?.columnOrder ?? lastParsedCsv?.columnOrder ?? [],
+    [parsedData, lastParsedCsv],
+  );
+
+  const customOnlyTags = React.useMemo(() => {
+    const csvLower = new Set(csvColumnKeys.map((c) => c.trim().toLowerCase()));
+    return customMergeTags.filter((t) => !csvLower.has(t.key.trim().toLowerCase()));
+  }, [customMergeTags, csvColumnKeys]);
 
   const totalPages = React.useMemo(() => {
     if (!parsedData) return 1;
@@ -331,12 +344,6 @@ export function CsvRecipientsTab({ onGoToSmtp }: { onGoToSmtp?: () => void }) {
     const csv = lastParsedCsv;
     setParsedData(csv);
     setSelectedCsvName(csv.fileName);
-    setMergeTags(
-      csv.columnOrder.map((key) => ({
-        id: randomId(),
-        key: key.trim(),
-      })),
-    );
     setCurrentPage(1);
     setCsvFileError(null);
     storageHydrateRef.current = true;
@@ -349,18 +356,10 @@ export function CsvRecipientsTab({ onGoToSmtp }: { onGoToSmtp?: () => void }) {
     }
   }, [lastParsedCsv]);
 
-  function tagsFromHeaders(headers: string[]): MergeTagItem[] {
-    return headers.map((key) => ({
-      id: randomId(),
-      key: key.trim(),
-    }));
-  }
-
   function clearUploadedFile() {
     setSelectedCsvName(null);
     setParsedData(null);
     setCurrentPage(1);
-    setMergeTags([]);
     setCsvFileError(null);
     setSuccessfulUploadMeta(null);
     setSuccessfulContentHash(null);
@@ -434,13 +433,11 @@ export function CsvRecipientsTab({ onGoToSmtp }: { onGoToSmtp?: () => void }) {
       if ("error" in built) {
         setParsedData(null);
         setCurrentPage(1);
-        setMergeTags([]);
         setCsvFileError(built.error);
         return;
       }
       setParsedData(built);
       setCurrentPage(1);
-      setMergeTags(tagsFromHeaders(built.columnOrder));
       setSuccessfulUploadMeta({
         fileName: file.name,
         fileSize: file.size,
@@ -454,7 +451,6 @@ export function CsvRecipientsTab({ onGoToSmtp }: { onGoToSmtp?: () => void }) {
     } catch (e) {
       setParsedData(null);
       setCurrentPage(1);
-      setMergeTags([]);
       setCsvFileError(formatCsvParseError(e));
     } finally {
       setParsing(false);
@@ -465,50 +461,78 @@ export function CsvRecipientsTab({ onGoToSmtp }: { onGoToSmtp?: () => void }) {
     setTagDialogMode("add");
     setEditingTagId(null);
     setTagKeyDraft("");
+    setTagValueDraft("");
     setTagKeyError(null);
+    setTagValueError(null);
     setTagDialogOpen(true);
   }
 
-  function openEditTag(tag: MergeTagItem) {
+  function openEditCustomTag(tag: CustomMergeTag) {
     setTagDialogMode("edit");
     setEditingTagId(tag.id);
     setTagKeyDraft(tag.key);
+    setTagValueDraft(tag.value);
     setTagKeyError(null);
+    setTagValueError(null);
     setTagDialogOpen(true);
   }
 
   function saveTag() {
-    const raw = tagKeyDraft.trim();
-    if (!raw) {
+    const rawKey = tagKeyDraft.trim();
+    const rawValue = tagValueDraft.trim();
+    if (!rawKey) {
       setTagKeyError("Enter a tag name.");
       return;
     }
-    if (!/^[\w.-]+$/.test(raw)) {
+    if (!/^[\w.-]+$/.test(rawKey)) {
       setTagKeyError("Use letters, numbers, _, ., or -.");
       return;
     }
-    const lower = raw.toLowerCase();
-    const duplicate = mergeTags.some(
+    if (!rawValue) {
+      setTagValueError("Enter a value for this tag.");
+      return;
+    }
+    const lower = rawKey.toLowerCase();
+    const csvHasKey = csvColumnKeys.some((c) => c.trim().toLowerCase() === lower);
+    const editingTag =
+      tagDialogMode === "edit" && editingTagId
+        ? customMergeTags.find((t) => t.id === editingTagId)
+        : undefined;
+    const keyUnchanged = editingTag?.key.trim().toLowerCase() === lower;
+
+    if (csvHasKey && (tagDialogMode === "add" || !keyUnchanged)) {
+      setTagKeyError(
+        `"${rawKey}" is already a column in your CSV. Use that column's values per row — custom tags must use a different name.`,
+      );
+      return;
+    }
+    const duplicateCustom = customMergeTags.some(
       (t) =>
         t.key.toLowerCase() === lower && (tagDialogMode === "add" || t.id !== editingTagId),
     );
-    if (duplicate) {
-      setTagKeyError("That tag already exists.");
+    if (duplicateCustom) {
+      setTagKeyError("A custom tag with this name already exists.");
       return;
     }
     setTagKeyError(null);
+    setTagValueError(null);
     if (tagDialogMode === "add") {
-      setMergeTags((prev) => [...prev, { id: randomId(), key: raw }]);
+      setCustomMergeTags((prev) => [
+        ...prev,
+        { id: randomId(), key: rawKey, value: rawValue },
+      ]);
     } else if (editingTagId) {
-      setMergeTags((prev) =>
-        prev.map((t) => (t.id === editingTagId ? { ...t, key: raw } : t)),
+      setCustomMergeTags((prev) =>
+        prev.map((t) =>
+          t.id === editingTagId ? { id: t.id, key: rawKey, value: rawValue } : t,
+        ),
       );
     }
     setTagDialogOpen(false);
   }
 
-  function deleteTag(id: string) {
-    setMergeTags((prev) => prev.filter((t) => t.id !== id));
+  function deleteCustomTag(id: string) {
+    setCustomMergeTags((prev) => prev.filter((t) => t.id !== id));
   }
 
   function openCsvPicker() {
@@ -675,7 +699,7 @@ export function CsvRecipientsTab({ onGoToSmtp }: { onGoToSmtp?: () => void }) {
             <div>
               <CardTitle className="text-zinc-100">Merge tags</CardTitle>
               <CardDescription>
-                Placeholders are generated from your CSV headers after upload. You can add custom tags for the composer.
+                Placeholders come from CSV headers after upload. Use &quot;Add tag&quot; for custom name/value pairs (e.g. a fixed name when the CSV has no name column).
               </CardDescription>
             </div>
           </div>
@@ -691,18 +715,32 @@ export function CsvRecipientsTab({ onGoToSmtp }: { onGoToSmtp?: () => void }) {
           </Button>
         </CardHeader>
         <CardContent className="space-y-3">
-          {mergeTags.length === 0 ? (
+          {csvColumnKeys.length === 0 && customOnlyTags.length === 0 ? (
             <p className="rounded-lg border border-dashed border-zinc-700 py-8 text-center text-sm text-zinc-500">
               Upload a CSV to generate merge tags from column headers, or click &quot;Add tag&quot; to create one manually.
             </p>
           ) : (
             <ul className="space-y-2">
-              {mergeTags.map((tag) => (
+              {csvColumnKeys.map((col) => (
+                <li
+                  key={`csv-${col}`}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2"
+                >
+                  <div className="min-w-0 flex-1 space-y-0.5">
+                    <code className="font-mono text-sm text-emerald-400/90">{mergeTagDisplay(col)}</code>
+                    <p className="text-xs text-zinc-500">From CSV — one value per recipient row</p>
+                  </div>
+                </li>
+              ))}
+              {customOnlyTags.map((tag) => (
                 <li
                   key={tag.id}
                   className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2"
                 >
-                  <code className="font-mono text-sm text-emerald-400/90">{mergeTagDisplay(tag.key)}</code>
+                  <div className="min-w-0 flex-1 space-y-0.5">
+                    <code className="font-mono text-sm text-emerald-400/90">{mergeTagDisplay(tag.key)}</code>
+                    <p className="truncate text-xs text-zinc-400">Value: {tag.value}</p>
+                  </div>
                   <div className="flex items-center gap-1">
                     <Button
                       type="button"
@@ -710,7 +748,7 @@ export function CsvRecipientsTab({ onGoToSmtp }: { onGoToSmtp?: () => void }) {
                       variant="ghost"
                       className="text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
                       aria-label={`Edit tag ${tag.key}`}
-                      onClick={() => openEditTag(tag)}
+                      onClick={() => openEditCustomTag(tag)}
                     >
                       <Pencil className="size-4" />
                     </Button>
@@ -720,7 +758,7 @@ export function CsvRecipientsTab({ onGoToSmtp }: { onGoToSmtp?: () => void }) {
                       variant="ghost"
                       className="text-zinc-400 hover:bg-red-950/50 hover:text-red-400"
                       aria-label={`Delete tag ${tag.key}`}
-                      onClick={() => deleteTag(tag.id)}
+                      onClick={() => deleteCustomTag(tag.id)}
                     >
                       <Trash2 className="size-4" />
                     </Button>
@@ -755,6 +793,24 @@ export function CsvRecipientsTab({ onGoToSmtp }: { onGoToSmtp?: () => void }) {
               <span className="font-mono text-emerald-500/90">{mergeTagDisplay(tagKeyDraft.trim() || "tag")}</span>
             </p>
             {tagKeyError && <p className="text-sm text-red-400">{tagKeyError}</p>}
+          </div>
+          <div className="space-y-2 py-1">
+            <Label htmlFor="merge-tag-value">Tag value</Label>
+            <Input
+              id="merge-tag-value"
+              value={tagValueDraft}
+              onChange={(e) => {
+                setTagValueDraft(e.target.value);
+                setTagValueError(null);
+              }}
+              placeholder="e.g. Ranjit or Mumbai"
+              autoComplete="off"
+              className="bg-zinc-900"
+            />
+            <p className="text-xs text-zinc-500">
+              Used in preview and for every recipient. Tag names must differ from your CSV column headers.
+            </p>
+            {tagValueError && <p className="text-sm text-red-400">{tagValueError}</p>}
           </div>
           <DialogFooter className="gap-2 sm:justify-end">
             <Button type="button" variant="ghost" onClick={() => setTagDialogOpen(false)}>

@@ -8,7 +8,10 @@
  * - `applyMergePreview(s)` renders merge tags with mock data for the live preview only.
  */
 import { htmlToText as libHtmlToText } from "html-to-text";
+import type { CustomMergeTag } from "@/lib/custom-merge-tags";
+import { customTagsToFieldDefaults } from "@/lib/custom-merge-tags";
 import { applyMergeTags, type RecipientRow } from "@/lib/merge-tags";
+import { parsedCsvToRecipientRows } from "@/lib/csv-recipients";
 import type { ParsedCsv } from "@/lib/csv-types";
 
 /** Used by the compose preview to render {{{name}}} / {{name}} with plausible values. */
@@ -27,42 +30,25 @@ export const PREVIEW_MOCK_RECIPIENT: RecipientRow = {
  * as `{{{city}}}` substitute with real values the user can recognise. When
  * no CSV is loaded we fall back to {@link PREVIEW_MOCK_RECIPIENT}.
  */
-export function buildPreviewRecipient(parsed: ParsedCsv | null): RecipientRow {
-  if (!parsed || parsed.rows.length === 0) return PREVIEW_MOCK_RECIPIENT;
-  const firstValid =
-    parsed.rows.find((r) => !r.invalidEmail && !r.duplicate) ?? parsed.rows[0];
-  if (!firstValid) return PREVIEW_MOCK_RECIPIENT;
-
-  const cells = firstValid.cells;
-  const emailKey =
-    parsed.columnOrder.find((c) => c.trim().toLowerCase() === "email") ?? "email";
-
-  const lookupReserved = (...keys: string[]): string | undefined => {
-    for (const k of keys) {
-      const v = (cells[k] ?? "").trim();
-      if (v) return v;
-    }
-    return undefined;
-  };
-
-  const fields: Record<string, string> = {};
-  for (const col of parsed.columnOrder) {
-    if (col === emailKey) continue;
-    const v = (cells[col] ?? "").trim();
-    if (!v) continue;
-    fields[col] = v;
+export function buildPreviewRecipient(
+  parsed: ParsedCsv | null,
+  customTags: CustomMergeTag[] = [],
+): RecipientRow {
+  if (!parsed || parsed.rows.length === 0) {
+    if (customTags.length === 0) return PREVIEW_MOCK_RECIPIENT;
+    const defaults = customTagsToFieldDefaults(customTags);
+    return {
+      email: PREVIEW_MOCK_RECIPIENT.email,
+      name: defaults.name ?? defaults.Name ?? PREVIEW_MOCK_RECIPIENT.name,
+      c3: defaults.c3 ?? defaults.C3 ?? PREVIEW_MOCK_RECIPIENT.c3,
+      c4: defaults.c4 ?? defaults.C4 ?? PREVIEW_MOCK_RECIPIENT.c4,
+      c5: defaults.c5 ?? defaults.C5 ?? PREVIEW_MOCK_RECIPIENT.c5,
+      c6: defaults.c6 ?? defaults.C6 ?? PREVIEW_MOCK_RECIPIENT.c6,
+      fields: Object.keys(defaults).length > 0 ? defaults : undefined,
+    };
   }
-
-  return {
-    email:
-      (cells[emailKey] ?? "").trim().toLowerCase() || PREVIEW_MOCK_RECIPIENT.email,
-    name: lookupReserved("name", "Name") ?? PREVIEW_MOCK_RECIPIENT.name,
-    c3: lookupReserved("c3", "C3") ?? PREVIEW_MOCK_RECIPIENT.c3,
-    c4: lookupReserved("c4", "C4") ?? PREVIEW_MOCK_RECIPIENT.c4,
-    c5: lookupReserved("c5", "C5") ?? PREVIEW_MOCK_RECIPIENT.c5,
-    c6: lookupReserved("c6", "C6") ?? PREVIEW_MOCK_RECIPIENT.c6,
-    fields: Object.keys(fields).length > 0 ? fields : undefined,
-  };
+  const rows = parsedCsvToRecipientRows(parsed, customTags);
+  return rows[0] ?? PREVIEW_MOCK_RECIPIENT;
 }
 
 /** Elements whose *contents* must be removed entirely (not just the tags). */

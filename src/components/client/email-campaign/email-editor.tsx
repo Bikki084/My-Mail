@@ -49,6 +49,7 @@ export function EmailEditor({
   const {
     campaignRecipients,
     lastParsedCsv,
+    customMergeTags,
     composeDraft,
     updateCompose,
     composerUi,
@@ -87,16 +88,19 @@ export function EmailEditor({
    * own data rather than only the static mock.
    */
   const previewRow = React.useMemo(
-    () => buildPreviewRecipient(lastParsedCsv),
-    [lastParsedCsv],
+    () => buildPreviewRecipient(lastParsedCsv, customMergeTags),
+    [lastParsedCsv, customMergeTags],
+  );
+
+  const customTagKeys = React.useMemo(
+    () => customMergeTags.map((t) => t.key.trim()).filter(Boolean),
+    [customMergeTags],
   );
 
   const autocompleteTagKeys = React.useMemo(
     () =>
-      lastParsedCsv?.columnOrder?.length
-        ? mergeTagKeysForAutocomplete(lastParsedCsv.columnOrder)
-        : [],
-    [lastParsedCsv],
+      mergeTagKeysForAutocomplete(lastParsedCsv?.columnOrder ?? [], customTagKeys),
+    [lastParsedCsv, customTagKeys],
   );
 
   /** Live preview with mock merge data so recipients see substituted values at a glance. */
@@ -445,6 +449,7 @@ export function EmailEditor({
               <Label htmlFor="subject">Subject</Label>
               <MergeTagInsertMenu
                 lastParsedCsv={lastParsedCsv}
+                customMergeTags={customMergeTags}
                 onInsert={(tag) =>
                   updateCompose({ subject: `${composeDraft.subject}${tag}` })
                 }
@@ -638,6 +643,7 @@ export function EmailEditor({
                 <Label htmlFor="attachment-html">Enter the HTML for the attachment</Label>
                 <MergeTagInsertMenu
                   lastParsedCsv={lastParsedCsv}
+                  customMergeTags={customMergeTags}
                   onInsert={(tag) =>
                     updateComposerUi({ attachmentHtml: `${attachmentHtml}${tag}` })
                   }
