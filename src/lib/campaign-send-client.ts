@@ -8,7 +8,7 @@ function formatApiError(j: { error?: unknown }): string {
   return JSON.stringify(e);
 }
 
-export type HtmlAttachmentKind = "pdf" | "png" | "jpeg";
+export type HtmlAttachmentKind = "pdf" | "png" | "jpeg" | "pdf_image";
 export type HtmlAttachmentPayload = { kind: HtmlAttachmentKind; html: string };
 
 export type PreviewCampaignOk = {

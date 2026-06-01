@@ -110,7 +110,9 @@ export function SignInForm() {
       const err: FormError = {
         title: "Authentication is not configured.",
         description:
-          "Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in .env.local, then restart `next dev`.",
+          process.env.NODE_ENV === "development"
+            ? "Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in .env.local, then restart `next dev`."
+            : "Set those vars in .env.local on the server, then run: rm -rf .next && npm run build:prod && pm2 restart mymail-web",
       };
       setFormError(err);
       toast.error(err.title, { description: err.description });

@@ -70,6 +70,66 @@ export async function countUnfinishedCampaigns(
  * Marks in-flight campaigns as `cancelled`, removes their BullMQ jobs, and
  * leaves `sending_logs` untouched.
  */
+const USER_STOP_MESSAGE =
+  "Stopped by user. Emails already sent remain in the delivery log.";
+
+/**
+ * Stop a single in-flight campaign (Send email → Stop mail).
+ */
+export async function cancelCampaignById(
+  admin: SupabaseClient,
+  campaignId: string,
+  userId: string,
+): Promise<{ cancelled: boolean; status: string }> {
+  const { data: row, error: getErr } = await admin
+    .from("campaigns")
+    .select("id, user_id, status")
+    .eq("id", campaignId)
+    .single();
+
+  if (getErr || !row) {
+    throw new Error("Campaign not found");
+  }
+  if (row.user_id !== userId) {
+    throw new Error("Forbidden");
+  }
+
+  const status = String(row.status ?? "");
+  if (status === "cancelled") {
+    return { cancelled: true, status };
+  }
+  if (!UNFINISHED_CAMPAIGN_STATUSES.includes(status as UnfinishedCampaignStatus)) {
+    throw new Error(
+      `Campaign is ${status || "unknown"} — only queued, sending, or paused sends can be stopped.`,
+    );
+  }
+
+  const now = new Date().toISOString();
+  const { error: upErr } = await admin
+    .from("campaigns")
+    .update({
+      status: "cancelled",
+      pause_reason: "user_stop",
+      paused_at: now,
+      last_error: USER_STOP_MESSAGE.slice(0, 2000),
+      updated_at: now,
+    })
+    .eq("id", campaignId);
+
+  if (upErr) {
+    throw new Error(upErr.message);
+  }
+
+  try {
+    await removeCampaignJobsFromQueue([campaignId]);
+  } catch (e) {
+    console.warn("[campaign-cancel] queue cleanup:", e);
+  }
+
+  console.log(`[campaign-cancel] user=${userId} stopped campaign=${campaignId}`);
+  return { cancelled: true, status: "cancelled" };
+}
+
 export async function cancelUnfinishedCampaignsForUser(
   admin: SupabaseClient,
   userId: string,

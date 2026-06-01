@@ -20,15 +20,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
-import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { listSmtpServers } from "@/app/actions/smtp";
 import { getLastBulkImportedSmtpIds } from "@/lib/bulk-smtp-session";
@@ -37,9 +29,9 @@ import {
   queueCampaignSend,
 } from "@/lib/campaign-send-client";
 import { applyMergePreview, buildPreviewRecipient, htmlToPlainText } from "@/lib/html-email";
-import { MAIL_ENCODING_LABELS, MAIL_ENCODING_UI } from "@/lib/mail-encoding";
 import { randomId } from "@/lib/random-id";
 import { useEmailCampaign } from "./email-campaign-context";
+import { MergeTagInsertMenu } from "./merge-tag-insert";
 import { useWalletState } from "./wallet-state-context";
 
 type HeaderRow = { id: string; name: string; value: string };
@@ -52,22 +44,24 @@ export function EmailEditor({
   /** When true, refresh saved SMTP count (e.g. after returning from the SMTP tab). */
   isComposerActive?: boolean;
 }) {
-  const { campaignRecipients, lastParsedCsv, composeDraft, updateCompose } = useEmailCampaign();
+  const {
+    campaignRecipients,
+    lastParsedCsv,
+    composeDraft,
+    updateCompose,
+    composerUi,
+    updateComposerUi,
+  } = useEmailCampaign();
   const { timer } = useWalletState();
   const [sending, setSending] = React.useState(false);
   const [savedSmtpCount, setSavedSmtpCount] = React.useState(0);
-  const [convertHtml, setConvertHtml] = React.useState(false);
   const [headerOpen, setHeaderOpen] = React.useState(false);
   const [headerName, setHeaderName] = React.useState("");
   const [headerValue, setHeaderValue] = React.useState("");
   const [headers, setHeaders] = React.useState<HeaderRow[]>([
     { id: "1", name: "X-Campaign-Id", value: "preview-001" },
   ]);
-  /** PDF, PNG image, or JPEG image — rendered server-side from the HTML below. Null = no generated attachment. */
-  const [attachmentKind, setAttachmentKind] = React.useState<
-    "pdf" | "png" | "jpeg" | null
-  >(null);
-  const [attachmentHtml, setAttachmentHtml] = React.useState("");
+  const { attachmentKind, attachmentHtml } = composerUi;
   const [previewOpen, setPreviewOpen] = React.useState(false);
   const [previewLoading, setPreviewLoading] = React.useState(false);
   const [previewHtmlMerged, setPreviewHtmlMerged] = React.useState<string | null>(null);
@@ -129,6 +123,9 @@ export function EmailEditor({
     if (attachmentKind === "jpeg") {
       return { filename: "attachment.jpg", icon: "img", label: "JPEG image" };
     }
+    if (attachmentKind === "pdf_image") {
+      return { filename: "attachment.png", icon: "img", label: "PDF image (PNG)" };
+    }
     return { filename: "attachment.png", icon: "img", label: "PNG image" };
   }, [attachmentKind]);
   const attachmentPreviewHtml = React.useMemo(
@@ -183,12 +180,6 @@ export function EmailEditor({
         : null,
     [attachmentKind, attachmentPreviewHtml, buildPreviewDoc],
   );
-
-  const encodingSelectValue = MAIL_ENCODING_UI.includes(
-    composeDraft.encoding as (typeof MAIL_ENCODING_UI)[number],
-  )
-    ? composeDraft.encoding
-    : "auto";
 
   const htmlAttachmentPayload = React.useMemo(() => {
     if (!attachmentKind || !attachmentHtml.trim()) return null;
@@ -254,7 +245,7 @@ export function EmailEditor({
         subject: composeDraft.subject,
         senderName: composeDraft.senderName,
         bodyHtml: composeDraft.html,
-        encoding: composeDraft.encoding,
+        encoding: "auto",
         previewTo: campaignRecipients[0]?.email ?? "",
         attachmentNames: [],
         htmlAttachment: htmlAttachmentPayload,
@@ -370,7 +361,7 @@ export function EmailEditor({
         subject: composeDraft.subject,
         senderName: composeDraft.senderName,
         bodyHtml: composeDraft.html,
-        encoding: composeDraft.encoding,
+        encoding: "auto",
         recipients: campaignRecipients,
         htmlAttachment: htmlAttachmentPayload,
         smtpServerIds,
@@ -439,11 +430,19 @@ export function EmailEditor({
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="subject">Subject</Label>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Label htmlFor="subject">Subject</Label>
+              <MergeTagInsertMenu
+                lastParsedCsv={lastParsedCsv}
+                onInsert={(tag) =>
+                  updateCompose({ subject: `${composeDraft.subject}${tag}` })
+                }
+              />
+            </div>
             <Input
               id="subject"
               type="text"
-              placeholder="Enter subject (supports {{name}})"
+              placeholder="Welcome, {{{name}}}"
               className="bg-zinc-950/50"
               value={composeDraft.subject}
               onChange={(e) => updateCompose({ subject: e.target.value })}
@@ -529,46 +528,6 @@ export function EmailEditor({
       </Card>
 
       <Card className="border-zinc-800 bg-zinc-900/40 ring-zinc-800">
-        <CardHeader>
-          <CardTitle className="text-zinc-100">Options</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-950/40 px-4 py-3">
-            <div>
-              <p className="text-sm font-medium text-zinc-200">Convert HTML to plain text</p>
-              <p className="text-xs text-zinc-500">When both parts exist, derive text from HTML.</p>
-            </div>
-            <Switch checked={convertHtml} onCheckedChange={setConvertHtml} />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="encoding">Encoding</Label>
-            <Select
-              value={encodingSelectValue}
-              onValueChange={(v) => {
-                if (v == null) return;
-                updateCompose({ encoding: v });
-              }}
-            >
-              <SelectTrigger variant="devtool" id="encoding" className="w-full max-w-md">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent variant="devtool">
-                {MAIL_ENCODING_UI.map((key) => (
-                  <SelectItem key={key} value={key}>
-                    {MAIL_ENCODING_LABELS[key]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-zinc-500">
-              Auto picks sensible Content-Transfer-Encoding for your HTML and text parts. Binary
-              attachments use a safe encoding automatically.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="border-zinc-800 bg-zinc-900/40 ring-zinc-800">
         <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <CardTitle className="text-zinc-100">Custom headers</CardTitle>
@@ -596,9 +555,9 @@ export function EmailEditor({
         <CardHeader>
           <CardTitle className="text-zinc-100">Attachment (from HTML)</CardTitle>
           <CardDescription>
-            Choose PDF, PNG, or JPEG. After send, the server renders your HTML into a file and
-            attaches it per recipient (merge tags in the attachment HTML are substituted per
-            recipient). Leave unselected to send without this attachment.
+            Choose PDF, PDF image (PNG snapshot), PNG, or JPEG. Merge tags in attachment HTML are
+            filled per recipient — use Insert tag. Built-ins: random, id, invoice, date (or CSV
+            columns).
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -611,7 +570,7 @@ export function EmailEditor({
                   name="attachment-kind"
                   className="size-4 accent-emerald-600"
                   checked={attachmentKind === "pdf"}
-                  onChange={() => setAttachmentKind("pdf")}
+                  onChange={() => updateComposerUi({ attachmentKind: "pdf" })}
                 />
                 PDF
               </label>
@@ -620,8 +579,18 @@ export function EmailEditor({
                   type="radio"
                   name="attachment-kind"
                   className="size-4 accent-emerald-600"
+                  checked={attachmentKind === "pdf_image"}
+                  onChange={() => updateComposerUi({ attachmentKind: "pdf_image" })}
+                />
+                PDF image
+              </label>
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-zinc-200">
+                <input
+                  type="radio"
+                  name="attachment-kind"
+                  className="size-4 accent-emerald-600"
                   checked={attachmentKind === "png"}
-                  onChange={() => setAttachmentKind("png")}
+                  onChange={() => updateComposerUi({ attachmentKind: "png" })}
                 />
                 PNG image
               </label>
@@ -631,7 +600,7 @@ export function EmailEditor({
                   name="attachment-kind"
                   className="size-4 accent-emerald-600"
                   checked={attachmentKind === "jpeg"}
-                  onChange={() => setAttachmentKind("jpeg")}
+                  onChange={() => updateComposerUi({ attachmentKind: "jpeg" })}
                 />
                 JPEG image
               </label>
@@ -642,8 +611,7 @@ export function EmailEditor({
                   size="sm"
                   className="h-8 text-zinc-400 hover:text-zinc-100"
                   onClick={() => {
-                    setAttachmentKind(null);
-                    setAttachmentHtml("");
+                    updateComposerUi({ attachmentKind: null, attachmentHtml: "" });
                   }}
                 >
                   Clear attachment
@@ -654,17 +622,25 @@ export function EmailEditor({
 
           {attachmentKind != null ? (
             <div className="space-y-2">
-              <Label htmlFor="attachment-html">Enter the HTML for the attachment</Label>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Label htmlFor="attachment-html">Enter the HTML for the attachment</Label>
+                <MergeTagInsertMenu
+                  lastParsedCsv={lastParsedCsv}
+                  onInsert={(tag) =>
+                    updateComposerUi({ attachmentHtml: `${attachmentHtml}${tag}` })
+                  }
+                />
+              </div>
               <Textarea
                 id="attachment-html"
                 className="field-sizing-fixed h-64 max-h-64 min-h-0 resize-none overflow-auto bg-zinc-950/50 font-mono text-sm"
                 placeholder={
-                  attachmentKind === "pdf"
-                    ? "<div><h1>Invoice</h1><p>...</p></div>"
+                  attachmentKind === "pdf" || attachmentKind === "pdf_image"
+                    ? "<div><h1>Invoice</h1><p>Invoice: {{{invoice}}}</p></div>"
                     : '<div style="width:400px"><h2>Banner</h2></div>'
                 }
                 value={attachmentHtml}
-                onChange={(e) => setAttachmentHtml(e.target.value)}
+                onChange={(e) => updateComposerUi({ attachmentHtml: e.target.value })}
               />
               {attachmentKind === "jpeg" ? (
                 <p className="text-xs text-zinc-500">

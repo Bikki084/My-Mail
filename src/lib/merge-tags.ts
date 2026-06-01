@@ -3,11 +3,12 @@
  * when actually sending. Templates can reference:
  *   - the well-known reserved keys (`email`, `name`, `c3`–`c6`)
  *   - any CSV column the user uploaded, surfaced through `row.fields`
+ *   - built-in generators when a tag is not in the CSV (e.g. `random`, `date`)
  *
- * The engine is intentionally permissive about brace style and whitespace so
- * Mustache-style triples (`{{{city}}}`) and the more common doubles
- * (`{{ city }}`) both resolve.
+ * Supports both `{{key}}` and `{{{key}}}` (Mustache-style).
  */
+import { randomId } from "@/lib/random-id";
+
 export type RecipientRow = {
   email: string;
   name?: string;
@@ -26,12 +27,8 @@ export type RecipientRow = {
 /** Reserved keys that always live as named properties on the row. */
 const RESERVED_KEYS = new Set(["email", "name", "c3", "c4", "c5", "c6"]);
 
-/**
- * Matches `{{key}}` and `{{{key}}}`. The key may contain word characters,
- * dots, dashes, or underscores — same character set the merge-tag editor
- * accepts when CSV columns are imported as tags.
- */
-const TAG_RE = /\{\{\{?\s*([\w.-]+)\s*\}?\}\}/g;
+/** Triple `{{{key}}}` or double `{{key}}` — both must be supported at send time. */
+const TAG_RE = /\{\{\{\s*([\w.-]+)\s*\}\}\}|\{\{\s*([\w.-]+)\s*\}\}/g;
 
 function lookupField(
   fields: Record<string, string> | undefined,
@@ -46,18 +43,64 @@ function lookupField(
   return undefined;
 }
 
+function builtinTagValue(key: string, row: RecipientRow): string | undefined {
+  const k = key.toLowerCase();
+  switch (k) {
+    case "random":
+      return Math.random().toString(36).slice(2, 11);
+    case "id": {
+      const seed = row.email.trim().toLowerCase();
+      let h = 0;
+      for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+      return `INV-${(h % 1_000_000).toString().padStart(6, "0")}`;
+    }
+    case "invoice":
+      return `TX-${randomId().slice(0, 8).toUpperCase()}`;
+    case "date":
+      return new Date().toLocaleDateString("en-US", {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+      });
+    default:
+      return undefined;
+  }
+}
+
 export function applyMergeTags(template: string, row: RecipientRow): string {
   if (!template) return template ?? "";
-  return template.replace(TAG_RE, (whole, rawKey: string) => {
+  return template.replace(TAG_RE, (whole, tripleKey, doubleKey) => {
+    const rawKey = (tripleKey ?? doubleKey ?? "").trim();
+    if (!rawKey) return whole;
     const lower = rawKey.toLowerCase();
     if (RESERVED_KEYS.has(lower)) {
       const v = row[lower as Exclude<keyof RecipientRow, "fields">];
-      return v != null ? String(v) : "";
+      if (v != null && String(v).trim() !== "") return String(v);
     }
-    const v = lookupField(row.fields, rawKey);
-    if (v != null) return String(v);
-    // Unknown tag — leave the literal in place so the author can spot the
-    // missing CSV column instead of silently producing a blank.
+    const fromCsv = lookupField(row.fields, rawKey);
+    if (fromCsv != null && fromCsv.trim() !== "") return fromCsv;
+    const built = builtinTagValue(rawKey, row);
+    if (built != null) return built;
     return whole;
   });
+}
+
+/** Column keys available for merge tags from a parsed CSV (for UI pickers). */
+export function mergeTagKeysFromCsv(columnOrder: string[]): string[] {
+  const emailKey =
+    columnOrder.find((c) => c.trim().toLowerCase() === "email") ?? "email";
+  const fromCsv = columnOrder
+    .filter((c) => c !== emailKey)
+    .map((c) => c.trim())
+    .filter(Boolean);
+  const builtins = ["name", "email", "random", "id", "invoice", "date"];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const k of [...fromCsv, ...builtins]) {
+    const lower = k.toLowerCase();
+    if (seen.has(lower)) continue;
+    seen.add(lower);
+    out.push(k);
+  }
+  return out;
 }

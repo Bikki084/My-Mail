@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { CheckCircle2, Loader2, RefreshCw, ShieldAlert, X } from "lucide-react";
+import { CheckCircle2, Loader2, Octagon, RefreshCw, ShieldAlert, X } from "lucide-react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -77,6 +77,7 @@ export function CampaignProgressMonitor({
 }) {
   const [active, setActive] = React.useState<ActiveCampaign | null>(null);
   const [resuming, setResuming] = React.useState(false);
+  const [stopping, setStopping] = React.useState(false);
   // Auto-popup state — both modals can open programmatically based on `active`,
   // but the user can dismiss them manually too (e.g. close success modal early).
   const [pauseModalOpen, setPauseModalOpen] = React.useState(false);
@@ -228,6 +229,40 @@ export function CampaignProgressMonitor({
   const remaining = Math.max(0, total - sentCount - failedCount);
   const pct = total > 0 ? Math.min(100, Math.round((sentCount / total) * 100)) : 0;
 
+  const canStop =
+    active != null &&
+    (active.status === "queued" || active.status === "sending");
+
+  async function handleStopSend() {
+    if (!active || !canStop) return;
+    setStopping(true);
+    try {
+      const res = await fetch(`/api/campaigns/${active.id}/cancel`, {
+        method: "POST",
+        credentials: "include",
+      });
+      const body = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+      };
+      if (!res.ok || !body.ok) {
+        toast.error("Could not stop send", {
+          description: typeof body.error === "string" ? body.error : "Unknown error",
+        });
+        return;
+      }
+      toast.success("Send stopped", {
+        description: "No further emails will be sent for this campaign.",
+      });
+    } catch (e) {
+      toast.error("Could not stop send", {
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setStopping(false);
+    }
+  }
+
   async function handleRefreshAndResume() {
     if (!active) return;
     setResuming(true);
@@ -268,6 +303,34 @@ export function CampaignProgressMonitor({
 
   return (
     <>
+      {canStop && !previewMode ? (
+        <div
+          role="status"
+          className="fixed bottom-4 left-1/2 z-50 flex w-[min(100%,28rem)] -translate-x-1/2 flex-wrap items-center justify-between gap-3 rounded-xl border border-red-500/40 bg-zinc-950/95 px-4 py-3 shadow-lg shadow-black/40 backdrop-blur-sm"
+        >
+          <div className="min-w-0 text-sm text-zinc-200">
+            <span className="font-medium text-zinc-50">Sending in progress</span>
+            <span className="mt-0.5 block tabular-nums text-zinc-400">
+              {sentCount.toLocaleString()} sent · {remaining.toLocaleString()} remaining
+            </span>
+          </div>
+          <Button
+            type="button"
+            variant="destructive"
+            size="sm"
+            className="shrink-0"
+            disabled={stopping}
+            onClick={() => void handleStopSend()}
+          >
+            {stopping ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Octagon className="size-4" />
+            )}
+            Stop mail
+          </Button>
+        </div>
+      ) : null}
       <Dialog
         open={pauseModalOpen}
         onOpenChange={(o) => {

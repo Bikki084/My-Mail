@@ -24,6 +24,7 @@ import { Badge } from "@/components/ui/badge";
 
 export type LogRow = {
   id: string;
+  rowNum: number;
   email: string;
   smtp: string;
   status: "Sent" | "Failed" | "Queued";
@@ -37,6 +38,7 @@ const PAGE_SIZE = 25;
 const MOCK_LOGS: LogRow[] = [
   {
     id: "1",
+    rowNum: 1,
     email: "ada@example.com",
     smtp: "smtp.gmail.com",
     status: "Sent",
@@ -45,6 +47,7 @@ const MOCK_LOGS: LogRow[] = [
   },
   {
     id: "2",
+    rowNum: 2,
     email: "grace@example.com",
     smtp: "smtp.mail.yahoo.com",
     status: "Failed",
@@ -53,6 +56,7 @@ const MOCK_LOGS: LogRow[] = [
   },
   {
     id: "3",
+    rowNum: 3,
     email: "alan@example.com",
     smtp: "smtp.office365.com",
     status: "Queued",
@@ -66,6 +70,7 @@ export function LogsTable({ rows = MOCK_LOGS }: { rows?: LogRow[] }) {
     <Table>
       <TableHeader>
         <TableRow className="border-zinc-800 hover:bg-transparent">
+          <TableHead className="text-zinc-400">#</TableHead>
           <TableHead className="text-zinc-400">Email</TableHead>
           <TableHead className="text-zinc-400">SMTP account</TableHead>
           <TableHead className="text-zinc-400">Status</TableHead>
@@ -76,6 +81,7 @@ export function LogsTable({ rows = MOCK_LOGS }: { rows?: LogRow[] }) {
       <TableBody>
         {rows.map((row) => (
           <TableRow key={row.id} className="border-zinc-800">
+            <TableCell className="tabular-nums text-zinc-500">{row.rowNum}</TableCell>
             <TableCell className="font-mono text-sm text-zinc-200">{row.email}</TableCell>
             <TableCell className="text-zinc-400">{row.smtp}</TableCell>
             <TableCell>
@@ -115,35 +121,39 @@ export function SendingLogsTab({ previewMode = false }: { previewMode?: boolean 
   const [sentTotal, setSentTotal] = React.useState(0);
   const [failedTotal, setFailedTotal] = React.useState(0);
   const [page, setPage] = React.useState(1);
-  const [loading, setLoading] = React.useState(true);
+  const [initialLoading, setInitialLoading] = React.useState(true);
   const [refreshKey, setRefreshKey] = React.useState(0);
-
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
   const load = React.useCallback(
-    async (targetPage: number) => {
+    async (targetPage: number, options?: { silent?: boolean }) => {
+      const silent = options?.silent === true;
       if (previewMode) {
-        setRows(MOCK_LOGS);
+        setRows(
+          MOCK_LOGS.map((r, i) => ({
+            ...r,
+            rowNum: i + 1,
+          })),
+        );
         setTotalCount(MOCK_LOGS.length);
         setSentTotal(MOCK_LOGS.filter((r) => r.status === "Sent").length);
         setFailedTotal(MOCK_LOGS.filter((r) => r.status === "Failed").length);
-        setLoading(false);
+        setInitialLoading(false);
         return;
       }
-      setLoading(true);
+      if (!silent) {
+        setInitialLoading(true);
+      }
       const supabase = createClient();
       const from = (targetPage - 1) * PAGE_SIZE;
       const to = from + PAGE_SIZE - 1;
-      // RLS scopes results to the signed-in user, so per-user counts are
-      // returned automatically. Three head-only counts cost almost nothing
-      // and keep the totals card honest across the whole log set.
       const [pageRes, sentRes, failedRes] = await Promise.all([
         supabase
           .from("sending_logs")
           .select("id, recipient_email, smtp_used, status, error_message, sent_at", {
             count: "exact",
           })
-          .order("sent_at", { ascending: false })
+          .order("sent_at", { ascending: true, nullsFirst: false })
           .range(from, to),
         supabase
           .from("sending_logs")
@@ -156,16 +166,20 @@ export function SendingLogsTab({ previewMode = false }: { previewMode?: boolean 
       ]);
       if (pageRes.error) {
         console.error("[sending_logs]", pageRes.error);
-        setRows([]);
-        setTotalCount(0);
+        if (!silent) {
+          setRows([]);
+          setTotalCount(0);
+        }
         setSentTotal(0);
         setFailedTotal(0);
-        setLoading(false);
+        setInitialLoading(false);
         return;
       }
+      const total = pageRes.count ?? 0;
       setRows(
-        (pageRes.data ?? []).map((r) => ({
+        (pageRes.data ?? []).map((r, idx) => ({
           id: r.id,
+          rowNum: from + idx + 1,
           email: r.recipient_email,
           smtp: r.smtp_used ?? "—",
           status: mapStatus(r.status),
@@ -178,32 +192,45 @@ export function SendingLogsTab({ previewMode = false }: { previewMode?: boolean 
             : "—",
         })),
       );
-      setTotalCount(pageRes.count ?? 0);
+      setTotalCount(total);
       setSentTotal(sentRes.count ?? 0);
       setFailedTotal(failedRes.count ?? 0);
-      setLoading(false);
+      setInitialLoading(false);
     },
     [previewMode],
   );
 
-  // Async log fetch — setState happens after `await`, not synchronously within
-  // the effect body, so the cascading-render rule doesn't actually apply.
   React.useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load(page);
   }, [load, page, refreshKey]);
 
+  // Update progress totals only — no table reload, no flicker.
   React.useEffect(() => {
     if (previewMode) return;
     const timer = setInterval(() => {
-      setRefreshKey((k) => k + 1);
-    }, 4_000);
+      void (async () => {
+        const supabase = createClient();
+        const [sentRes, failedRes, totalRes] = await Promise.all([
+          supabase
+            .from("sending_logs")
+            .select("id", { count: "exact", head: true })
+            .eq("status", "sent"),
+          supabase
+            .from("sending_logs")
+            .select("id", { count: "exact", head: true })
+            .in("status", ["failed", "bounced"]),
+          supabase
+            .from("sending_logs")
+            .select("id", { count: "exact", head: true }),
+        ]);
+        setSentTotal(sentRes.count ?? 0);
+        setFailedTotal(failedRes.count ?? 0);
+        setTotalCount(totalRes.count ?? 0);
+      })();
+    }, 5_000);
     return () => clearInterval(timer);
   }, [previewMode]);
 
-  // Clamp the active page if the underlying log set shrinks (e.g. cascade
-  // delete after a campaign is removed). Adjusted during render to match the
-  // pattern used elsewhere (see csv-table.tsx) instead of a chained effect.
   if (page > totalPages) {
     setPage(totalPages);
   }
@@ -217,10 +244,17 @@ export function SendingLogsTab({ previewMode = false }: { previewMode?: boolean 
     if (next !== page) setPage(next);
   }
 
-  function handleRefresh() {
-    setPage(1);
+  function handleRefreshSamePage() {
     setRefreshKey((k) => k + 1);
   }
+
+  function handleGoToLatest() {
+    const last = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+    if (last !== page) setPage(last);
+    else setRefreshKey((k) => k + 1);
+  }
+
+  const tableLoading = initialLoading && rows.length === 0;
 
   return (
     <div className="space-y-6">
@@ -228,12 +262,8 @@ export function SendingLogsTab({ previewMode = false }: { previewMode?: boolean 
         <CardHeader>
           <CardTitle className="text-zinc-100">Progress</CardTitle>
           <CardDescription>
-            Totals are calculated across all of your sending logs. Start a send from the Email
-            Composer tab. With <code className="text-xs text-zinc-400">REDIS_URL</code> in{" "}
-            <code className="text-xs text-zinc-400">.env.local</code>,{" "}
-            <code className="text-xs text-zinc-400">npm run dev</code> starts the worker for you;
-            otherwise run <code className="text-xs text-zinc-400">npm run worker</code> in another
-            terminal. Then refresh.
+            Totals update every few seconds. Use Refresh on the log table to load new rows — your
+            page and scroll position stay put.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -267,9 +297,7 @@ export function SendingLogsTab({ previewMode = false }: { previewMode?: boolean 
                 ? "Mock data — connect Supabase to see real deliveries."
                 : totalCount === 0
                   ? "No deliveries logged yet."
-                  : `Showing ${showingFrom}–${showingTo} of ${totalCount} ${
-                      totalCount === 1 ? "row" : "rows"
-                    }.`}
+                  : `Rows ${showingFrom}–${showingTo} of ${totalCount} (oldest first).`}
             </CardDescription>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
@@ -282,7 +310,7 @@ export function SendingLogsTab({ previewMode = false }: { previewMode?: boolean 
                 variant="outline"
                 size="sm"
                 className="border-zinc-700"
-                disabled={page <= 1 || loading || previewMode}
+                disabled={page <= 1 || tableLoading || previewMode}
                 onClick={() => goToPage(page - 1)}
                 aria-label="Previous page"
               >
@@ -294,7 +322,7 @@ export function SendingLogsTab({ previewMode = false }: { previewMode?: boolean 
                 variant="outline"
                 size="sm"
                 className="border-zinc-700"
-                disabled={page >= totalPages || loading || previewMode}
+                disabled={page >= totalPages || tableLoading || previewMode}
                 onClick={() => goToPage(page + 1)}
                 aria-label="Next page"
               >
@@ -306,11 +334,21 @@ export function SendingLogsTab({ previewMode = false }: { previewMode?: boolean 
               type="button"
               variant="outline"
               size="sm"
-              className="inline-flex border-zinc-700"
-              disabled={loading || previewMode}
-              onClick={handleRefresh}
+              className="border-zinc-700"
+              disabled={tableLoading || previewMode || totalCount === 0}
+              onClick={handleGoToLatest}
             >
-              {loading ? (
+              Latest
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="inline-flex border-zinc-700"
+              disabled={tableLoading || previewMode}
+              onClick={handleRefreshSamePage}
+            >
+              {tableLoading ? (
                 <Loader2 className="size-4 animate-spin" />
               ) : (
                 <RefreshCw className="size-4" />
@@ -320,7 +358,7 @@ export function SendingLogsTab({ previewMode = false }: { previewMode?: boolean 
           </div>
         </CardHeader>
         <CardContent className="overflow-x-auto">
-          {loading && !previewMode ? (
+          {tableLoading ? (
             <p className="flex items-center gap-2 text-sm text-zinc-500">
               <Loader2 className="size-4 shrink-0 animate-spin" />
               Loading…

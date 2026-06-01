@@ -228,12 +228,10 @@ export function appendUnsubscribeFooter(args: {
 
   let outText = text;
   if (text && !hasUnsubscribeMention(text)) {
-    const footerText = [
-      "",
-      "---",
-      postalLine ? postalLine : "",
-      `Unsubscribe: ${unsubscribeLink}`,
-    ]
+    const unsubscribeLine = unsubscribeUrl
+      ? `Unsubscribe: ${unsubscribeUrl}`
+      : 'To unsubscribe, reply to this email with subject line "Unsubscribe".';
+    const footerText = ["", "---", postalLine ? postalLine : "", unsubscribeLine]
       .filter((line) => line !== "")
       .join("\n");
     outText = `${text.replace(/\s+$/, "")}\n${footerText}\n`;

@@ -5,7 +5,7 @@ import { buildCampaignStorageHtml } from "@/lib/campaign-email-body-build";
 import { MAX_CAMPAIGN_ATTACHMENTS } from "@/lib/campaign-multipart";
 
 const htmlAttachmentPayloadSchema = z.object({
-  kind: z.enum(["pdf", "png", "jpeg"]),
+  kind: z.enum(["pdf", "png", "jpeg", "pdf_image"]),
   html: z.string().max(500_000),
 });
 

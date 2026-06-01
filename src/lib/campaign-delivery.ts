@@ -100,13 +100,20 @@ function friendlyErr(err: unknown): string {
   return String(err);
 }
 
-type HtmlAttachmentKind = "pdf" | "png" | "jpeg";
+type HtmlAttachmentKind = "pdf" | "png" | "jpeg" | "pdf_image";
 type HtmlAttachmentSpec = { kind: HtmlAttachmentKind; html: string };
 
 function parseHtmlAttachment(raw: unknown): HtmlAttachmentSpec | null {
   if (raw == null || typeof raw !== "object") return null;
   const o = raw as Record<string, unknown>;
-  if (o.kind !== "pdf" && o.kind !== "png" && o.kind !== "jpeg") return null;
+  if (
+    o.kind !== "pdf" &&
+    o.kind !== "png" &&
+    o.kind !== "jpeg" &&
+    o.kind !== "pdf_image"
+  ) {
+    return null;
+  }
   const html = typeof o.html === "string" ? o.html.trim() : "";
   if (!html) return null;
   return { kind: o.kind, html };

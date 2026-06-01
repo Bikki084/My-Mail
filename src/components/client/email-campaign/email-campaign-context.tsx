@@ -5,8 +5,11 @@ import type { RecipientRow } from "@/lib/merge-tags";
 import { parsedCsvToRecipientRows } from "@/lib/csv-recipients";
 import type { ParsedCsv } from "@/lib/csv-types";
 
-const STORAGE_V = 1 as const;
-const storageKey = (userId: string) => `mymail.campaign.csv.${STORAGE_V}.${userId}`;
+const STORAGE_V = 2 as const;
+const csvStorageKey = (userId: string) => `mymail.campaign.csv.${STORAGE_V}.${userId}`;
+const composeStorageKey = (userId: string) => `mymail.campaign.compose.${STORAGE_V}.${userId}`;
+
+export type AttachmentKind = "pdf" | "png" | "jpeg" | "pdf_image" | null;
 
 export type ComposeDraft = {
   subject: string;
@@ -15,6 +18,11 @@ export type ComposeDraft = {
   senderName: string;
   streamName: string;
   encoding: string;
+};
+
+export type ComposerUiState = {
+  attachmentKind: AttachmentKind;
+  attachmentHtml: string;
 };
 
 const defaultCompose: ComposeDraft = {
@@ -28,6 +36,11 @@ This is a test from My Mail.`,
   encoding: "auto",
 };
 
+const defaultComposerUi: ComposerUiState = {
+  attachmentKind: null,
+  attachmentHtml: "",
+};
+
 type EmailCampaignContextValue = {
   campaignRecipients: RecipientRow[];
   lastParsedCsv: ParsedCsv | null;
@@ -36,13 +49,15 @@ type EmailCampaignContextValue = {
   composeDraft: ComposeDraft;
   setComposeDraft: React.Dispatch<React.SetStateAction<ComposeDraft>>;
   updateCompose: (partial: Partial<ComposeDraft>) => void;
+  composerUi: ComposerUiState;
+  setComposerUi: React.Dispatch<React.SetStateAction<ComposerUiState>>;
+  updateComposerUi: (partial: Partial<ComposerUiState>) => void;
 };
 
 const EmailCampaignContext = React.createContext<EmailCampaignContextValue | null>(null);
 
 export function EmailCampaignProvider({
   children,
-  /** When set, CSV is restored from and saved to `localStorage` for this key until cleared. */
   persistenceUserId = null,
 }: {
   children: React.ReactNode;
@@ -50,6 +65,7 @@ export function EmailCampaignProvider({
 }) {
   const [lastParsedCsv, setLastParsedCsv] = React.useState<ParsedCsv | null>(null);
   const [composeDraft, setComposeDraft] = React.useState<ComposeDraft>({ ...defaultCompose });
+  const [composerUi, setComposerUi] = React.useState<ComposerUiState>({ ...defaultComposerUi });
   const [storageReady, setStorageReady] = React.useState(!persistenceUserId);
 
   const setParsedCsvData = React.useCallback((data: ParsedCsv | null) => {
@@ -60,7 +76,7 @@ export function EmailCampaignProvider({
     setLastParsedCsv(null);
     if (persistenceUserId) {
       try {
-        localStorage.removeItem(storageKey(persistenceUserId));
+        localStorage.removeItem(csvStorageKey(persistenceUserId));
       } catch {
         // ignore
       }
@@ -71,9 +87,10 @@ export function EmailCampaignProvider({
     setComposeDraft((d) => ({ ...d, ...partial }));
   }, []);
 
-  // Hydrate persisted CSV from localStorage (an external system). Sync-with-
-  // external-system effects are the canonical use of useEffect, so the
-  // setState-in-effect rule is suppressed here on purpose.
+  const updateComposerUi = React.useCallback((partial: Partial<ComposerUiState>) => {
+    setComposerUi((u) => ({ ...u, ...partial }));
+  }, []);
+
   /* eslint-disable react-hooks/set-state-in-effect */
   React.useEffect(() => {
     if (!persistenceUserId) {
@@ -81,14 +98,30 @@ export function EmailCampaignProvider({
       return;
     }
     try {
-      const raw = localStorage.getItem(storageKey(persistenceUserId));
-      if (!raw) {
-        setStorageReady(true);
-        return;
+      const rawCsv = localStorage.getItem(csvStorageKey(persistenceUserId));
+      if (rawCsv) {
+        const p = JSON.parse(rawCsv) as { v?: number; parsed?: ParsedCsv };
+        if (p.v === STORAGE_V && p.parsed?.columnOrder && Array.isArray(p.parsed.rows)) {
+          setLastParsedCsv(p.parsed);
+        }
       }
-      const p = JSON.parse(raw) as { v?: number; parsed?: ParsedCsv };
-      if (p.v === STORAGE_V && p.parsed?.columnOrder && Array.isArray(p.parsed.rows)) {
-        setLastParsedCsv(p.parsed);
+      const rawCompose = localStorage.getItem(composeStorageKey(persistenceUserId));
+      if (rawCompose) {
+        const c = JSON.parse(rawCompose) as {
+          v?: number;
+          compose?: ComposeDraft;
+          composerUi?: ComposerUiState;
+        };
+        if (c.v === STORAGE_V && c.compose) {
+          setComposeDraft({ ...defaultCompose, ...c.compose });
+        }
+        if (c.v === STORAGE_V && c.composerUi) {
+          setComposerUi({
+            ...defaultComposerUi,
+            attachmentKind: c.composerUi.attachmentKind ?? null,
+            attachmentHtml: c.composerUi.attachmentHtml ?? "",
+          });
+        }
       }
     } catch {
       // ignore
@@ -102,21 +135,38 @@ export function EmailCampaignProvider({
     if (!persistenceUserId || !storageReady) return;
     if (!lastParsedCsv) {
       try {
-        localStorage.removeItem(storageKey(persistenceUserId));
+        localStorage.removeItem(csvStorageKey(persistenceUserId));
       } catch {
         // ignore
       }
-      return;
-    }
-    try {
-      localStorage.setItem(
-        storageKey(persistenceUserId),
-        JSON.stringify({ v: STORAGE_V, parsed: lastParsedCsv, savedAt: Date.now() }),
-      );
-    } catch {
-      // quota / private mode
+    } else {
+      try {
+        localStorage.setItem(
+          csvStorageKey(persistenceUserId),
+          JSON.stringify({ v: STORAGE_V, parsed: lastParsedCsv, savedAt: Date.now() }),
+        );
+      } catch {
+        // ignore
+      }
     }
   }, [lastParsedCsv, persistenceUserId, storageReady]);
+
+  React.useEffect(() => {
+    if (!persistenceUserId || !storageReady) return;
+    try {
+      localStorage.setItem(
+        composeStorageKey(persistenceUserId),
+        JSON.stringify({
+          v: STORAGE_V,
+          compose: composeDraft,
+          composerUi,
+          savedAt: Date.now(),
+        }),
+      );
+    } catch {
+      // ignore
+    }
+  }, [composeDraft, composerUi, persistenceUserId, storageReady]);
 
   const campaignRecipients = React.useMemo(
     () => parsedCsvToRecipientRows(lastParsedCsv),
@@ -133,8 +183,20 @@ export function EmailCampaignProvider({
         composeDraft,
         setComposeDraft,
         updateCompose,
+        composerUi,
+        setComposerUi,
+        updateComposerUi,
       }) satisfies EmailCampaignContextValue,
-    [campaignRecipients, lastParsedCsv, setParsedCsvData, clearCampaignRecipients, composeDraft, updateCompose],
+    [
+      campaignRecipients,
+      lastParsedCsv,
+      setParsedCsvData,
+      clearCampaignRecipients,
+      composeDraft,
+      updateCompose,
+      composerUi,
+      updateComposerUi,
+    ],
   );
 
   return (

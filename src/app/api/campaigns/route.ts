@@ -20,7 +20,7 @@ const attachmentItemSchema = z.object({
 });
 
 const htmlAttachmentPayloadSchema = z.object({
-  kind: z.enum(["pdf", "png", "jpeg"]),
+  kind: z.enum(["pdf", "png", "jpeg", "pdf_image"]),
   html: z.string().max(500_000),
 });
 
@@ -66,7 +66,7 @@ const bodySchema = campaignFieldsSchema.extend({
 
 function normalizeHtmlAttachment(
   raw: z.infer<typeof htmlAttachmentPayloadSchema> | null | undefined,
-): { kind: "pdf" | "png" | "jpeg"; html: string } | null {
+): { kind: "pdf" | "png" | "jpeg" | "pdf_image"; html: string } | null {
   if (!raw) return null;
   const html = raw.html.trim();
   if (!html) return null;

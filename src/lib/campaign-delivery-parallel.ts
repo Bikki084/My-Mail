@@ -48,7 +48,10 @@ type IpHistoryEntry = {
   failed: number;
 };
 
-type HtmlAttachmentSpec = { kind: "pdf" | "png" | "jpeg"; html: string };
+type HtmlAttachmentSpec = {
+  kind: "pdf" | "png" | "jpeg" | "pdf_image";
+  html: string;
+};
 
 const GENERATED_ATTACH_MAX_BYTES = 8 * 1024 * 1024;
 
@@ -102,6 +105,8 @@ function htmlAttachmentMeta(kind: HtmlAttachmentSpec["kind"]): {
       return { filename: "attachment.pdf", contentType: "application/pdf" };
     case "jpeg":
       return { filename: "attachment.jpg", contentType: "image/jpeg" };
+    case "pdf_image":
+      return { filename: "attachment.png", contentType: "image/png" };
     case "png":
     default:
       return { filename: "attachment.png", contentType: "image/png" };
@@ -372,14 +377,18 @@ export async function deliverCampaignInParallel(
         );
 
         try {
-          const htmlPart = html.trim();
+          let htmlPart = html.trim();
           const textPart = text.trim();
           if (!htmlPart && !allAttachments.length) {
             throw new Error("Email content (HTML) is required.");
           }
+          if (!htmlPart && allAttachments.length) {
+            htmlPart =
+              "<p>Please see the attached file(s).</p>";
+          }
           const fallbackText =
             textPart ||
-            (allAttachments.length && !htmlPart
+            (allAttachments.length && !html.trim()
               ? "Please see the attached file(s)."
               : "");
           const textBody = fallbackText.trim();
