@@ -34,6 +34,11 @@ import { useEmailCampaign } from "./email-campaign-context";
 import { MergeTagAutocompleteField } from "./merge-tag-autocomplete-field";
 import { MergeTagInsertMenu } from "./merge-tag-insert";
 import { mergeTagKeysForAutocomplete } from "@/lib/merge-tags";
+import {
+  domainOfEmail,
+  isFreeMailDomain,
+  isMicrosoftMailbox,
+} from "@/lib/mailbox-domains";
 import { useWalletState } from "./wallet-state-context";
 
 type HeaderRow = { id: string; name: string; value: string };
@@ -370,6 +375,19 @@ export function EmailEditor({
         toast.message("SMTP scope: last bulk import", {
           description: `This send uses ${scopedBulkIds.length} account(s) from your latest bulk import (not every saved server). Import another CSV to change the set.`,
           duration: 8_000,
+        });
+      }
+
+      const outlookRecipients = campaignRecipients.filter((r) =>
+        isMicrosoftMailbox(r.email),
+      ).length;
+      const sendsFromFreeMail = rowsForSend.some((r) =>
+        isFreeMailDomain(domainOfEmail(r.username)),
+      );
+      if (outlookRecipients > 0 && sendsFromFreeMail) {
+        toast.warning("Outlook / Hotmail deliverability", {
+          description: `${outlookRecipients} recipient(s) use Outlook or Hotmail. Sending from a free Gmail/Yahoo address often lands in Junk — use a domain you own with SPF/DKIM/DMARC, set MAILER_PUBLIC_URL on the server, and ask the recipient to mark "Not junk" once.`,
+          duration: 16_000,
         });
       }
 

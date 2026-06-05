@@ -20,6 +20,13 @@
  *      a specific send (helps with manual abuse triage too).
  */
 import crypto from "node:crypto";
+import { isMicrosoftMailbox } from "@/lib/mailbox-domains";
+
+export type DeliverabilityProfile = "default" | "microsoft";
+
+export function deliverabilityProfileForRecipient(email: string): DeliverabilityProfile {
+  return isMicrosoftMailbox(email) ? "microsoft" : "default";
+}
 
 export type DeliverabilityHeaderOptions = {
   campaignId: string;
@@ -91,23 +98,21 @@ function slugForHeader(s: string, fallback: string): string {
  * does this by default, but only when From contains a parseable domain; setting
  * it explicitly avoids edge cases where the domain extraction fails.
  *
- * Outlook / Hotmail-specific signals we set:
- *   - `Precedence: bulk`     — explicit "this is a marketing/bulk send"; Microsoft
- *     filters use this to keep legitimate bulk mail out of phishing buckets.
- *   - `List-ID` (RFC 2919)   — identifies the campaign stream so SmartScreen can
- *     learn per-stream reputation and the recipient's "Block Sender" works on
- *     the stream rather than the individual From address.
- *   - `Feedback-ID` (RFC 6449) — used by Gmail FBL and accepted (not penalised)
- *     by other ISPs; the campaign / user / stream / app tuple maps spam-flag
- *     reports back to the correct send.
- *   - `X-Mailer`             — clean app identification (helps support triage,
- *     does NOT affect spam scoring, but missing it is mildly suspicious).
- *   - `MIME-Version`         — Nodemailer adds this; we set it explicitly so the
- *     value is never missing on edge transports.
+ * Outlook / Hotmail (Microsoft consumer mailboxes):
+ *   SmartScreen is hostile to bulk/marketing signals from free-mail senders
+ *   (gmail.com, etc.). For @outlook.com / @hotmail.com / @live.com recipients
+ *   we use a lighter, transactional-style header set: no `Precedence: bulk`,
+ *   no `List-ID`, no `Feedback-ID`, and a softer body footer. Gmail/Yahoo keep
+ *   the full marketing header set.
+ *
+ * Default (non-Microsoft) profile also sets:
+ *   - `List-ID` (RFC 2919), `Feedback-ID` (RFC 6449), `X-Mailer`
+ *   - `Precedence: bulk` for non-Microsoft mailboxes only
  */
 export function buildDeliverabilityHeaders(
   opts: DeliverabilityHeaderOptions,
 ): DeliverabilityHeaders {
+  const profile = deliverabilityProfileForRecipient(opts.recipientEmail);
   const fromAddr = extractAddress(opts.fromAddress);
   const fromDomain = domainOf(fromAddr) || "localhost";
   const mailbox = (opts.unsubscribeMailbox ?? "").trim() || fromAddr;
@@ -160,16 +165,23 @@ export function buildDeliverabilityHeaders(
   const headers: Record<string, string> = {
     "MIME-Version": "1.0",
     "List-Unsubscribe": unsubscribeParts.join(", "),
-    "List-ID": listId,
     "X-Entity-Ref-ID": refId,
-    "X-Mailer": "MyMail SaaS (https://github.com/mymail-saas)",
-    "Feedback-ID": feedbackId,
-    // Tells Microsoft/Outlook this is bulk mail, not unauthenticated solicitation.
-    // Microsoft explicitly documents respecting `Precedence: bulk`; Yahoo / Gmail
-    // are neutral on it. Do NOT set this for transactional mail (password reset,
-    // receipts) — but every send through this app is a campaign by definition.
-    Precedence: "bulk",
   };
+
+  if (profile === "microsoft") {
+    // Transactional-style signals — avoids SmartScreen bulk/marketing buckets
+    // when the From domain is a consumer mailbox (gmail.com, etc.).
+    headers["Auto-Submitted"] = "no";
+    headers.Importance = "normal";
+    headers["X-Priority"] = "3";
+    headers["X-MSMail-Priority"] = "Normal";
+  } else {
+    headers["List-ID"] = listId;
+    headers["X-Mailer"] = "MyMail SaaS (https://github.com/mymail-saas)";
+    headers["Feedback-ID"] = feedbackId;
+    headers.Precedence = "bulk";
+  }
+
   if (unsubscribeUrl) {
     // RFC 8058: only valid when an HTTPS URL is present.
     headers["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click";
@@ -204,8 +216,11 @@ export function appendUnsubscribeFooter(args: {
   unsubscribeUrl: string | null;
   /** Optional postal address line for CAN-SPAM compliance. */
   postalAddress?: string | null;
+  /** Softer footer copy for Microsoft consumer mailboxes. */
+  profile?: DeliverabilityProfile;
 }): { html: string; text: string } {
-  const { html, text, unsubscribeMailto, unsubscribeUrl, postalAddress } = args;
+  const { html, text, unsubscribeMailto, unsubscribeUrl, postalAddress, profile } = args;
+  const microsoftStyle = profile === "microsoft";
   const unsubscribeLink = unsubscribeUrl ?? unsubscribeMailto;
   const postalLine = (postalAddress ?? "").trim();
 
@@ -216,9 +231,13 @@ export function appendUnsubscribeFooter(args: {
       postalLine
         ? `<div style="margin-bottom:6px;">${escapeHtml(postalLine)}</div>`
         : "",
-      `<div>Don't want these emails? <a href="${escapeAttr(
-        unsubscribeLink,
-      )}" style="color:#6b7280;text-decoration:underline;">Unsubscribe</a>.</div>`,
+      microsoftStyle
+        ? `<div>You can <a href="${escapeAttr(
+            unsubscribeLink,
+          )}" style="color:#6b7280;text-decoration:underline;">opt out of future messages</a> at any time.</div>`
+        : `<div>Don't want these emails? <a href="${escapeAttr(
+            unsubscribeLink,
+          )}" style="color:#6b7280;text-decoration:underline;">Unsubscribe</a>.</div>`,
       "</div>",
     ]
       .filter(Boolean)
@@ -228,9 +247,13 @@ export function appendUnsubscribeFooter(args: {
 
   let outText = text;
   if (text && !hasUnsubscribeMention(text)) {
-    const unsubscribeLine = unsubscribeUrl
-      ? `Unsubscribe: ${unsubscribeUrl}`
-      : 'To unsubscribe, reply to this email with subject line "Unsubscribe".';
+    const unsubscribeLine = microsoftStyle
+      ? unsubscribeUrl
+        ? `Opt out: ${unsubscribeUrl}`
+        : 'To opt out, reply with subject "Unsubscribe".'
+      : unsubscribeUrl
+        ? `Unsubscribe: ${unsubscribeUrl}`
+        : 'To unsubscribe, reply to this email with subject line "Unsubscribe".';
     const footerText = ["", "---", postalLine ? postalLine : "", unsubscribeLine]
       .filter((line) => line !== "")
       .join("\n");

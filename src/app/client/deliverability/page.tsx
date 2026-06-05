@@ -134,7 +134,7 @@ export default async function ClientDeliverabilityPage() {
               "Auto-injected unsubscribe footer when your template doesn't ship one (CAN-SPAM)",
               "List-ID header for per-stream reputation (RFC 2919)",
               "Feedback-ID header so abuse reports map back to the campaign (RFC 6449)",
-              "Precedence: bulk header — explicit signal to Outlook this is legitimate marketing mail",
+              "Outlook/Hotmail recipients get transactional-style headers (no bulk/marketing signals)",
               "Plain-text body auto-generated from your HTML so the MIME parts never drift",
               "Per-recipient X-Entity-Ref-ID for FBL / abuse triage",
             ].map((line) => (
