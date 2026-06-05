@@ -27,10 +27,12 @@ import type { MonitorCampaignRow } from "./actions";
 type Props = {
   rows: MonitorCampaignRow[];
   clientId?: string;
+  page?: number;
   fetchError?: string;
 };
 
 const ALL_CLIENTS = "__all__";
+const ROWS_PER_PAGE = 15;
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
@@ -72,7 +74,7 @@ function clientOptionLabel(r: MonitorCampaignRow): string {
   return r.client || r.clientEmail || "Unknown client";
 }
 
-export function MonitorClient({ rows, clientId = "", fetchError }: Props) {
+export function MonitorClient({ rows, clientId = "", page = 1, fetchError }: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const [refreshing, setRefreshing] = React.useState(false);
@@ -94,20 +96,46 @@ export function MonitorClient({ rows, clientId = "", fetchError }: Props) {
       .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
   }, [rows]);
 
+  const clientLabelLookup = React.useMemo(() => {
+    const m = new Map<string, string>();
+    m.set(ALL_CLIENTS, "All clients");
+    for (const c of clientOptions) m.set(c.id, c.label);
+    return m;
+  }, [clientOptions]);
+
   const filteredRows = React.useMemo(() => {
     if (!selectedClientId || selectedClientId === ALL_CLIENTS) return rows;
     return rows.filter((r) => r.userId === selectedClientId);
   }, [rows, selectedClientId]);
 
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / ROWS_PER_PAGE));
+  const currentPage = Math.min(Math.max(1, page), totalPages);
+
+  const paginatedRows = React.useMemo(() => {
+    const start = (currentPage - 1) * ROWS_PER_PAGE;
+    return filteredRows.slice(start, start + ROWS_PER_PAGE);
+  }, [filteredRows, currentPage]);
+
   const hasLiveCampaigns = rows.some((r) => r.status === "sending" || r.status === "queued");
+
+  function pushParams(next: { clientId?: string; page?: number }) {
+    const sp = new URLSearchParams();
+    const cid = next.clientId ?? selectedClientId;
+    const p = next.page ?? currentPage;
+    if (cid && cid !== ALL_CLIENTS) sp.set("client", cid);
+    if (p > 1) sp.set("page", String(p));
+    const qs = sp.toString();
+    router.push(qs ? `${pathname}?${qs}` : pathname);
+  }
 
   function applyClientFilter(nextId: string | null) {
     const id = nextId ?? ALL_CLIENTS;
     setSelectedClientId(id);
-    const sp = new URLSearchParams();
-    if (id && id !== ALL_CLIENTS) sp.set("client", id);
-    const qs = sp.toString();
-    router.push(qs ? `${pathname}?${qs}` : pathname);
+    pushParams({ clientId: id, page: 1 });
+  }
+
+  function goToPage(p: number) {
+    pushParams({ page: Math.min(Math.max(1, p), totalPages) });
   }
 
   const refresh = React.useCallback(() => {
@@ -168,21 +196,35 @@ export function MonitorClient({ rows, clientId = "", fetchError }: Props) {
       ) : null}
 
       <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end">
-        <div className="min-w-[220px] space-y-1.5">
+        <div className="w-full max-w-lg space-y-1.5">
           <Label htmlFor="monitor-client-filter" className="text-gray-400">
             Client
           </Label>
           <Select value={selectedClientId} onValueChange={applyClientFilter}>
             <SelectTrigger
               id="monitor-client-filter"
-              className="border-gray-700 bg-[#111827] text-gray-100"
+              className="h-10 w-full min-w-[min(100%,28rem)] border-gray-700 bg-[#111827] font-sans text-sm text-gray-100"
             >
-              <SelectValue placeholder="All clients" />
+              <SelectValue placeholder="All clients">
+                {(value: string | null) => {
+                  if (!value || value === ALL_CLIENTS) return "All clients";
+                  return clientLabelLookup.get(value) ?? "All clients";
+                }}
+              </SelectValue>
             </SelectTrigger>
-            <SelectContent className="border-gray-700 bg-[#111827] text-gray-100">
-              <SelectItem value={ALL_CLIENTS}>All clients</SelectItem>
+            <SelectContent
+              className="max-h-72 min-w-[var(--anchor-width)] max-w-lg border-gray-700 bg-[#111827] font-sans text-sm"
+              align="start"
+            >
+              <SelectItem value={ALL_CLIENTS} className="font-sans text-sm text-gray-100">
+                All clients
+              </SelectItem>
               {clientOptions.map((c) => (
-                <SelectItem key={c.id} value={c.id}>
+                <SelectItem
+                  key={c.id}
+                  value={c.id}
+                  className="font-sans text-sm text-gray-100"
+                >
                   {c.label}
                 </SelectItem>
               ))}
@@ -220,7 +262,7 @@ export function MonitorClient({ rows, clientId = "", fetchError }: Props) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filteredRows.length === 0 ? (
+            {paginatedRows.length === 0 ? (
               <TableRow className="border-gray-800 hover:bg-transparent">
                 <TableCell colSpan={7} className="py-10 text-center text-gray-500">
                   {rows.length === 0
@@ -229,17 +271,17 @@ export function MonitorClient({ rows, clientId = "", fetchError }: Props) {
                 </TableCell>
               </TableRow>
             ) : (
-              filteredRows.map((c) => (
+              paginatedRows.map((c) => (
                 <TableRow key={c.id} className="border-gray-800">
                   <TableCell className="max-w-[200px] truncate font-medium text-white" title={c.name}>
                     {c.name}
                   </TableCell>
-                  <TableCell className="max-w-[180px] text-gray-400">
-                    <div className="truncate" title={c.clientEmail}>
+                  <TableCell className="max-w-[220px] text-gray-400">
+                    <div className="truncate font-sans text-sm" title={c.client}>
                       {c.client}
                     </div>
                     {c.clientEmail && c.client !== c.clientEmail ? (
-                      <div className="truncate text-xs text-gray-600">{c.clientEmail}</div>
+                      <div className="truncate font-sans text-xs text-gray-600">{c.clientEmail}</div>
                     ) : null}
                   </TableCell>
                   <TableCell>
@@ -261,13 +303,50 @@ export function MonitorClient({ rows, clientId = "", fetchError }: Props) {
                   <TableCell className="text-right tabular-nums text-gray-500">
                     {c.totalEmails.toLocaleString()}
                   </TableCell>
-                  <TableCell className="whitespace-nowrap text-gray-500">{formatDate(c.date)}</TableCell>
+                  <TableCell className="whitespace-nowrap font-sans text-sm text-gray-500">
+                    {formatDate(c.date)}
+                  </TableCell>
                 </TableRow>
               ))
             )}
           </TableBody>
         </Table>
       </div>
+
+      {filteredRows.length > 0 ? (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-gray-400">
+          <span className="tabular-nums">
+            Page {currentPage} of {totalPages}
+            <span className="text-gray-600">
+              {" "}
+              · {ROWS_PER_PAGE} per page · {filteredRows.length} campaign
+              {filteredRows.length === 1 ? "" : "s"}
+            </span>
+          </span>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="border-gray-700 text-gray-200"
+              onClick={() => goToPage(currentPage - 1)}
+              disabled={currentPage <= 1}
+            >
+              Previous
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="border-gray-700 text-gray-200"
+              onClick={() => goToPage(currentPage + 1)}
+              disabled={currentPage >= totalPages}
+            >
+              Next
+            </Button>
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }
