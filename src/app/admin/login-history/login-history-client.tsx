@@ -125,9 +125,9 @@ export function LoginHistoryClient({
       />
 
       <div className="flex flex-col gap-4 rounded-lg border border-gray-800 bg-[#111827] p-4">
-        <div className="grid gap-3 sm:grid-cols-4">
-          <div className="w-full max-w-lg space-y-1.5 sm:col-span-2">
-            <Label htmlFor="login-history-user-filter" className="text-xs text-gray-400">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="w-full space-y-1.5 sm:col-span-2 lg:col-span-4">
+            <Label htmlFor="login-history-user-filter" className="text-sm text-gray-400">
               User
             </Label>
             <Select
@@ -137,7 +137,7 @@ export function LoginHistoryClient({
             >
               <SelectTrigger
                 id="login-history-user-filter"
-                className="h-10 w-full min-w-[min(100%,28rem)] border-gray-700 bg-[#0F172A] font-sans text-sm text-gray-100"
+                className="h-10 w-full max-w-2xl border-gray-700 bg-[#111827] font-sans text-sm text-gray-100"
               >
                 <SelectValue placeholder="All users">
                   {(value: string | null) => {
@@ -147,17 +147,21 @@ export function LoginHistoryClient({
                 </SelectValue>
               </SelectTrigger>
               <SelectContent
-                className="max-h-72 min-w-[var(--anchor-width)] max-w-lg border-gray-700 bg-[#111827] font-sans text-sm"
                 align="start"
+                alignItemWithTrigger={false}
+                className="max-h-72 min-w-[32rem] max-w-2xl border-gray-700 bg-[#111827] font-sans text-sm text-gray-100"
               >
-                <SelectItem value={ALL_USERS} className="font-sans text-sm text-gray-100">
+                <SelectItem
+                  value={ALL_USERS}
+                  className="font-sans text-sm text-gray-100 hover:bg-gray-800"
+                >
                   All users
                 </SelectItem>
                 {users.map((u) => (
                   <SelectItem
                     key={u.id}
                     value={u.id}
-                    className="font-sans text-sm text-gray-100"
+                    className="font-sans text-sm text-gray-100 hover:bg-gray-800"
                   >
                     {u.label}
                   </SelectItem>

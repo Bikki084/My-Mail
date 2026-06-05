@@ -196,14 +196,14 @@ export function MonitorClient({ rows, clientId = "", page = 1, fetchError }: Pro
       ) : null}
 
       <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end">
-        <div className="w-full max-w-lg space-y-1.5">
-          <Label htmlFor="monitor-client-filter" className="text-gray-400">
+        <div className="w-full max-w-2xl space-y-1.5">
+          <Label htmlFor="monitor-client-filter" className="text-sm text-gray-400">
             Client
           </Label>
           <Select value={selectedClientId} onValueChange={applyClientFilter}>
             <SelectTrigger
               id="monitor-client-filter"
-              className="h-10 w-full min-w-[min(100%,28rem)] border-gray-700 bg-[#111827] font-sans text-sm text-gray-100"
+              className="h-10 w-full max-w-2xl border-gray-700 bg-[#111827] font-sans text-sm text-gray-100"
             >
               <SelectValue placeholder="All clients">
                 {(value: string | null) => {
@@ -213,17 +213,21 @@ export function MonitorClient({ rows, clientId = "", page = 1, fetchError }: Pro
               </SelectValue>
             </SelectTrigger>
             <SelectContent
-              className="max-h-72 min-w-[var(--anchor-width)] max-w-lg border-gray-700 bg-[#111827] font-sans text-sm"
               align="start"
+              alignItemWithTrigger={false}
+              className="max-h-72 min-w-[32rem] max-w-2xl border-gray-700 bg-[#111827] font-sans text-sm text-gray-100"
             >
-              <SelectItem value={ALL_CLIENTS} className="font-sans text-sm text-gray-100">
+              <SelectItem
+                value={ALL_CLIENTS}
+                className="font-sans text-sm text-gray-100 hover:bg-gray-800"
+              >
                 All clients
               </SelectItem>
               {clientOptions.map((c) => (
                 <SelectItem
                   key={c.id}
                   value={c.id}
-                  className="font-sans text-sm text-gray-100"
+                  className="font-sans text-sm text-gray-100 hover:bg-gray-800"
                 >
                   {c.label}
                 </SelectItem>
