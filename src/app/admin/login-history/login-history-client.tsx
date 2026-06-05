@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { Button } from "@/components/ui/button";
@@ -36,6 +36,8 @@ type Props = {
   fetchError?: string;
 };
 
+const ALL_USERS = "__all__";
+
 function formatDateTime(iso: string | null): string {
   if (!iso) return "—";
   const d = new Date(iso);
@@ -67,11 +69,19 @@ export function LoginHistoryClient({
   const [from, setFrom] = useState<string>(filters.from);
   const [to, setTo] = useState<string>(filters.to);
 
+  useEffect(() => {
+    setUserId(filters.userId || null);
+    setFrom(filters.from);
+    setTo(filters.to);
+  }, [filters.userId, filters.from, filters.to]);
+
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const hasFilters = Boolean(userId || from || to);
+  const selectedUserValue = userId ?? ALL_USERS;
 
   const userLookup = useMemo(() => {
-    const m = new Map(users.map((u) => [u.id, u.label]));
+    const m = new Map<string, string>([[ALL_USERS, "All users"]]);
+    for (const u of users) m.set(u.id, u.label);
     return m;
   }, [users]);
 
@@ -116,24 +126,39 @@ export function LoginHistoryClient({
 
       <div className="flex flex-col gap-4 rounded-lg border border-gray-800 bg-[#111827] p-4">
         <div className="grid gap-3 sm:grid-cols-4">
-          <div className="space-y-1.5 sm:col-span-2">
-            <Label className="text-xs text-gray-400">User</Label>
+          <div className="w-full max-w-lg space-y-1.5 sm:col-span-2">
+            <Label htmlFor="login-history-user-filter" className="text-xs text-gray-400">
+              User
+            </Label>
             <Select
-              value={userId}
-              onValueChange={(v) => setUserId(v)}
+              value={selectedUserValue}
+              onValueChange={(v) => setUserId(v === ALL_USERS ? null : v)}
               disabled={users.length === 0}
             >
-              <SelectTrigger className="border-gray-700 bg-[#0F172A] text-white">
+              <SelectTrigger
+                id="login-history-user-filter"
+                className="h-10 w-full min-w-[min(100%,28rem)] border-gray-700 bg-[#0F172A] font-sans text-sm text-gray-100"
+              >
                 <SelectValue placeholder="All users">
                   {(value: string | null) => {
-                    if (!value) return "All users";
+                    if (!value || value === ALL_USERS) return "All users";
                     return userLookup.get(value) ?? "All users";
                   }}
                 </SelectValue>
               </SelectTrigger>
-              <SelectContent className="border-gray-700 bg-[#111827]">
+              <SelectContent
+                className="max-h-72 min-w-[var(--anchor-width)] max-w-lg border-gray-700 bg-[#111827] font-sans text-sm"
+                align="start"
+              >
+                <SelectItem value={ALL_USERS} className="font-sans text-sm text-gray-100">
+                  All users
+                </SelectItem>
                 {users.map((u) => (
-                  <SelectItem key={u.id} value={u.id}>
+                  <SelectItem
+                    key={u.id}
+                    value={u.id}
+                    className="font-sans text-sm text-gray-100"
+                  >
                     {u.label}
                   </SelectItem>
                 ))}
@@ -211,7 +236,9 @@ export function LoginHistoryClient({
             )}
             {rows.map((row) => (
               <TableRow key={row.id} className="border-gray-800">
-                <TableCell className="font-medium text-white">{row.userLabel}</TableCell>
+                <TableCell className="font-sans text-sm font-medium text-white">
+                  {row.userLabel}
+                </TableCell>
                 <TableCell className="text-gray-400 tabular-nums">
                   {formatDateTime(row.loginAt)}
                 </TableCell>
