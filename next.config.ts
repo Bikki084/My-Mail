@@ -1,6 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Hide the Next.js route/bundler dev badge (bottom-left "N" panel) during local dev.
+  devIndicators: false,
   // Ensure NEXT_PUBLIC_* from .env.local are embedded in the client bundle at build time.
   env: {
     NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
