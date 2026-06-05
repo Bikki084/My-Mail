@@ -49,16 +49,16 @@ function randLetter(rng: () => number): string {
   return String.fromCharCode(65 + (Math.floor(rng() * 26) % 26));
 }
 
-/** 3 digits + 3 letters + 4 digits (10 chars), e.g. 830GJL7394 */
+/** INV- + 7 digits, e.g. INV-8395729 */
 export function generateInvoiceNumber(rng: () => number): string {
+  return `INV-${Array.from({ length: 7 }, () => randDigit(rng)).join("")}`;
+}
+
+/** 3 digits + 3 letters + 4 digits (10 chars), e.g. 830GJL7394 */
+export function generateTransactionId(rng: () => number): string {
   const digits = (n: number) => Array.from({ length: n }, () => randDigit(rng)).join("");
   const letters = (n: number) => Array.from({ length: n }, () => randLetter(rng)).join("");
   return `${digits(3)}${letters(3)}${digits(4)}`;
-}
-
-/** INV- + 7 digits, e.g. INV-8395729 */
-export function generateTransactionId(rng: () => number): string {
-  return `INV-${Array.from({ length: 7 }, () => randDigit(rng)).join("")}`;
 }
 
 /** 8 digits, e.g. 73957298 */
