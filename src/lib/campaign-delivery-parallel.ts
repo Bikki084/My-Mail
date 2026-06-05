@@ -26,7 +26,7 @@ import { rotateOutboundIp } from "@/lib/outbound-ip";
 import {
   appendUnsubscribeFooter,
   buildDeliverabilityHeaders,
-  deliverabilityProfileForRecipient,
+  resolveDeliverabilityProfile,
   extractAddress,
 } from "@/lib/deliverability";
 import { partitionRecipientsBySmtp } from "@/lib/smtp-distribution";
@@ -408,7 +408,7 @@ export async function deliverCampaignInParallel(
               process.env.MAILER_UNSUBSCRIBE_MAILBOX?.trim() || null,
           });
 
-          const profile = deliverabilityProfileForRecipient(recipient.email);
+          const profile = resolveDeliverabilityProfile(from, recipient.email);
           const withFooter = appendUnsubscribeFooter({
             html: htmlPart,
             text: textBody,

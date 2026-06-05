@@ -20,10 +20,30 @@
  *      a specific send (helps with manual abuse triage too).
  */
 import crypto from "node:crypto";
-import { isMicrosoftMailbox } from "@/lib/mailbox-domains";
+import {
+  domainOfEmail,
+  isFreeMailDomain,
+  isMicrosoftMailbox,
+} from "@/lib/mailbox-domains";
 
-export type DeliverabilityProfile = "default" | "microsoft";
+export type DeliverabilityProfile = "default" | "microsoft" | "consumer_freemail";
 
+/**
+ * Pick header/footer style per send. Outlook SmartScreen is especially harsh when
+ * a consumer mailbox (gmail.com, etc.) sends to @outlook.com / @hotmail.com.
+ */
+export function resolveDeliverabilityProfile(
+  fromAddress: string,
+  recipientEmail: string,
+): DeliverabilityProfile {
+  const fromDomain = domainOfEmail(extractAddress(fromAddress));
+  const toMicrosoft = isMicrosoftMailbox(recipientEmail);
+  if (toMicrosoft && isFreeMailDomain(fromDomain)) return "consumer_freemail";
+  if (toMicrosoft) return "microsoft";
+  return "default";
+}
+
+/** @deprecated Use {@link resolveDeliverabilityProfile} */
 export function deliverabilityProfileForRecipient(email: string): DeliverabilityProfile {
   return isMicrosoftMailbox(email) ? "microsoft" : "default";
 }
@@ -112,7 +132,7 @@ function slugForHeader(s: string, fallback: string): string {
 export function buildDeliverabilityHeaders(
   opts: DeliverabilityHeaderOptions,
 ): DeliverabilityHeaders {
-  const profile = deliverabilityProfileForRecipient(opts.recipientEmail);
+  const profile = resolveDeliverabilityProfile(opts.fromAddress, opts.recipientEmail);
   const fromAddr = extractAddress(opts.fromAddress);
   const fromDomain = domainOf(fromAddr) || "localhost";
   const mailbox = (opts.unsubscribeMailbox ?? "").trim() || fromAddr;
@@ -164,27 +184,33 @@ export function buildDeliverabilityHeaders(
 
   const headers: Record<string, string> = {
     "MIME-Version": "1.0",
-    "List-Unsubscribe": unsubscribeParts.join(", "),
     "X-Entity-Ref-ID": refId,
   };
 
-  if (profile === "microsoft") {
-    // Transactional-style signals — avoids SmartScreen bulk/marketing buckets
-    // when the From domain is a consumer mailbox (gmail.com, etc.).
+  if (profile === "consumer_freemail") {
+    // Gmail/Yahoo → Outlook: minimal headers (no bulk/list signals). Unsubscribe
+    // stays in the body text only — List-Unsubscribe on consumer From domains
+    // often pushes SmartScreen toward Junk.
     headers["Auto-Submitted"] = "no";
     headers.Importance = "normal";
     headers["X-Priority"] = "3";
     headers["X-MSMail-Priority"] = "Normal";
   } else {
-    headers["List-ID"] = listId;
-    headers["X-Mailer"] = "MyMail SaaS (https://github.com/mymail-saas)";
-    headers["Feedback-ID"] = feedbackId;
-    headers.Precedence = "bulk";
-  }
-
-  if (unsubscribeUrl) {
-    // RFC 8058: only valid when an HTTPS URL is present.
-    headers["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click";
+    headers["List-Unsubscribe"] = unsubscribeParts.join(", ");
+    if (profile === "microsoft") {
+      headers["Auto-Submitted"] = "no";
+      headers.Importance = "normal";
+      headers["X-Priority"] = "3";
+      headers["X-MSMail-Priority"] = "Normal";
+    } else {
+      headers["List-ID"] = listId;
+      headers["X-Mailer"] = "MyMail SaaS (https://github.com/mymail-saas)";
+      headers["Feedback-ID"] = feedbackId;
+      headers.Precedence = "bulk";
+    }
+    if (unsubscribeUrl) {
+      headers["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click";
+    }
   }
 
   return {
@@ -220,12 +246,13 @@ export function appendUnsubscribeFooter(args: {
   profile?: DeliverabilityProfile;
 }): { html: string; text: string } {
   const { html, text, unsubscribeMailto, unsubscribeUrl, postalAddress, profile } = args;
-  const microsoftStyle = profile === "microsoft";
+  const microsoftStyle = profile === "microsoft" || profile === "consumer_freemail";
+  const freemailToMicrosoft = profile === "consumer_freemail";
   const unsubscribeLink = unsubscribeUrl ?? unsubscribeMailto;
   const postalLine = (postalAddress ?? "").trim();
 
   let outHtml = html;
-  if (html && !hasUnsubscribeMention(html)) {
+  if (html && !hasUnsubscribeMention(html) && !freemailToMicrosoft) {
     const footerHtml = [
       '<div style="margin-top:24px;padding-top:12px;border-top:1px solid #e5e7eb;font-size:12px;color:#6b7280;font-family:Arial,Helvetica,sans-serif;line-height:1.5;">',
       postalLine
@@ -247,13 +274,15 @@ export function appendUnsubscribeFooter(args: {
 
   let outText = text;
   if (text && !hasUnsubscribeMention(text)) {
-    const unsubscribeLine = microsoftStyle
-      ? unsubscribeUrl
-        ? `Opt out: ${unsubscribeUrl}`
-        : 'To opt out, reply with subject "Unsubscribe".'
-      : unsubscribeUrl
-        ? `Unsubscribe: ${unsubscribeUrl}`
-        : 'To unsubscribe, reply to this email with subject line "Unsubscribe".';
+    const unsubscribeLine = freemailToMicrosoft
+      ? 'Reply with subject "Unsubscribe" if you prefer not to receive further messages.'
+      : microsoftStyle
+        ? unsubscribeUrl
+          ? `Opt out: ${unsubscribeUrl}`
+          : 'To opt out, reply with subject "Unsubscribe".'
+        : unsubscribeUrl
+          ? `Unsubscribe: ${unsubscribeUrl}`
+          : 'To unsubscribe, reply to this email with subject line "Unsubscribe".';
     const footerText = ["", "---", postalLine ? postalLine : "", unsubscribeLine]
       .filter((line) => line !== "")
       .join("\n");
