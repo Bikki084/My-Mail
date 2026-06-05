@@ -16,11 +16,13 @@ import {
   authFooterLinkClass,
   authForgotLinkClass,
   authHeadingClass,
+  authIconClass,
   authLabelClass,
-  authPageClass,
   authSubmitClass,
   authSubtextClass,
+  authToggleButtonClass,
 } from "@/components/auth/auth-styles";
+import { AuthPageShell } from "@/components/auth/auth-page-shell";
 
 function isValidEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
@@ -201,17 +203,10 @@ export function SignInForm() {
   }
 
   return (
-    <div className={authPageClass}>
-      <div
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_80%_50%_at_50%_-20%,rgba(99,102,241,0.1),transparent)]"
-        aria-hidden
-      />
-      <div className={`relative ${authCardClass}`}>
+    <AuthPageShell>
+      <div className={authCardClass}>
         <div className="mb-8 flex justify-center">
-          <div
-            className="flex size-9 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 shadow-lg shadow-indigo-500/15"
-            aria-hidden
-          >
+          <div className={authIconClass} aria-hidden>
             <Mail className="size-[18px] text-white" strokeWidth={2} />
           </div>
         </div>
@@ -287,7 +282,7 @@ export function SignInForm() {
               />
               <button
                 type="button"
-                className="absolute right-2 top-1/2 flex size-9 -translate-y-1/2 cursor-pointer items-center justify-center rounded-md text-[#9CA3AF] transition-colors hover:text-[#D1D5DB] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40"
+                className={authToggleButtonClass}
                 onClick={() => setShowPassword((v) => !v)}
                 aria-label={showPassword ? "Hide password" : "Show password"}
               >
@@ -316,6 +311,6 @@ export function SignInForm() {
           </Link>
         </p>
       </div>
-    </div>
+    </AuthPageShell>
   );
 }

@@ -13,11 +13,13 @@ import {
   authFieldClass,
   authFooterLinkClass,
   authHeadingClass,
+  authIconClass,
   authLabelClass,
-  authPageClass,
   authSubmitClass,
   authSubtextClass,
+  authToggleButtonClass,
 } from "@/components/auth/auth-styles";
+import { AuthPageShell } from "@/components/auth/auth-page-shell";
 
 const INVALID_MESSAGE = "Link expired or invalid";
 
@@ -99,10 +101,10 @@ export function ResetPasswordForm() {
 
   if (!token) {
     return (
-      <div className={authPageClass}>
-        <div className={`relative ${authCardClass}`}>
+      <AuthPageShell>
+        <div className={authCardClass}>
           <div className="mb-8 flex justify-center">
-            <div className="flex size-9 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 shadow-lg shadow-indigo-500/15">
+            <div className={authIconClass}>
               <Mail className="size-[18px] text-white" strokeWidth={2} />
             </div>
           </div>
@@ -114,26 +116,26 @@ export function ResetPasswordForm() {
             Back to sign in
           </Link>
         </div>
-      </div>
+      </AuthPageShell>
     );
   }
 
   if (verify === null) {
     return (
-      <div className={authPageClass}>
-        <div className={`relative ${authCardClass}`}>
+      <AuthPageShell>
+        <div className={authCardClass}>
           <p className="text-center text-[14px] text-[#9CA3AF]">Verifying link…</p>
         </div>
-      </div>
+      </AuthPageShell>
     );
   }
 
   if (!verify) {
     return (
-      <div className={authPageClass}>
-        <div className={`relative ${authCardClass}`}>
+      <AuthPageShell>
+        <div className={authCardClass}>
           <div className="mb-8 flex justify-center">
-            <div className="flex size-9 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 shadow-lg shadow-indigo-500/15">
+            <div className={authIconClass}>
               <Mail className="size-[18px] text-white" strokeWidth={2} />
             </div>
           </div>
@@ -145,15 +147,15 @@ export function ResetPasswordForm() {
             Back to sign in
           </Link>
         </div>
-      </div>
+      </AuthPageShell>
     );
   }
 
   return (
-    <div className={authPageClass}>
-      <div className={`relative ${authCardClass}`}>
+    <AuthPageShell>
+      <div className={authCardClass}>
         <div className="mb-8 flex justify-center">
-          <div className="flex size-9 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 shadow-lg shadow-indigo-500/15">
+          <div className={authIconClass}>
             <Mail className="size-[18px] text-white" strokeWidth={2} />
           </div>
         </div>
@@ -181,7 +183,7 @@ export function ResetPasswordForm() {
               />
               <button
                 type="button"
-                className="absolute right-2 top-1/2 flex size-9 -translate-y-1/2 cursor-pointer items-center justify-center rounded-md text-[#9CA3AF] transition-colors hover:text-[#D1D5DB] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40"
+                className={authToggleButtonClass}
                 onClick={() => setShowPassword((v) => !v)}
                 aria-label={showPassword ? "Hide password" : "Show password"}
               >
@@ -217,7 +219,7 @@ export function ResetPasswordForm() {
               />
               <button
                 type="button"
-                className="absolute right-2 top-1/2 flex size-9 -translate-y-1/2 cursor-pointer items-center justify-center rounded-md text-[#9CA3AF] transition-colors hover:text-[#D1D5DB] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40"
+                className={authToggleButtonClass}
                 onClick={() => setShowConfirm((v) => !v)}
                 aria-label={showConfirm ? "Hide confirm password" : "Show confirm password"}
               >
@@ -246,6 +248,6 @@ export function ResetPasswordForm() {
           </Link>
         </p>
       </div>
-    </div>
+    </AuthPageShell>
   );
 }

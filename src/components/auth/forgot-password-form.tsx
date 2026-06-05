@@ -10,11 +10,12 @@ import {
   authErrorClass,
   authFieldClass,
   authHeadingClass,
+  authIconClass,
   authLabelClass,
-  authPageClass,
   authSubmitClass,
   authSubtextClass,
 } from "@/components/auth/auth-styles";
+import { AuthPageShell } from "@/components/auth/auth-page-shell";
 
 function isValidEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
@@ -81,10 +82,10 @@ export function ForgotPasswordForm() {
 
   if (done) {
     return (
-      <div className={authPageClass}>
-        <div className={`relative ${authCardClass}`}>
+      <AuthPageShell>
+        <div className={authCardClass}>
           <div className="mb-8 flex justify-center">
-            <div className="flex size-9 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 shadow-lg shadow-indigo-500/15">
+            <div className={authIconClass}>
               <Mail className="size-[18px] text-white" strokeWidth={2} />
             </div>
           </div>
@@ -111,7 +112,7 @@ export function ForgotPasswordForm() {
                 </p>
                 <a
                   href={devResetLink}
-                  className="mt-3 block break-all font-mono text-[12px] text-indigo-300 underline decoration-indigo-400/50 hover:text-indigo-200"
+                  className="mt-3 block break-all font-mono text-[12px] text-emerald-300 underline decoration-emerald-400/50 hover:text-emerald-200"
                 >
                   {devResetLink}
                 </a>
@@ -126,15 +127,15 @@ export function ForgotPasswordForm() {
             Back to sign in
           </Link>
         </div>
-      </div>
+      </AuthPageShell>
     );
   }
 
   return (
-    <div className={authPageClass}>
-      <div className={`relative ${authCardClass}`}>
+    <AuthPageShell>
+      <div className={authCardClass}>
         <div className="mb-8 flex justify-center">
-          <div className="flex size-9 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 shadow-lg shadow-indigo-500/15">
+          <div className={authIconClass}>
             <Mail className="size-[18px] text-white" strokeWidth={2} />
           </div>
         </div>
@@ -180,6 +181,6 @@ export function ForgotPasswordForm() {
           Back to sign in
         </Link>
       </div>
-    </div>
+    </AuthPageShell>
   );
 }
