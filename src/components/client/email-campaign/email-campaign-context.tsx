@@ -1,12 +1,16 @@
 "use client";
 
 import * as React from "react";
-import type { CustomMergeTag } from "@/lib/custom-merge-tags";
+import {
+  DEFAULT_BUILT_IN_MERGE_TAGS,
+  normalizeBuiltInMergeTags,
+  type BuiltInMergeTagConfig,
+} from "@/lib/built-in-merge-tags";
 import { parsedCsvToRecipientRows } from "@/lib/csv-recipients";
 import type { ParsedCsv } from "@/lib/csv-types";
 import type { RecipientRow } from "@/lib/merge-tags";
 
-const STORAGE_V = 3 as const;
+const STORAGE_V = 4 as const;
 const csvStorageKey = (userId: string) => `mymail.campaign.csv.${STORAGE_V}.${userId}`;
 const composeStorageKey = (userId: string) => `mymail.campaign.compose.${STORAGE_V}.${userId}`;
 
@@ -45,8 +49,8 @@ const defaultComposerUi: ComposerUiState = {
 type EmailCampaignContextValue = {
   campaignRecipients: RecipientRow[];
   lastParsedCsv: ParsedCsv | null;
-  customMergeTags: CustomMergeTag[];
-  setCustomMergeTags: React.Dispatch<React.SetStateAction<CustomMergeTag[]>>;
+  builtInMergeTags: BuiltInMergeTagConfig[];
+  setBuiltInMergeTags: React.Dispatch<React.SetStateAction<BuiltInMergeTagConfig[]>>;
   setParsedCsvData: (data: ParsedCsv | null) => void;
   clearCampaignRecipients: () => void;
   composeDraft: ComposeDraft;
@@ -67,27 +71,19 @@ export function EmailCampaignProvider({
   persistenceUserId?: string | null;
 }) {
   const [lastParsedCsv, setLastParsedCsv] = React.useState<ParsedCsv | null>(null);
-  const [customMergeTags, setCustomMergeTags] = React.useState<CustomMergeTag[]>([]);
+  const [builtInMergeTags, setBuiltInMergeTags] = React.useState<BuiltInMergeTagConfig[]>(
+    () => [...DEFAULT_BUILT_IN_MERGE_TAGS],
+  );
   const [composeDraft, setComposeDraft] = React.useState<ComposeDraft>({ ...defaultCompose });
   const [composerUi, setComposerUi] = React.useState<ComposerUiState>({ ...defaultComposerUi });
   const [storageReady, setStorageReady] = React.useState(!persistenceUserId);
 
   const setParsedCsvData = React.useCallback((data: ParsedCsv | null) => {
     setLastParsedCsv(data);
-    if (data?.columnOrder?.length) {
-      const csvLower = new Set(
-        data.columnOrder.map((c) => c.trim().toLowerCase()),
-      );
-      setCustomMergeTags((prev) => {
-        const next = prev.filter((t) => !csvLower.has(t.key.trim().toLowerCase()));
-        return next.length === prev.length ? prev : next;
-      });
-    }
   }, []);
 
   const clearCampaignRecipients = React.useCallback(() => {
     setLastParsedCsv(null);
-    setCustomMergeTags([]);
     if (persistenceUserId) {
       try {
         localStorage.removeItem(csvStorageKey(persistenceUserId));
@@ -117,17 +113,13 @@ export function EmailCampaignProvider({
         const p = JSON.parse(rawCsv) as {
           v?: number;
           parsed?: ParsedCsv;
-          customMergeTags?: CustomMergeTag[];
+          builtInMergeTags?: BuiltInMergeTagConfig[];
         };
         if (p.v === STORAGE_V && p.parsed?.columnOrder && Array.isArray(p.parsed.rows)) {
           setLastParsedCsv(p.parsed);
         }
-        if (p.v === STORAGE_V && Array.isArray(p.customMergeTags)) {
-          setCustomMergeTags(
-            p.customMergeTags.filter(
-              (t) => t?.id && typeof t.key === "string" && typeof t.value === "string",
-            ),
-          );
+        if (p.v === STORAGE_V && Array.isArray(p.builtInMergeTags)) {
+          setBuiltInMergeTags(normalizeBuiltInMergeTags(p.builtInMergeTags));
         }
       }
       const rawCompose = localStorage.getItem(composeStorageKey(persistenceUserId));
@@ -156,42 +148,22 @@ export function EmailCampaignProvider({
   }, [persistenceUserId]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
-  /** Drop custom tags whose name matches a CSV column (not allowed). */
-  React.useEffect(() => {
-    if (!lastParsedCsv?.columnOrder?.length) return;
-    const csvLower = new Set(
-      lastParsedCsv.columnOrder.map((c) => c.trim().toLowerCase()),
-    );
-    setCustomMergeTags((prev) => {
-      const next = prev.filter((t) => !csvLower.has(t.key.trim().toLowerCase()));
-      return next.length === prev.length ? prev : next;
-    });
-  }, [lastParsedCsv]);
-
   React.useEffect(() => {
     if (!persistenceUserId || !storageReady) return;
-    if (!lastParsedCsv && customMergeTags.length === 0) {
-      try {
-        localStorage.removeItem(csvStorageKey(persistenceUserId));
-      } catch {
-        // ignore
-      }
-      return;
-    }
     try {
       localStorage.setItem(
         csvStorageKey(persistenceUserId),
         JSON.stringify({
           v: STORAGE_V,
           parsed: lastParsedCsv,
-          customMergeTags,
+          builtInMergeTags,
           savedAt: Date.now(),
         }),
       );
     } catch {
       // ignore
     }
-  }, [lastParsedCsv, customMergeTags, persistenceUserId, storageReady]);
+  }, [lastParsedCsv, builtInMergeTags, persistenceUserId, storageReady]);
 
   React.useEffect(() => {
     if (!persistenceUserId || !storageReady) return;
@@ -211,8 +183,8 @@ export function EmailCampaignProvider({
   }, [composeDraft, composerUi, persistenceUserId, storageReady]);
 
   const campaignRecipients = React.useMemo(
-    () => parsedCsvToRecipientRows(lastParsedCsv, customMergeTags),
-    [lastParsedCsv, customMergeTags],
+    () => parsedCsvToRecipientRows(lastParsedCsv, builtInMergeTags),
+    [lastParsedCsv, builtInMergeTags],
   );
 
   const value = React.useMemo(
@@ -220,8 +192,8 @@ export function EmailCampaignProvider({
       ({
         campaignRecipients,
         lastParsedCsv,
-        customMergeTags,
-        setCustomMergeTags,
+        builtInMergeTags,
+        setBuiltInMergeTags,
         setParsedCsvData,
         clearCampaignRecipients,
         composeDraft,
@@ -234,7 +206,7 @@ export function EmailCampaignProvider({
     [
       campaignRecipients,
       lastParsedCsv,
-      customMergeTags,
+      builtInMergeTags,
       setParsedCsvData,
       clearCampaignRecipients,
       composeDraft,

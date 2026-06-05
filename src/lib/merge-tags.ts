@@ -91,14 +91,14 @@ function uniqueColumnKeys(columnOrder: string[], excludeEmail = false): string[]
   return out.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
 }
 
-/** All tag keys for autocomplete (CSV columns + custom tags). */
+/** All tag keys for autocomplete (CSV columns + extra keys e.g. built-in tags). */
 export function mergeTagKeysForAutocomplete(
   columnOrder: string[],
-  customTagKeys: string[] = [],
+  extraTagKeys: string[] = [],
 ): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
-  for (const k of [...uniqueColumnKeys(columnOrder, false), ...customTagKeys]) {
+  for (const k of [...uniqueColumnKeys(columnOrder, false), ...extraTagKeys]) {
     const lower = k.toLowerCase();
     if (seen.has(lower)) continue;
     seen.add(lower);

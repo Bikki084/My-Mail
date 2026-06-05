@@ -1,5 +1,8 @@
-import type { CustomMergeTag } from "@/lib/custom-merge-tags";
-import { customTagsToFieldDefaults } from "@/lib/custom-merge-tags";
+import {
+  DEFAULT_BUILT_IN_MERGE_TAGS,
+  generateBuiltInFieldsForRecipient,
+  type BuiltInMergeTagConfig,
+} from "@/lib/built-in-merge-tags";
 import type { RecipientRow } from "@/lib/merge-tags";
 import type { CsvPreviewRow, ParsedCsv } from "@/lib/csv-types";
 
@@ -37,32 +40,11 @@ function buildFieldsMap(
   return Object.keys(fields).length > 0 ? fields : undefined;
 }
 
-/**
- * Recipients the campaign will use: first occurrence per email, valid address only
- * (excludes invalid and duplicate rows as flagged by the upload preview).
- */
-function reservedFromDefaults(
-  defaults: Record<string, string>,
-  rowCells: Record<string, string>,
-  ...keys: string[]
-): string | undefined {
-  for (const k of keys) {
-    const fromRow = (rowCells[k] ?? "").trim();
-    if (fromRow) return fromRow;
-  }
-  for (const k of keys) {
-    const fromDefault = defaults[k]?.trim() ?? defaults[k.toLowerCase()]?.trim();
-    if (fromDefault) return fromDefault;
-  }
-  return undefined;
-}
-
 export function parsedCsvToRecipientRows(
   parsed: ParsedCsv | null,
-  customTags: CustomMergeTag[] = [],
+  builtInTags: BuiltInMergeTagConfig[] = DEFAULT_BUILT_IN_MERGE_TAGS,
 ): RecipientRow[] {
   if (!parsed) return [];
-  const defaults = customTagsToFieldDefaults(customTags);
   const emailKey =
     parsed.columnOrder.find((c) => c.trim().toLowerCase() === "email") ?? "email";
   const out: RecipientRow[] = [];
@@ -72,14 +54,12 @@ export function parsedCsvToRecipientRows(
     const email = raw.trim().toLowerCase();
     if (!EMAIL_RE.test(email)) continue;
     const fromCsv = buildFieldsMap(row, parsed.columnOrder, emailKey) ?? {};
-    const fields: Record<string, string> = { ...defaults, ...fromCsv };
+    const builtIn = generateBuiltInFieldsForRecipient(email, builtInTags);
+    const fields: Record<string, string> = { ...fromCsv, ...builtIn };
+    const nameVal = (row.cells.name ?? row.cells.Name ?? "").trim();
     out.push({
       email,
-      name: reservedFromDefaults(defaults, row.cells, "name", "Name"),
-      c3: reservedFromDefaults(defaults, row.cells, "c3", "C3"),
-      c4: reservedFromDefaults(defaults, row.cells, "c4", "C4"),
-      c5: reservedFromDefaults(defaults, row.cells, "c5", "C5"),
-      c6: reservedFromDefaults(defaults, row.cells, "c6", "C6"),
+      name: nameVal || undefined,
       fields: Object.keys(fields).length > 0 ? fields : undefined,
     });
   }

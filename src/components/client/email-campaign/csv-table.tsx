@@ -6,8 +6,6 @@ import {
   Upload,
   FileSpreadsheet,
   Pencil,
-  Plus,
-  Trash2,
   Loader2,
   ChevronLeft,
   ChevronRight,
@@ -39,9 +37,13 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { randomId } from "@/lib/random-id";
+import {
+  builtInTagLabel,
+  generateBuiltInFieldsForRecipient,
+  type BuiltInMergeTagConfig,
+  type BuiltInMergeTagId,
+} from "@/lib/built-in-merge-tags";
 import { cn } from "@/lib/utils";
-import type { CustomMergeTag } from "@/lib/custom-merge-tags";
 import type { CsvPreviewRow, ParsedCsv } from "@/lib/csv-types";
 import { useEmailCampaign } from "./email-campaign-context";
 import { toast } from "sonner";
@@ -274,8 +276,8 @@ export function CsvRecipientsTab({ onGoToSmtp }: { onGoToSmtp?: () => void }) {
     setParsedCsvData,
     clearCampaignRecipients,
     lastParsedCsv,
-    customMergeTags,
-    setCustomMergeTags,
+    builtInMergeTags,
+    setBuiltInMergeTags,
   } = useEmailCampaign();
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const skipDuplicateCheckOnceRef = React.useRef(false);
@@ -294,22 +296,20 @@ export function CsvRecipientsTab({ onGoToSmtp }: { onGoToSmtp?: () => void }) {
     reason: "same-file" | "same-content";
   } | null>(null);
   const [tagDialogOpen, setTagDialogOpen] = React.useState(false);
-  const [tagDialogMode, setTagDialogMode] = React.useState<"add" | "edit">("add");
-  const [editingTagId, setEditingTagId] = React.useState<string | null>(null);
+  const [editingBuiltInId, setEditingBuiltInId] = React.useState<BuiltInMergeTagId | null>(null);
   const [tagKeyDraft, setTagKeyDraft] = React.useState("");
-  const [tagValueDraft, setTagValueDraft] = React.useState("");
   const [tagKeyError, setTagKeyError] = React.useState<string | null>(null);
-  const [tagValueError, setTagValueError] = React.useState<string | null>(null);
 
   const csvColumnKeys = React.useMemo(
     () => parsedData?.columnOrder ?? lastParsedCsv?.columnOrder ?? [],
     [parsedData, lastParsedCsv],
   );
 
-  const customOnlyTags = React.useMemo(() => {
-    const csvLower = new Set(csvColumnKeys.map((c) => c.trim().toLowerCase()));
-    return customMergeTags.filter((t) => !csvLower.has(t.key.trim().toLowerCase()));
-  }, [customMergeTags, csvColumnKeys]);
+  const builtInPreviewEmail = campaignRecipients[0]?.email ?? "john@example.com";
+  const builtInPreviewValues = React.useMemo(
+    () => generateBuiltInFieldsForRecipient(builtInPreviewEmail, builtInMergeTags),
+    [builtInPreviewEmail, builtInMergeTags],
+  );
 
   const totalPages = React.useMemo(() => {
     if (!parsedData) return 1;
@@ -457,29 +457,16 @@ export function CsvRecipientsTab({ onGoToSmtp }: { onGoToSmtp?: () => void }) {
     }
   }
 
-  function openAddTag() {
-    setTagDialogMode("add");
-    setEditingTagId(null);
-    setTagKeyDraft("");
-    setTagValueDraft("");
-    setTagKeyError(null);
-    setTagValueError(null);
-    setTagDialogOpen(true);
-  }
-
-  function openEditCustomTag(tag: CustomMergeTag) {
-    setTagDialogMode("edit");
-    setEditingTagId(tag.id);
+  function openRenameBuiltInTag(tag: BuiltInMergeTagConfig) {
+    setEditingBuiltInId(tag.id);
     setTagKeyDraft(tag.key);
-    setTagValueDraft(tag.value);
     setTagKeyError(null);
-    setTagValueError(null);
     setTagDialogOpen(true);
   }
 
-  function saveTag() {
+  function saveBuiltInTagRename() {
+    if (!editingBuiltInId) return;
     const rawKey = tagKeyDraft.trim();
-    const rawValue = tagValueDraft.trim();
     if (!rawKey) {
       setTagKeyError("Enter a tag name.");
       return;
@@ -488,51 +475,26 @@ export function CsvRecipientsTab({ onGoToSmtp }: { onGoToSmtp?: () => void }) {
       setTagKeyError("Use letters, numbers, _, ., or -.");
       return;
     }
-    if (!rawValue) {
-      setTagValueError("Enter a value for this tag.");
-      return;
-    }
     const lower = rawKey.toLowerCase();
     const csvHasKey = csvColumnKeys.some((c) => c.trim().toLowerCase() === lower);
-    const editingTag =
-      tagDialogMode === "edit" && editingTagId
-        ? customMergeTags.find((t) => t.id === editingTagId)
-        : undefined;
-    const keyUnchanged = editingTag?.key.trim().toLowerCase() === lower;
-
-    if (csvHasKey && (tagDialogMode === "add" || !keyUnchanged)) {
+    if (csvHasKey) {
       setTagKeyError(
-        `"${rawKey}" is already a column in your CSV. Use that column's values per row — custom tags must use a different name.`,
+        `"${rawKey}" is already a CSV column. Choose a different merge tag name.`,
       );
       return;
     }
-    const duplicateCustom = customMergeTags.some(
-      (t) =>
-        t.key.toLowerCase() === lower && (tagDialogMode === "add" || t.id !== editingTagId),
+    const duplicateBuiltIn = builtInMergeTags.some(
+      (t) => t.id !== editingBuiltInId && t.key.toLowerCase() === lower,
     );
-    if (duplicateCustom) {
-      setTagKeyError("A custom tag with this name already exists.");
+    if (duplicateBuiltIn) {
+      setTagKeyError("Another built-in tag already uses this name.");
       return;
     }
     setTagKeyError(null);
-    setTagValueError(null);
-    if (tagDialogMode === "add") {
-      setCustomMergeTags((prev) => [
-        ...prev,
-        { id: randomId(), key: rawKey, value: rawValue },
-      ]);
-    } else if (editingTagId) {
-      setCustomMergeTags((prev) =>
-        prev.map((t) =>
-          t.id === editingTagId ? { id: t.id, key: rawKey, value: rawValue } : t,
-        ),
-      );
-    }
+    setBuiltInMergeTags((prev) =>
+      prev.map((t) => (t.id === editingBuiltInId ? { ...t, key: rawKey } : t)),
+    );
     setTagDialogOpen(false);
-  }
-
-  function deleteCustomTag(id: string) {
-    setCustomMergeTags((prev) => prev.filter((t) => t.id !== id));
   }
 
   function openCsvPicker() {
@@ -693,87 +655,79 @@ export function CsvRecipientsTab({ onGoToSmtp }: { onGoToSmtp?: () => void }) {
       </Card>
 
       <Card className="border-zinc-800 bg-zinc-900/40 ring-zinc-800">
-        <CardHeader className="flex flex-col gap-4 space-y-0 sm:flex-row sm:items-start sm:justify-between">
-          <div className="flex flex-row items-start gap-3">
-            <FileSpreadsheet className="mt-0.5 size-5 shrink-0 text-zinc-500" />
-            <div>
-              <CardTitle className="text-zinc-100">Merge tags</CardTitle>
-              <CardDescription>
-                Placeholders come from CSV headers after upload. Use &quot;Add tag&quot; for custom name/value pairs (e.g. a fixed name when the CSV has no name column).
-              </CardDescription>
-            </div>
+        <CardHeader className="flex flex-row items-start gap-3">
+          <FileSpreadsheet className="mt-0.5 size-5 shrink-0 text-zinc-500" />
+          <div>
+            <CardTitle className="text-zinc-100">Merge tags</CardTitle>
+            <CardDescription>
+              CSV columns appear after upload. Four built-in tags are always available — unique random
+              values per recipient (date uses today, mm/dd/yyyy). You may rename built-in tag keys only.
+            </CardDescription>
           </div>
-          <Button
-            type="button"
-            size="sm"
-            variant="secondary"
-            className="shrink-0 border-zinc-700 bg-zinc-800/80 text-zinc-100 hover:bg-zinc-700"
-            onClick={openAddTag}
-          >
-            <Plus className="size-4" />
-            Add tag
-          </Button>
         </CardHeader>
-        <CardContent className="space-y-3">
-          {csvColumnKeys.length === 0 && customOnlyTags.length === 0 ? (
-            <p className="rounded-lg border border-dashed border-zinc-700 py-8 text-center text-sm text-zinc-500">
-              Upload a CSV to generate merge tags from column headers, or click &quot;Add tag&quot; to create one manually.
-            </p>
-          ) : (
-            <ul className="space-y-2">
-              {csvColumnKeys.map((col) => (
-                <li
-                  key={`csv-${col}`}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2"
-                >
-                  <div className="min-w-0 flex-1 space-y-0.5">
+        <CardContent className="space-y-4">
+          {csvColumnKeys.length > 0 ? (
+            <div className="space-y-2">
+              <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">From CSV</p>
+              <ul className="space-y-2">
+                {csvColumnKeys.map((col) => (
+                  <li
+                    key={`csv-${col}`}
+                    className="rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2"
+                  >
                     <code className="font-mono text-sm text-emerald-400/90">{mergeTagDisplay(col)}</code>
-                    <p className="text-xs text-zinc-500">From CSV — one value per recipient row</p>
-                  </div>
-                </li>
-              ))}
-              {customOnlyTags.map((tag) => (
+                    <p className="text-xs text-zinc-500">One value per recipient row</p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <p className="rounded-lg border border-dashed border-zinc-700 py-6 text-center text-sm text-zinc-500">
+              Upload a CSV to load column merge tags from headers.
+            </p>
+          )}
+          <div className="space-y-2">
+            <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Built-in (always on)</p>
+            <ul className="space-y-2">
+              {builtInMergeTags.map((tag) => (
                 <li
                   key={tag.id}
                   className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2"
                 >
                   <div className="min-w-0 flex-1 space-y-0.5">
                     <code className="font-mono text-sm text-emerald-400/90">{mergeTagDisplay(tag.key)}</code>
-                    <p className="truncate text-xs text-zinc-400">Value: {tag.value}</p>
+                    <p className="text-xs text-zinc-500">
+                      {builtInTagLabel(tag.id)}
+                      {builtInPreviewValues[tag.key] ? (
+                        <>
+                          {" "}
+                          · sample{" "}
+                          <span className="font-mono text-zinc-300">{builtInPreviewValues[tag.key]}</span>
+                        </>
+                      ) : null}
+                    </p>
                   </div>
-                  <div className="flex items-center gap-1">
-                    <Button
-                      type="button"
-                      size="icon-sm"
-                      variant="ghost"
-                      className="text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
-                      aria-label={`Edit tag ${tag.key}`}
-                      onClick={() => openEditCustomTag(tag)}
-                    >
-                      <Pencil className="size-4" />
-                    </Button>
-                    <Button
-                      type="button"
-                      size="icon-sm"
-                      variant="ghost"
-                      className="text-zinc-400 hover:bg-red-950/50 hover:text-red-400"
-                      aria-label={`Delete tag ${tag.key}`}
-                      onClick={() => deleteCustomTag(tag.id)}
-                    >
-                      <Trash2 className="size-4" />
-                    </Button>
-                  </div>
+                  <Button
+                    type="button"
+                    size="icon-sm"
+                    variant="ghost"
+                    className="text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+                    aria-label={`Rename tag ${tag.key}`}
+                    onClick={() => openRenameBuiltInTag(tag)}
+                  >
+                    <Pencil className="size-4" />
+                  </Button>
                 </li>
               ))}
             </ul>
-          )}
+          </div>
         </CardContent>
       </Card>
 
       <Dialog open={tagDialogOpen} onOpenChange={setTagDialogOpen}>
         <DialogContent className="border-zinc-800 bg-zinc-950 text-zinc-100 sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>{tagDialogMode === "add" ? "Add merge tag" : "Edit merge tag"}</DialogTitle>
+            <DialogTitle>Rename built-in tag</DialogTitle>
           </DialogHeader>
           <div className="space-y-2 py-1">
             <Label htmlFor="merge-tag-key">Tag name (inside {"{{{ }}}"} )</Label>
@@ -784,40 +738,23 @@ export function CsvRecipientsTab({ onGoToSmtp }: { onGoToSmtp?: () => void }) {
                 setTagKeyDraft(e.target.value);
                 setTagKeyError(null);
               }}
-              placeholder="e.g. company or city"
+              placeholder="e.g. invoice_number"
               autoComplete="off"
               className="bg-zinc-900 font-mono"
             />
             <p className="text-xs text-zinc-500">
               Renders as{" "}
               <span className="font-mono text-emerald-500/90">{mergeTagDisplay(tagKeyDraft.trim() || "tag")}</span>
+              . Values are generated automatically per recipient; you cannot edit them here.
             </p>
             {tagKeyError && <p className="text-sm text-red-400">{tagKeyError}</p>}
-          </div>
-          <div className="space-y-2 py-1">
-            <Label htmlFor="merge-tag-value">Tag value</Label>
-            <Input
-              id="merge-tag-value"
-              value={tagValueDraft}
-              onChange={(e) => {
-                setTagValueDraft(e.target.value);
-                setTagValueError(null);
-              }}
-              placeholder="e.g. Ranjit or Mumbai"
-              autoComplete="off"
-              className="bg-zinc-900"
-            />
-            <p className="text-xs text-zinc-500">
-              Used in preview and for every recipient. Tag names must differ from your CSV column headers.
-            </p>
-            {tagValueError && <p className="text-sm text-red-400">{tagValueError}</p>}
           </div>
           <DialogFooter className="gap-2 sm:justify-end">
             <Button type="button" variant="ghost" onClick={() => setTagDialogOpen(false)}>
               Cancel
             </Button>
-            <Button type="button" onClick={saveTag}>
-              {tagDialogMode === "add" ? "Add" : "Save"}
+            <Button type="button" onClick={saveBuiltInTagRename}>
+              Save
             </Button>
           </DialogFooter>
         </DialogContent>

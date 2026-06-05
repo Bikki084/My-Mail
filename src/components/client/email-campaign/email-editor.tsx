@@ -49,7 +49,7 @@ export function EmailEditor({
   const {
     campaignRecipients,
     lastParsedCsv,
-    customMergeTags,
+    builtInMergeTags,
     composeDraft,
     updateCompose,
     composerUi,
@@ -88,19 +88,19 @@ export function EmailEditor({
    * own data rather than only the static mock.
    */
   const previewRow = React.useMemo(
-    () => buildPreviewRecipient(lastParsedCsv, customMergeTags),
-    [lastParsedCsv, customMergeTags],
+    () => buildPreviewRecipient(lastParsedCsv, builtInMergeTags),
+    [lastParsedCsv, builtInMergeTags],
   );
 
-  const customTagKeys = React.useMemo(
-    () => customMergeTags.map((t) => t.key.trim()).filter(Boolean),
-    [customMergeTags],
+  const builtInTagKeys = React.useMemo(
+    () => builtInMergeTags.map((t) => t.key.trim()).filter(Boolean),
+    [builtInMergeTags],
   );
 
   const autocompleteTagKeys = React.useMemo(
     () =>
-      mergeTagKeysForAutocomplete(lastParsedCsv?.columnOrder ?? [], customTagKeys),
-    [lastParsedCsv, customTagKeys],
+      mergeTagKeysForAutocomplete(lastParsedCsv?.columnOrder ?? [], builtInTagKeys),
+    [lastParsedCsv, builtInTagKeys],
   );
 
   /** Live preview with mock merge data so recipients see substituted values at a glance. */
@@ -449,7 +449,7 @@ export function EmailEditor({
               <Label htmlFor="subject">Subject</Label>
               <MergeTagInsertMenu
                 lastParsedCsv={lastParsedCsv}
-                customMergeTags={customMergeTags}
+                builtInMergeTags={builtInMergeTags}
                 onInsert={(tag) =>
                   updateCompose({ subject: `${composeDraft.subject}${tag}` })
                 }
@@ -643,7 +643,7 @@ export function EmailEditor({
                 <Label htmlFor="attachment-html">Enter the HTML for the attachment</Label>
                 <MergeTagInsertMenu
                   lastParsedCsv={lastParsedCsv}
-                  customMergeTags={customMergeTags}
+                  builtInMergeTags={builtInMergeTags}
                   onInsert={(tag) =>
                     updateComposerUi({ attachmentHtml: `${attachmentHtml}${tag}` })
                   }
