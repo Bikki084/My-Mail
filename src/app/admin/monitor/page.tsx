@@ -3,12 +3,20 @@ import { MonitorClient } from "./monitor-client";
 
 export const dynamic = "force-dynamic";
 
-export default async function SendingMonitorPage() {
+type SearchParams = Promise<{ client?: string }>;
+
+export default async function SendingMonitorPage({
+  searchParams,
+}: {
+  searchParams: SearchParams;
+}) {
+  const sp = await searchParams;
+  const clientId = sp.client?.trim() ?? "";
   const result = await listMonitorCampaigns();
 
   if (!result.ok) {
-    return <MonitorClient rows={[]} fetchError={result.error} />;
+    return <MonitorClient rows={[]} clientId={clientId} fetchError={result.error} />;
   }
 
-  return <MonitorClient rows={result.data ?? []} />;
+  return <MonitorClient rows={result.data ?? []} clientId={clientId} />;
 }

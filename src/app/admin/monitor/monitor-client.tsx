@@ -1,11 +1,19 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { RefreshCw } from "lucide-react";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -18,8 +26,11 @@ import type { MonitorCampaignRow } from "./actions";
 
 type Props = {
   rows: MonitorCampaignRow[];
+  clientId?: string;
   fetchError?: string;
 };
+
+const ALL_CLIENTS = "__all__";
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
@@ -54,11 +65,50 @@ function statusBadgeClass(status: string): string {
   }
 }
 
-export function MonitorClient({ rows, fetchError }: Props) {
-  const router = useRouter();
-  const [refreshing, setRefreshing] = React.useState(false);
+function clientOptionLabel(r: MonitorCampaignRow): string {
+  if (r.client && r.clientEmail && r.client !== r.clientEmail) {
+    return `${r.client} — ${r.clientEmail}`;
+  }
+  return r.client || r.clientEmail || "Unknown client";
+}
 
-  const hasLive = rows.some((r) => r.status === "sending" || r.status === "queued");
+export function MonitorClient({ rows, clientId = "", fetchError }: Props) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const [refreshing, setRefreshing] = React.useState(false);
+  const [selectedClientId, setSelectedClientId] = React.useState(
+    clientId || ALL_CLIENTS,
+  );
+
+  React.useEffect(() => {
+    setSelectedClientId(clientId || ALL_CLIENTS);
+  }, [clientId]);
+
+  const clientOptions = React.useMemo(() => {
+    const byId = new Map<string, string>();
+    for (const r of rows) {
+      if (!byId.has(r.userId)) byId.set(r.userId, clientOptionLabel(r));
+    }
+    return Array.from(byId.entries())
+      .map(([id, label]) => ({ id, label }))
+      .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
+  }, [rows]);
+
+  const filteredRows = React.useMemo(() => {
+    if (!selectedClientId || selectedClientId === ALL_CLIENTS) return rows;
+    return rows.filter((r) => r.userId === selectedClientId);
+  }, [rows, selectedClientId]);
+
+  const hasLiveCampaigns = rows.some((r) => r.status === "sending" || r.status === "queued");
+
+  function applyClientFilter(nextId: string | null) {
+    const id = nextId ?? ALL_CLIENTS;
+    setSelectedClientId(id);
+    const sp = new URLSearchParams();
+    if (id && id !== ALL_CLIENTS) sp.set("client", id);
+    const qs = sp.toString();
+    router.push(qs ? `${pathname}?${qs}` : pathname);
+  }
 
   const refresh = React.useCallback(() => {
     setRefreshing(true);
@@ -67,14 +117,14 @@ export function MonitorClient({ rows, fetchError }: Props) {
   }, [router]);
 
   React.useEffect(() => {
-    if (!hasLive) return;
+    if (!hasLiveCampaigns) return;
     const id = window.setInterval(() => router.refresh(), 8_000);
     return () => window.clearInterval(id);
-  }, [hasLive, router]);
+  }, [hasLiveCampaigns, router]);
 
   const totals = React.useMemo(
     () =>
-      rows.reduce(
+      filteredRows.reduce(
         (acc, r) => {
           acc.sent += r.emailsSent;
           acc.failed += r.failedCount;
@@ -82,7 +132,7 @@ export function MonitorClient({ rows, fetchError }: Props) {
         },
         { sent: 0, failed: 0 },
       ),
-    [rows],
+    [filteredRows],
   );
 
   return (
@@ -111,15 +161,42 @@ export function MonitorClient({ rows, fetchError }: Props) {
         </p>
       ) : null}
 
-      {hasLive ? (
+      {hasLiveCampaigns ? (
         <p className="mb-3 text-xs text-gray-500">
           Auto-refreshing every 8s while campaigns are queued or sending.
         </p>
       ) : null}
 
+      <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end">
+        <div className="min-w-[220px] space-y-1.5">
+          <Label htmlFor="monitor-client-filter" className="text-gray-400">
+            Client
+          </Label>
+          <Select value={selectedClientId} onValueChange={applyClientFilter}>
+            <SelectTrigger
+              id="monitor-client-filter"
+              className="border-gray-700 bg-[#111827] text-gray-100"
+            >
+              <SelectValue placeholder="All clients" />
+            </SelectTrigger>
+            <SelectContent className="border-gray-700 bg-[#111827] text-gray-100">
+              <SelectItem value={ALL_CLIENTS}>All clients</SelectItem>
+              {clientOptions.map((c) => (
+                <SelectItem key={c.id} value={c.id}>
+                  {c.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
       <div className="mb-4 flex flex-wrap gap-4 text-sm text-gray-400">
         <span>
-          Campaigns: <span className="tabular-nums text-gray-200">{rows.length}</span>
+          Campaigns: <span className="tabular-nums text-gray-200">{filteredRows.length}</span>
+          {selectedClientId !== ALL_CLIENTS && rows.length !== filteredRows.length ? (
+            <span className="text-gray-600"> / {rows.length} total</span>
+          ) : null}
         </span>
         <span>
           Emails sent: <span className="tabular-nums text-gray-200">{totals.sent.toLocaleString()}</span>
@@ -143,14 +220,16 @@ export function MonitorClient({ rows, fetchError }: Props) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.length === 0 ? (
+            {filteredRows.length === 0 ? (
               <TableRow className="border-gray-800 hover:bg-transparent">
                 <TableCell colSpan={7} className="py-10 text-center text-gray-500">
-                  No campaigns yet. Client sends will appear here.
+                  {rows.length === 0
+                    ? "No campaigns yet. Client sends will appear here."
+                    : "No campaigns for this client."}
                 </TableCell>
               </TableRow>
             ) : (
-              rows.map((c) => (
+              filteredRows.map((c) => (
                 <TableRow key={c.id} className="border-gray-800">
                   <TableCell className="max-w-[200px] truncate font-medium text-white" title={c.name}>
                     {c.name}

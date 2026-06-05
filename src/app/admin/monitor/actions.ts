@@ -8,6 +8,7 @@ export type ActionResult<T = undefined> =
 
 export type MonitorCampaignRow = {
   id: string;
+  userId: string;
   name: string;
   client: string;
   clientEmail: string;
@@ -58,6 +59,7 @@ function campaignName(streamName: string | null, subject: string | null): string
 
 type CampaignDbRow = {
   id: string;
+  user_id: string;
   stream_name: string | null;
   subject: string | null;
   status: string;
@@ -83,7 +85,7 @@ export async function listMonitorCampaigns(params?: {
   const { data, error } = await supabase
     .from("campaigns")
     .select(
-      "id, stream_name, subject, status, sent_count, failed_count, total_emails, created_at, updated_at, last_error, profiles(full_name, email)",
+      "id, user_id, stream_name, subject, status, sent_count, failed_count, total_emails, created_at, updated_at, last_error, profiles(full_name, email)",
     )
     .order("created_at", { ascending: false })
     .limit(limit);
@@ -95,6 +97,7 @@ export async function listMonitorCampaigns(params?: {
     const { client, clientEmail } = clientLabel(profile);
     return {
       id: c.id,
+      userId: c.user_id,
       name: campaignName(c.stream_name, c.subject),
       client,
       clientEmail,
