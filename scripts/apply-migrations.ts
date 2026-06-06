@@ -143,6 +143,18 @@ async function applyViaAccessToken(
       console.error(
         `\n[db:migrate] ${file.name} failed (${res.status} ${res.statusText}):\n${body}`,
       );
+      if (res.status === 401) {
+        console.error(
+          "\n[db:migrate] 401 Unauthorized — your SUPABASE_ACCESS_TOKEN was rejected.\n" +
+            "  • Use a **Personal Access Token** from https://supabase.com/dashboard/account/tokens\n" +
+            "    (starts with sbp_). Do NOT use anon or service_role keys from Project → Settings → API.\n" +
+            "  • Token must be from the same Supabase account that owns project " +
+            `${projectRef}.\n` +
+            "  • No quotes around the value in .env.local: SUPABASE_ACCESS_TOKEN=sbp_...\n" +
+            "  • Or skip the token: paste supabase/essential-for-send.sql in Supabase SQL Editor,\n" +
+            "    or set SUPABASE_DB_URL (Dashboard → Database → Connection string → URI) and re-run.\n",
+        );
+      }
       process.exit(1);
     }
     console.log("ok");
