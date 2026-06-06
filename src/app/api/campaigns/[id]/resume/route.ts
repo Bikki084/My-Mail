@@ -5,9 +5,7 @@ import { createServiceClient } from "@/lib/supabase/admin";
 import { resolveCampaignSendMode } from "@/lib/queue/send-mode";
 import { requireActivePlanForMailOrJson } from "@/lib/active-plan-guard";
 import { getOrCreateOutboundIp } from "@/lib/outbound-ip";
-
-/** Same recipient cap the original send route uses for in-process delivery. */
-const MAX_SYNC_RECIPIENTS = 200;
+import { maxSyncCampaignRecipients } from "@/lib/campaign-sync-limits";
 type Params = { params: Promise<{ id: string }> };
 
 /**
@@ -69,7 +67,8 @@ export async function POST(_req: Request, { params }: Params) {
   const remaining =
     Math.max(0, (campaign.total_emails ?? 0) - (campaign.sent_count ?? 0));
 
-  const sendMode = await resolveCampaignSendMode(remaining, MAX_SYNC_RECIPIENTS);
+  const maxSyncRecipients = maxSyncCampaignRecipients();
+  const sendMode = await resolveCampaignSendMode(remaining, maxSyncRecipients);
 
   if (sendMode.mode === "blocked") {
     return NextResponse.json({ error: sendMode.message }, { status: 503 });
@@ -117,11 +116,11 @@ export async function POST(_req: Request, { params }: Params) {
     return NextResponse.json({ ok: true, mode: "queued" as const });
   }
 
-  if (remaining > MAX_SYNC_RECIPIENTS) {
+  if (remaining > maxSyncRecipients) {
     return NextResponse.json(
       {
         error:
-          `Resume needs to deliver ${remaining} more emails (max ${MAX_SYNC_RECIPIENTS} in-process). ` +
+          `Resume needs to deliver ${remaining} more emails (max ${maxSyncRecipients} in-process). ` +
           "Start Redis and the email worker, then retry.",
       },
       { status: 503 },

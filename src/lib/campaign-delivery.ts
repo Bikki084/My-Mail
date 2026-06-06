@@ -411,6 +411,10 @@ export async function runSendCampaign(
   const manualIpRotationPause =
     process.env.CAMPAIGN_MANUAL_IP_ROTATION_PAUSE === "1";
 
+  const skipPerEmailCredits =
+    process.env.ALLOW_SEND_WITHOUT_EMAIL_CREDITS === "1" ||
+    (await hasNonExpiredActivePlan(supabase, userId));
+
   let failed = 0;
   let failedInBurst = 0;
   let sentInBurst = 0;
@@ -433,12 +437,14 @@ export async function runSendCampaign(
       ipHistory,
       rotationThreshold,
       manualIpRotationPause,
-      onEmailSent: () =>
-        deductOneEmailCredit(
-          supabase,
-          userId,
-          `Email send: campaign ${campaignId}`,
-        ),
+      onEmailSent: skipPerEmailCredits
+        ? async () => {}
+        : () =>
+            deductOneEmailCredit(
+              supabase,
+              userId,
+              `Email send: campaign ${campaignId}`,
+            ),
       shouldAbort,
     });
     failed = parallelResult.failed;

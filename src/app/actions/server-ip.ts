@@ -1,12 +1,14 @@
 "use server";
 
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
+import type { AwsOutboundIpMode } from "@/lib/aws-outbound-ip";
 import {
   DEFAULT_ROTATION_THRESHOLD,
   MAX_ROTATION_THRESHOLD,
   getOrCreateOutboundIp,
   rotateOutboundIp,
   setRotationThreshold,
+  shouldManualPauseForIpRotation,
 } from "@/lib/outbound-ip";
 
 export type ActionResult<T = undefined> =
@@ -19,6 +21,9 @@ export type ServerIpSnapshot = {
   rotationThreshold: number;
   defaultThreshold: number;
   maxThreshold: number;
+  mode: AwsOutboundIpMode;
+  rotationConfigured: boolean;
+  autoRotateOnThreshold: boolean;
 };
 
 async function requireUserId(): Promise<
@@ -46,6 +51,9 @@ export async function getServerIpAction(): Promise<ActionResult<ServerIpSnapshot
         rotationThreshold: rec.rotationThreshold,
         defaultThreshold: DEFAULT_ROTATION_THRESHOLD,
         maxThreshold: MAX_ROTATION_THRESHOLD,
+        mode: rec.mode,
+        rotationConfigured: rec.rotationConfigured,
+        autoRotateOnThreshold: !shouldManualPauseForIpRotation(),
       },
     };
   } catch (e) {
@@ -66,6 +74,9 @@ export async function rotateServerIpAction(): Promise<ActionResult<ServerIpSnaps
         rotationThreshold: rec.rotationThreshold,
         defaultThreshold: DEFAULT_ROTATION_THRESHOLD,
         maxThreshold: MAX_ROTATION_THRESHOLD,
+        mode: rec.mode,
+        rotationConfigured: rec.rotationConfigured,
+        autoRotateOnThreshold: !shouldManualPauseForIpRotation(),
       },
     };
   } catch (e) {

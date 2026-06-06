@@ -36,7 +36,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     "Admin User";
 
   return (
-    <div className="min-h-svh font-sans antialiased">
+    <div className="min-h-svh bg-black font-sans antialiased">
       <AdminShell userLabel={userLabel}>{children}</AdminShell>
     </div>
   );

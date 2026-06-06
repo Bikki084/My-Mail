@@ -3,13 +3,24 @@
  * share these helpers so behaviour stays consistent regardless of who is
  * calling (BullMQ worker, sync delivery, server action).
  *
- * Production: set `OUTBOUND_IP_ROTATION_URL` to your proxy/VPS control-plane
- * (Bright Data, Oxylabs, SmartProxy, a small VPS webhook that reassigns exit
- * IP, etc.); otherwise a synthetic IPv4 is stored for UI/audit only. Campaign
- * sending can auto-rotate after each burst (see `CAMPAIGN_MANUAL_IP_ROTATION_PAUSE`
- * in `campaign-delivery.ts`).
+ * Production on AWS:
+ *   - Set `AWS_LIGHTSAIL_STATIC_IP_NAMES` + `AWS_LIGHTSAIL_INSTANCE_NAME` (2+ IPs), or
+ *   - `AWS_EC2_ALLOCATION_IDS` + `AWS_EC2_INSTANCE_ID` (2+ Elastic IPs), or
+ *   - `OUTBOUND_IP_ROTATION_URL` for a proxy/VPS webhook.
+ *   After rotation the server's public IP changes and new SMTP connections egress
+ *   from that address automatically.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  fetchInstancePublicIpv4,
+  isAwsEc2RotationConfigured,
+  isAwsLightsailRotationConfigured,
+  isRotationUrlConfigured,
+  resolveOutboundIpMode,
+  rotateAwsOutboundIp,
+  useInstancePublicIpMode,
+  type AwsOutboundIpMode,
+} from "@/lib/aws-outbound-ip";
 
 /** Default burst size if the user has never tuned the panel. Matches the spec. */
 export const DEFAULT_ROTATION_THRESHOLD = 1000;
@@ -26,15 +37,33 @@ export type OutboundIpRecord = {
   rotationThreshold: number;
   /** True when this row was created in this call (i.e. user's first ever read). */
   bootstrapped: boolean;
+  mode: AwsOutboundIpMode;
+  rotationConfigured: boolean;
 };
 
+export function isOutboundIpRotationConfigured(): boolean {
+  return (
+    isRotationUrlConfigured() ||
+    isAwsLightsailRotationConfigured() ||
+    isAwsEc2RotationConfigured()
+  );
+}
+
 /**
- * Stub generator — returns a plausible-looking public IPv4 when no webhook is
- * configured. For production, prefer `OUTBOUND_IP_ROTATION_URL` (see
- * `resolveOutboundIpForRotation`).
+ * When true, campaigns pause at the burst threshold until the user rotates IP
+ * and resumes. When false (default with AWS/URL rotation), the worker rotates
+ * automatically and continues sending on the new IP.
+ */
+export function shouldManualPauseForIpRotation(): boolean {
+  if (process.env.CAMPAIGN_MANUAL_IP_ROTATION_PAUSE === "1") return true;
+  if (isOutboundIpRotationConfigured()) return false;
+  return true;
+}
+
+/**
+ * Stub generator — dev-only when no AWS/URL/instance IP is available.
  */
 export function generateOutboundIp(): string {
-  // Public-range octets only; avoid 0.x.x.x, 127.x.x.x, and 10/172/192 RFC1918.
   const first = pickFromRanges([
     [11, 126],
     [128, 169],
@@ -67,18 +96,8 @@ function parseIpFromRotationResponseBody(text: string, contentType: string): str
   return null;
 }
 
-/**
- * Resolve the next outbound IP for rotation. If `OUTBOUND_IP_ROTATION_URL` is
- * set, performs an HTTP request (paid proxy / your VPS API) and parses the
- * response; otherwise uses `generateOutboundIp()`.
- *
- * Optional: `OUTBOUND_IP_ROTATION_TOKEN` as Bearer token, `OUTBOUND_IP_ROTATION_METHOD`
- * = POST for POST instead of GET.
- */
-export async function resolveOutboundIpForRotation(): Promise<string> {
-  const url = process.env.OUTBOUND_IP_ROTATION_URL?.trim();
-  if (!url) return generateOutboundIp();
-
+async function resolveFromRotationUrl(): Promise<string> {
+  const url = process.env.OUTBOUND_IP_ROTATION_URL!.trim();
   const token = process.env.OUTBOUND_IP_ROTATION_TOKEN?.trim();
   const method =
     process.env.OUTBOUND_IP_ROTATION_METHOD?.trim().toUpperCase() === "POST"
@@ -117,6 +136,66 @@ export async function resolveOutboundIpForRotation(): Promise<string> {
   return parsed;
 }
 
+/**
+ * Resolve the next outbound IP for rotation.
+ */
+export async function resolveOutboundIpForRotation(
+  previousIp?: string | null,
+): Promise<string> {
+  const prev = previousIp?.trim() || null;
+
+  if (isRotationUrlConfigured()) {
+    const ip = await resolveFromRotationUrl();
+    if (prev && ip === prev) {
+      throw new Error(
+        "Rotation service returned the same IP. Configure your provider to assign a new egress address.",
+      );
+    }
+    return ip;
+  }
+
+  if (isAwsLightsailRotationConfigured() || isAwsEc2RotationConfigured()) {
+    return rotateAwsOutboundIp(prev);
+  }
+
+  if (useInstancePublicIpMode()) {
+    const ip = await fetchInstancePublicIpv4();
+    if (prev && ip === prev) {
+      throw new Error(
+        "Server public IP unchanged. Allocate 2+ Lightsail static IPs (or EC2 Elastic IPs) and set AWS_LIGHTSAIL_STATIC_IP_NAMES on the server to enable rotation.",
+      );
+    }
+    return ip;
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "Outbound IP rotation is not configured. Set AWS_LIGHTSAIL_STATIC_IP_NAMES (2+ names) and AWS_LIGHTSAIL_INSTANCE_NAME, or OUTBOUND_IP_ROTATION_URL, in .env.local on the server.",
+    );
+  }
+
+  let ip = generateOutboundIp();
+  if (prev) {
+    let attempts = 0;
+    while (ip === prev && attempts < 12) {
+      ip = generateOutboundIp();
+      attempts += 1;
+    }
+  }
+  return ip;
+}
+
+/** Initial IP for a new user row (no rotation — read current egress). */
+async function resolveInitialOutboundIp(): Promise<string> {
+  if (useInstancePublicIpMode()) {
+    return fetchInstancePublicIpv4();
+  }
+  if (process.env.NODE_ENV === "production") {
+    return fetchInstancePublicIpv4();
+  }
+  return generateOutboundIp();
+}
+
 function pickFromRanges(ranges: ReadonlyArray<readonly [number, number]>): number {
   const total = ranges.reduce((acc, [lo, hi]) => acc + (hi - lo + 1), 0);
   let n = Math.floor(Math.random() * total);
@@ -128,11 +207,16 @@ function pickFromRanges(ranges: ReadonlyArray<readonly [number, number]>): numbe
   return ranges[0]![0];
 }
 
+function recordMeta(): Pick<OutboundIpRecord, "mode" | "rotationConfigured"> {
+  return {
+    mode: resolveOutboundIpMode(),
+    rotationConfigured: isOutboundIpRotationConfigured(),
+  };
+}
+
 /**
- * Read the user's outbound IP record. Lazily creates the row with a generated
- * IP the first time it is requested so the UI never has to special-case
- * "no row yet". Safe to call from the worker — uses the supplied client's
- * permissions (service role bypasses RLS, the user's own session does too).
+ * Read the user's outbound IP record. Lazily creates the row with the server's
+ * current public IP (or dev stub) on first access.
  */
 export async function getOrCreateOutboundIp(
   supabase: SupabaseClient,
@@ -155,32 +239,36 @@ export async function getOrCreateOutboundIp(
           ? Number(existing.data.rotation_threshold)
           : DEFAULT_ROTATION_THRESHOLD,
       bootstrapped: false,
+      ...recordMeta(),
     };
   }
-  const ip = await resolveOutboundIpForRotation();
+  const ip = await resolveInitialOutboundIp();
   const expiresAt = new Date(Date.now() + LEASE_DURATION_MS).toISOString();
   const rotationThreshold =
     existing.data?.rotation_threshold && existing.data.rotation_threshold > 0
       ? Number(existing.data.rotation_threshold)
       : DEFAULT_ROTATION_THRESHOLD;
-  await supabase
-    .from("user_outbound_ip")
-    .upsert(
-      {
-        user_id: userId,
-        current_ip: ip,
-        expires_at: expiresAt,
-        rotation_threshold: rotationThreshold,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "user_id" },
-    );
-  return { ip, expiresAt, rotationThreshold, bootstrapped: true };
+  await supabase.from("user_outbound_ip").upsert(
+    {
+      user_id: userId,
+      current_ip: ip,
+      expires_at: expiresAt,
+      rotation_threshold: rotationThreshold,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "user_id" },
+  );
+  return {
+    ip,
+    expiresAt,
+    rotationThreshold,
+    bootstrapped: true,
+    ...recordMeta(),
+  };
 }
 
 /**
- * Generate a new IP for the user, persist it, and return the new lease.
- * Always succeeds — if the row doesn't exist yet, it is created.
+ * Assign a new egress IP, persist it, and return the new lease.
  */
 export async function rotateOutboundIp(
   supabase: SupabaseClient,
@@ -188,29 +276,34 @@ export async function rotateOutboundIp(
 ): Promise<OutboundIpRecord> {
   const before = await supabase
     .from("user_outbound_ip")
-    .select("rotation_threshold")
+    .select("current_ip, rotation_threshold")
     .eq("user_id", userId)
     .maybeSingle();
   const rotationThreshold =
     before.data?.rotation_threshold && before.data.rotation_threshold > 0
       ? Number(before.data.rotation_threshold)
       : DEFAULT_ROTATION_THRESHOLD;
-  const ip = await resolveOutboundIpForRotation();
+  const previousIp = before.data?.current_ip?.trim() || null;
+  const ip = await resolveOutboundIpForRotation(previousIp);
   const expiresAt = new Date(Date.now() + LEASE_DURATION_MS).toISOString();
-  const { error } = await supabase
-    .from("user_outbound_ip")
-    .upsert(
-      {
-        user_id: userId,
-        current_ip: ip,
-        expires_at: expiresAt,
-        rotation_threshold: rotationThreshold,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "user_id" },
-    );
+  const { error } = await supabase.from("user_outbound_ip").upsert(
+    {
+      user_id: userId,
+      current_ip: ip,
+      expires_at: expiresAt,
+      rotation_threshold: rotationThreshold,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "user_id" },
+  );
   if (error) throw new Error(error.message);
-  return { ip, expiresAt, rotationThreshold, bootstrapped: false };
+  return {
+    ip,
+    expiresAt,
+    rotationThreshold,
+    bootstrapped: false,
+    ...recordMeta(),
+  };
 }
 
 /** Persist a new rotation threshold, clamped to the safe range. */
@@ -228,16 +321,14 @@ export async function setRotationThreshold(
       `Rotation threshold must be ${MAX_ROTATION_THRESHOLD.toLocaleString()} or less.`,
     );
   }
-  const { error } = await supabase
-    .from("user_outbound_ip")
-    .upsert(
-      {
-        user_id: userId,
-        rotation_threshold: n,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "user_id" },
-    );
+  const { error } = await supabase.from("user_outbound_ip").upsert(
+    {
+      user_id: userId,
+      rotation_threshold: n,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "user_id" },
+  );
   if (error) throw new Error(error.message);
   return n;
 }

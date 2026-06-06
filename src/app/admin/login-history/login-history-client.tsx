@@ -124,10 +124,10 @@ export function LoginHistoryClient({
         description="Audit trail of client login and logout events."
       />
 
-      <div className="flex flex-col gap-4 rounded-lg border border-gray-800 bg-[#111827] p-4">
+      <div className="flex flex-col gap-4 rounded-lg border border-emerald-900/35 bg-zinc-900/75 p-4 backdrop-blur-sm">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div className="w-full space-y-1.5 sm:col-span-2 lg:col-span-4">
-            <Label htmlFor="login-history-user-filter" className="text-sm text-gray-400">
+            <Label htmlFor="login-history-user-filter" className="text-sm text-zinc-400">
               User
             </Label>
             <Select
@@ -137,7 +137,7 @@ export function LoginHistoryClient({
             >
               <SelectTrigger
                 id="login-history-user-filter"
-                className="h-10 w-full max-w-2xl border-gray-700 bg-[#111827] font-sans text-sm text-gray-100"
+                className="h-10 w-full max-w-2xl border-zinc-700 bg-zinc-950/80 font-sans text-sm text-zinc-100"
               >
                 <SelectValue placeholder="All users">
                   {(value: string | null) => {
@@ -149,11 +149,11 @@ export function LoginHistoryClient({
               <SelectContent
                 align="start"
                 alignItemWithTrigger={false}
-                className="max-h-72 min-w-[32rem] max-w-2xl border-gray-700 bg-[#111827] font-sans text-sm text-gray-100"
+                className="max-h-72 min-w-[32rem] max-w-2xl border-zinc-700 bg-zinc-950/80 font-sans text-sm text-zinc-100"
               >
                 <SelectItem
                   value={ALL_USERS}
-                  className="font-sans text-sm text-gray-100 hover:bg-gray-800"
+                  className="font-sans text-sm text-zinc-100 hover:bg-emerald-950/40"
                 >
                   All users
                 </SelectItem>
@@ -161,7 +161,7 @@ export function LoginHistoryClient({
                   <SelectItem
                     key={u.id}
                     value={u.id}
-                    className="font-sans text-sm text-gray-100 hover:bg-gray-800"
+                    className="font-sans text-sm text-zinc-100 hover:bg-emerald-950/40"
                   >
                     {u.label}
                   </SelectItem>
@@ -170,21 +170,21 @@ export function LoginHistoryClient({
             </Select>
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs text-gray-400">From</Label>
+            <Label className="text-xs text-zinc-400">From</Label>
             <Input
               type="date"
               value={from}
               onChange={(e) => setFrom(e.target.value)}
-              className="border-gray-700 bg-[#0F172A] text-white"
+              className="border-gray-700 bg-[#0F172A] text-zinc-50"
             />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs text-gray-400">To</Label>
+            <Label className="text-xs text-zinc-400">To</Label>
             <Input
               type="date"
               value={to}
               onChange={(e) => setTo(e.target.value)}
-              className="border-gray-700 bg-[#0F172A] text-white"
+              className="border-gray-700 bg-[#0F172A] text-zinc-50"
             />
           </div>
         </div>
@@ -219,36 +219,36 @@ export function LoginHistoryClient({
       )}
 
       <div
-        className={`overflow-hidden rounded-lg border border-gray-800 bg-[#111827] ${busyClass}`}
+        className={`overflow-hidden rounded-lg border border-emerald-900/35 bg-zinc-900/75 backdrop-blur-sm ${busyClass}`}
       >
         <Table>
           <TableHeader>
-            <TableRow className="border-gray-800 hover:bg-transparent">
-              <TableHead className="text-gray-400">User</TableHead>
-              <TableHead className="text-gray-400">Login time</TableHead>
-              <TableHead className="text-gray-400">Logout time</TableHead>
-              <TableHead className="text-gray-400">IP</TableHead>
+            <TableRow className="border-zinc-800 hover:bg-transparent">
+              <TableHead className="text-zinc-400">User</TableHead>
+              <TableHead className="text-zinc-400">Login time</TableHead>
+              <TableHead className="text-zinc-400">Logout time</TableHead>
+              <TableHead className="text-zinc-400">IP</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {!fetchError && rows.length === 0 && (
-              <TableRow className="border-gray-800">
+              <TableRow className="border-zinc-800">
                 <TableCell colSpan={4} className="text-center text-gray-500">
                   No login history available
                 </TableCell>
               </TableRow>
             )}
             {rows.map((row) => (
-              <TableRow key={row.id} className="border-gray-800">
-                <TableCell className="font-sans text-sm font-medium text-white">
+              <TableRow key={row.id} className="border-zinc-800">
+                <TableCell className="font-sans text-sm font-medium text-zinc-50">
                   {row.userLabel}
                 </TableCell>
-                <TableCell className="text-gray-400 tabular-nums">
+                <TableCell className="text-zinc-400 tabular-nums">
                   {formatDateTime(row.loginAt)}
                 </TableCell>
                 <TableCell className="tabular-nums">
                   {row.logoutAt ? (
-                    <span className="text-gray-400">{formatDateTime(row.logoutAt)}</span>
+                    <span className="text-zinc-400">{formatDateTime(row.logoutAt)}</span>
                   ) : (
                     <span className="rounded-full border border-emerald-800 px-2 py-0.5 text-xs text-emerald-400">
                       Active session
@@ -265,7 +265,7 @@ export function LoginHistoryClient({
       </div>
 
       {totalPages > 1 && (
-        <div className="flex items-center justify-between gap-3 px-1 text-xs text-gray-400">
+        <div className="flex items-center justify-between gap-3 px-1 text-xs text-zinc-400">
           <span>
             Page {page} of {totalPages}
           </span>

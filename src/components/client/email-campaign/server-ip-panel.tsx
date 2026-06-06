@@ -47,6 +47,9 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
         rotationThreshold: 1000,
         defaultThreshold: 1000,
         maxThreshold: 100_000,
+        mode: "dev_stub",
+        rotationConfigured: false,
+        autoRotateOnThreshold: false,
       });
       setThresholdDraft("1000");
       setLoading(false);

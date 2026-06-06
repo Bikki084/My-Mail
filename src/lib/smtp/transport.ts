@@ -1,14 +1,13 @@
 import nodemailer, { type Transporter, type TransportOptions } from "nodemailer";
 import { getDkimConfigFromEnv } from "@/lib/deliverability";
+import { parsePositiveIntEnv } from "@/lib/async-pool";
 
 /**
  * Nodemailer transport for user SMTP, matching server actions' host/port/secure rules
  * (Gmail/587 STARTTLS, 465 implicit TLS, etc.).
  *
- * If `DKIM_DOMAIN` / `DKIM_KEY_SELECTOR` / `DKIM_PRIVATE_KEY` env vars are set,
- * the transport DKIM-signs every outgoing message in-process. Public relays
- * (Gmail SMTP, SendGrid, SES, Brevo, Mailgun) already DKIM-sign at the relay,
- * so this is only needed for self-hosted SMTP or to add a second signature.
+ * Pooling is enabled by default for bulk sends — reuse TLS sessions instead of
+ * opening a new connection per message.
  */
 export function buildSmtpUserTransport(v: {
   host: string;
@@ -19,14 +18,27 @@ export function buildSmtpUserTransport(v: {
 }): Transporter {
   const usesImplicitTls = v.port === 465 ? true : v.port === 587 ? false : v.secure;
   const dkim = getDkimConfigFromEnv();
+  const poolEnabled = process.env.SMTP_POOL !== "0";
+  const maxConnections = parsePositiveIntEnv("SMTP_MAX_CONNECTIONS", 10);
+  const connectionTimeout = parsePositiveIntEnv("SMTP_CONNECTION_TIMEOUT_MS", 8_000);
+  const greetingTimeout = parsePositiveIntEnv("SMTP_GREETING_TIMEOUT_MS", 8_000);
+  const socketTimeout = parsePositiveIntEnv("SMTP_SOCKET_TIMEOUT_MS", 15_000);
+
   return nodemailer.createTransport({
     host: v.host,
     port: v.port,
     secure: usesImplicitTls,
     auth: { user: v.username, pass: v.password },
-    connectionTimeout: 15_000,
-    greetingTimeout: 10_000,
-    socketTimeout: 20_000,
+    connectionTimeout,
+    greetingTimeout,
+    socketTimeout,
+    ...(poolEnabled
+      ? {
+          pool: true,
+          maxConnections,
+          maxMessages: parsePositiveIntEnv("SMTP_MAX_MESSAGES_PER_CONNECTION", 500),
+        }
+      : {}),
     ...(dkim ? { dkim } : {}),
   } as TransportOptions);
 }

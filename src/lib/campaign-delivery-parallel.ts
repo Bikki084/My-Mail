@@ -16,10 +16,12 @@ import {
   sanitizeEmailHtml,
 } from "@/lib/html-email";
 import {
+  createRenderSemaphore,
   renderHtmlToJpegBuffer,
   renderHtmlToPdfBuffer,
   renderHtmlToPngBuffer,
 } from "@/lib/html-attachment-render";
+import { parsePositiveIntEnv, runAsyncPool } from "@/lib/async-pool";
 import { resolveMailEncoding } from "@/lib/mail-encoding";
 import { buildSmtpUserTransport } from "@/lib/smtp/transport";
 import { rotateOutboundIp } from "@/lib/outbound-ip";
@@ -63,6 +65,9 @@ const SMTP_INTER_SEND_MS = Math.max(
   parseInt(process.env.SMTP_INTER_SEND_MS ?? "0", 10) || 0,
 );
 
+/** Parallel in-flight sends per SMTP account (default 10). */
+const SMTP_WORKER_CONCURRENCY = parsePositiveIntEnv("SMTP_WORKER_CONCURRENCY", 10);
+
 function friendlyErr(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
@@ -70,6 +75,28 @@ function friendlyErr(err: unknown): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function loadAlreadySentEmails(
+  supabase: SupabaseClient,
+  campaignId: string,
+): Promise<Set<string>> {
+  const sent = new Set<string>();
+  const { data, error } = await supabase
+    .from("sending_logs")
+    .select("recipient_email")
+    .eq("campaign_id", campaignId);
+  if (error) {
+    console.warn(
+      `[campaign-delivery] could not preload sent log for campaign=${campaignId}: ${error.message}`,
+    );
+    return sent;
+  }
+  for (const row of data ?? []) {
+    const email = (row as { recipient_email?: string }).recipient_email?.trim().toLowerCase();
+    if (email) sent.add(email);
+  }
+  return sent;
 }
 
 /** Serialize only IP-rotation bookkeeping (not every SMTP send). */
@@ -166,6 +193,12 @@ export async function deliverCampaignInParallel(
     shouldAbort,
   } = params;
 
+  const withRotationLock = createAsyncMutex();
+  const withStatsLock = createAsyncMutex();
+  const renderSemaphore =
+    renderBrowser && htmlAttSpec ? createRenderSemaphore() : null;
+  const alreadySent = await loadAlreadySentEmails(supabase, campaignId);
+
   const shared = {
     failed: 0,
     sentInBurst: 0,
@@ -174,10 +207,8 @@ export async function deliverCampaignInParallel(
     ipHistory: params.ipHistory,
     rotationThreshold,
     recipientsTotal: recipients.length,
+    alreadySent,
   };
-
-  const withRotationLock = createAsyncMutex();
-  const withRenderLock = renderBrowser ? createAsyncMutex() : null;
 
   const partitions = partitionRecipientsBySmtp(
     recipients,
@@ -193,7 +224,9 @@ export async function deliverCampaignInParallel(
     })
     .filter(Boolean);
   console.log(
-    `[campaign-delivery] campaign=${campaignId} parallel_smtp_workers=${workerSummaries.length} queues=[${workerSummaries.join(", ")}]`,
+    `[campaign-delivery] campaign=${campaignId} parallel_smtp_workers=${workerSummaries.length} ` +
+      `per_smtp_concurrency=${SMTP_WORKER_CONCURRENCY} render_concurrency=${renderSemaphore?.concurrency ?? 0} ` +
+      `queues=[${workerSummaries.join(", ")}]`,
   );
 
   /** Runs only when burst threshold may be hit — never on every send. */
@@ -249,46 +282,48 @@ export async function deliverCampaignInParallel(
     });
   }
 
-  function recordSuccessfulSend(): void {
-    shared.sentInBurst += 1;
-    if (shared.sentInBurst >= shared.rotationThreshold) {
-      void maybeRotateIpAfterBurst();
-    }
+  async function recordSuccessfulSend(): Promise<void> {
+    await withStatsLock(async () => {
+      shared.sentInBurst += 1;
+      if (shared.sentInBurst >= shared.rotationThreshold) {
+        void maybeRotateIpAfterBurst();
+      }
+    });
   }
 
-  function recordFailedSend(): void {
-    shared.failed += 1;
-    shared.failedInBurst += 1;
+  async function recordFailedSend(): Promise<void> {
+    await withStatsLock(async () => {
+      shared.failed += 1;
+      shared.failedInBurst += 1;
+    });
   }
 
   async function runSmtpWorker(smtpIndex: number, smtp: SmtpRow): Promise<void> {
     const queue = partitions.get(smtpIndex) ?? [];
     if (queue.length === 0) return;
 
+    const smtpLabel = smtpAccountLabel(smtp);
     console.log(
-      `[campaign-delivery] worker start smtp=${smtpAccountLabel(smtp)} queue=${queue.length}`,
+      `[campaign-delivery] worker start smtp=${smtpLabel} queue=${queue.length} concurrency=${SMTP_WORKER_CONCURRENCY}`,
     );
 
     let pass: string;
     try {
       pass = decryptSmtpPassword(smtp.password_enc);
     } catch (e) {
+      const errMsg = `SMTP password decrypt: ${friendlyErr(e)}`.slice(0, 2000);
       for (const { recipient } of queue) {
-        const { data: already } = await supabase
-          .from("sending_logs")
-          .select("id")
-          .eq("campaign_id", campaignId)
-          .eq("recipient_email", recipient.email)
-          .maybeSingle();
-        if (already) continue;
-        recordFailedSend();
-        await supabase.from("sending_logs").insert({
+        const emailKey = recipient.email.trim().toLowerCase();
+        if (shared.alreadySent.has(emailKey)) continue;
+        shared.alreadySent.add(emailKey);
+        await recordFailedSend();
+        void supabase.from("sending_logs").insert({
           campaign_id: campaignId,
           user_id: userId,
           recipient_email: recipient.email,
-          smtp_used: smtpAccountLabel(smtp),
+          smtp_used: smtpLabel,
           status: "failed",
-          error_message: `SMTP password decrypt: ${friendlyErr(e)}`.slice(0, 2000),
+          error_message: errMsg,
         });
       }
       return;
@@ -302,189 +337,182 @@ export async function deliverCampaignInParallel(
       password: pass,
     });
 
-    try {
-      for (let q = 0; q < queue.length; q++) {
-        if (shared.pausedForRotation) break;
-        if (shouldAbort && (await shouldAbort())) break;
+    async function sendOne({ recipient }: { recipient: RecipientRow }): Promise<void> {
+      if (shared.pausedForRotation) return;
+      if (shouldAbort && (await shouldAbort())) return;
 
-        const { recipient } = queue[q]!;
+      const emailKey = recipient.email.trim().toLowerCase();
+      if (shared.alreadySent.has(emailKey)) return;
 
-        const { data: already } = await supabase
-          .from("sending_logs")
-          .select("id")
-          .eq("campaign_id", campaignId)
-          .eq("recipient_email", recipient.email)
-          .maybeSingle();
-        if (already) continue;
+      if (suppressed.has(emailKey)) {
+        shared.alreadySent.add(emailKey);
+        await recordFailedSend();
+        void supabase.from("sending_logs").insert({
+          campaign_id: campaignId,
+          user_id: userId,
+          recipient_email: recipient.email,
+          smtp_used: null,
+          status: "failed",
+          error_message: "Recipient previously unsubscribed (skipped).",
+        });
+        return;
+      }
 
-        if (suppressed.has(recipient.email.trim().toLowerCase())) {
-          recordFailedSend();
-          await supabase.from("sending_logs").insert({
-            campaign_id: campaignId,
-            user_id: userId,
-            recipient_email: recipient.email,
-            smtp_used: null,
-            status: "failed",
-            error_message: "Recipient previously unsubscribed (skipped).",
-          });
-          continue;
-        }
+      const subj = applyMergeTags(
+        (campaign.subject as string | null) ?? "No subject",
+        recipient,
+        { missingFormat: "plain" },
+      );
+      const sourceHtml = (campaign.body_html as string | null) ?? "";
+      const safeHtml = sourceHtml ? sanitizeEmailHtml(sourceHtml) : "";
+      const html = applyMergeTags(safeHtml, recipient, { missingFormat: "html" });
+      const text = htmlToPlainText(html);
+      const from = `${senderName} <${smtp.username}>`;
 
-        const subj = applyMergeTags(
-          (campaign.subject as string | null) ?? "No subject",
+      const dynamicAttachments: Attachment[] = [];
+      if (renderBrowser && htmlAttSpec) {
+        const mergedAttachHtml = applyMergeTags(
+          sanitizeAttachmentRenderHtml(htmlAttSpec.html),
           recipient,
-          { missingFormat: "plain" },
+          { missingFormat: "html" },
         );
-        const sourceHtml = (campaign.body_html as string | null) ?? "";
-        const safeHtml = sourceHtml ? sanitizeEmailHtml(sourceHtml) : "";
-        const html = applyMergeTags(safeHtml, recipient, { missingFormat: "html" });
-        const text = htmlToPlainText(html);
-        const from = `${senderName} <${smtp.username}>`;
-
-        const dynamicAttachments: Attachment[] = [];
-        if (renderBrowser && htmlAttSpec) {
-          const mergedAttachHtml = applyMergeTags(
-            sanitizeAttachmentRenderHtml(htmlAttSpec.html),
-            recipient,
-            { missingFormat: "html" },
-          );
-          const render = async () => {
-            const buf =
-              htmlAttSpec.kind === "pdf"
-                ? await renderHtmlToPdfBuffer(renderBrowser, mergedAttachHtml)
-                : htmlAttSpec.kind === "jpeg"
-                  ? await renderHtmlToJpegBuffer(renderBrowser, mergedAttachHtml)
-                  : await renderHtmlToPngBuffer(renderBrowser, mergedAttachHtml);
-            if (buf.length > GENERATED_ATTACH_MAX_BYTES) {
-              throw new Error("Generated attachment is too large (max 8 MB).");
-            }
-            const meta = htmlAttachmentMeta(htmlAttSpec.kind);
-            dynamicAttachments.push({
-              filename: meta.filename,
-              content: buf,
-              contentType: meta.contentType,
-            });
-          };
-          if (withRenderLock) {
-            await withRenderLock(render);
-          } else {
-            await render();
+        const render = async () => {
+          const buf =
+            htmlAttSpec.kind === "pdf"
+              ? await renderHtmlToPdfBuffer(renderBrowser, mergedAttachHtml)
+              : htmlAttSpec.kind === "jpeg"
+                ? await renderHtmlToJpegBuffer(renderBrowser, mergedAttachHtml)
+                : await renderHtmlToPngBuffer(renderBrowser, mergedAttachHtml);
+          if (buf.length > GENERATED_ATTACH_MAX_BYTES) {
+            throw new Error("Generated attachment is too large (max 8 MB).");
           }
-        }
-
-        const allAttachments = [...staticAttachments, ...dynamicAttachments];
-        const attachCount = allAttachments.length;
-        const mimeEnc = resolveMailEncoding(
-          (campaign.encoding as string | null) ?? "auto",
-          { isHtml: safeHtml.trim().length > 0 },
-          attachCount,
-        );
-
-        try {
-          let htmlPart = html.trim();
-          const textPart = text.trim();
-          if (!htmlPart && !allAttachments.length) {
-            throw new Error("Email content (HTML) is required.");
-          }
-          if (!htmlPart && allAttachments.length) {
-            htmlPart =
-              "<p>Please see the attached file(s).</p>";
-          }
-          const fallbackText =
-            textPart ||
-            (allAttachments.length && !html.trim()
-              ? "Please see the attached file(s)."
-              : "");
-          const textBody = fallbackText.trim();
-
-          const delivery = buildDeliverabilityHeaders({
-            campaignId,
-            userId,
-            streamName: (campaign.stream_name as string | null) ?? null,
-            recipientEmail: recipient.email,
-            fromAddress: from,
-            publicBaseUrl: process.env.MAILER_PUBLIC_URL?.trim() || null,
-            unsubscribeMailbox:
-              process.env.MAILER_UNSUBSCRIBE_MAILBOX?.trim() || null,
+          const meta = htmlAttachmentMeta(htmlAttSpec.kind);
+          dynamicAttachments.push({
+            filename: meta.filename,
+            content: buf,
+            contentType: meta.contentType,
           });
-
-          const profile = resolveDeliverabilityProfile(from, recipient.email);
-          const withFooter = appendUnsubscribeFooter({
-            html: htmlPart,
-            text: textBody,
-            unsubscribeMailto: delivery.unsubscribeMailto,
-            unsubscribeUrl: delivery.unsubscribeUrl,
-            postalAddress: process.env.MAILER_POSTAL_ADDRESS?.trim() || null,
-            profile,
-          });
-
-          const textPayload =
-            withFooter.text &&
-            ({
-              content: withFooter.text,
-              contentTransferEncoding: mimeEnc.textContentTransferEncoding,
-            } as const);
-          const htmlPayload =
-            withFooter.html &&
-            ({
-              content: withFooter.html,
-              contentTransferEncoding: mimeEnc.htmlContentTransferEncoding,
-            } as const);
-
-          const fromAddr = extractAddress(from);
-          await transporter.sendMail({
-            from,
-            to: recipient.email,
-            envelope: {
-              from: fromAddr,
-              to: recipient.email,
-            },
-            replyTo: delivery.replyTo,
-            messageId: delivery.messageId,
-            subject: subj,
-            headers: delivery.headers,
-            text: textPayload || undefined,
-            html: htmlPayload || undefined,
-            ...(allAttachments.length ? { attachments: allAttachments } : {}),
-          });
-
-          const sentAt = new Date().toISOString();
-          await Promise.all([
-            supabase.from("sending_logs").insert({
-              campaign_id: campaignId,
-              user_id: userId,
-              recipient_email: recipient.email,
-              smtp_used: smtpAccountLabel(smtp),
-              status: "sent",
-              error_message: null,
-              sent_at: sentAt,
-            }),
-            onEmailSent(),
-          ]);
-          recordSuccessfulSend();
-
-          if (SMTP_INTER_SEND_MS > 0 && q < queue.length - 1) {
-            await sleep(SMTP_INTER_SEND_MS);
-          }
-        } catch (e) {
-          recordFailedSend();
-          await supabase.from("sending_logs").insert({
-            campaign_id: campaignId,
-            user_id: userId,
-            recipient_email: recipient.email,
-            smtp_used: smtpAccountLabel(smtp),
-            status: "failed",
-            error_message: friendlyErr(e).slice(0, 2000),
-          });
+        };
+        if (renderSemaphore) {
+          await renderSemaphore.run(render);
+        } else {
+          await render();
         }
       }
+
+      const allAttachments = [...staticAttachments, ...dynamicAttachments];
+      const attachCount = allAttachments.length;
+      const mimeEnc = resolveMailEncoding(
+        (campaign.encoding as string | null) ?? "auto",
+        { isHtml: safeHtml.trim().length > 0 },
+        attachCount,
+      );
+
+      try {
+        let htmlPart = html.trim();
+        const textPart = text.trim();
+        if (!htmlPart && !allAttachments.length) {
+          throw new Error("Email content (HTML) is required.");
+        }
+        if (!htmlPart && allAttachments.length) {
+          htmlPart = "<p>Please see the attached file(s).</p>";
+        }
+        const fallbackText =
+          textPart ||
+          (allAttachments.length && !html.trim() ? "Please see the attached file(s)." : "");
+        const textBody = fallbackText.trim();
+
+        const delivery = buildDeliverabilityHeaders({
+          campaignId,
+          userId,
+          streamName: (campaign.stream_name as string | null) ?? null,
+          recipientEmail: recipient.email,
+          fromAddress: from,
+          publicBaseUrl: process.env.MAILER_PUBLIC_URL?.trim() || null,
+          unsubscribeMailbox:
+            process.env.MAILER_UNSUBSCRIBE_MAILBOX?.trim() || null,
+        });
+
+        const profile = resolveDeliverabilityProfile(from, recipient.email);
+        const withFooter = appendUnsubscribeFooter({
+          html: htmlPart,
+          text: textBody,
+          unsubscribeMailto: delivery.unsubscribeMailto,
+          unsubscribeUrl: delivery.unsubscribeUrl,
+          postalAddress: process.env.MAILER_POSTAL_ADDRESS?.trim() || null,
+          profile,
+        });
+
+        const textPayload =
+          withFooter.text &&
+          ({
+            content: withFooter.text,
+            contentTransferEncoding: mimeEnc.textContentTransferEncoding,
+          } as const);
+        const htmlPayload =
+          withFooter.html &&
+          ({
+            content: withFooter.html,
+            contentTransferEncoding: mimeEnc.htmlContentTransferEncoding,
+          } as const);
+
+        const fromAddr = extractAddress(from);
+        await transporter.sendMail({
+          from,
+          to: recipient.email,
+          envelope: {
+            from: fromAddr,
+            to: recipient.email,
+          },
+          replyTo: delivery.replyTo,
+          messageId: delivery.messageId,
+          subject: subj,
+          headers: delivery.headers,
+          text: textPayload || undefined,
+          html: htmlPayload || undefined,
+          ...(allAttachments.length ? { attachments: allAttachments } : {}),
+        });
+
+        shared.alreadySent.add(emailKey);
+        const sentAt = new Date().toISOString();
+        void supabase.from("sending_logs").insert({
+          campaign_id: campaignId,
+          user_id: userId,
+          recipient_email: recipient.email,
+          smtp_used: smtpLabel,
+          status: "sent",
+          error_message: null,
+          sent_at: sentAt,
+        });
+        await onEmailSent();
+        await recordSuccessfulSend();
+
+        if (SMTP_INTER_SEND_MS > 0) {
+          await sleep(SMTP_INTER_SEND_MS);
+        }
+      } catch (e) {
+        shared.alreadySent.add(emailKey);
+        await recordFailedSend();
+        void supabase.from("sending_logs").insert({
+          campaign_id: campaignId,
+          user_id: userId,
+          recipient_email: recipient.email,
+          smtp_used: smtpLabel,
+          status: "failed",
+          error_message: friendlyErr(e).slice(0, 2000),
+        });
+      }
+    }
+
+    try {
+      await runAsyncPool(queue, SMTP_WORKER_CONCURRENCY, async (item) => {
+        await sendOne(item);
+      });
     } finally {
       transporter.close();
     }
 
-    console.log(
-      `[campaign-delivery] worker done smtp=${smtpAccountLabel(smtp)}`,
-    );
+    console.log(`[campaign-delivery] worker done smtp=${smtpLabel}`);
   }
 
   await Promise.all(

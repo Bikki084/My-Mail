@@ -63,7 +63,7 @@ function statusBadgeClass(status: string): string {
     case "draft":
       return "border-gray-600 text-gray-500";
     default:
-      return "border-gray-600 text-gray-400";
+      return "border-gray-600 text-zinc-400";
   }
 }
 
@@ -173,7 +173,7 @@ export function MonitorClient({ rows, clientId = "", page = 1, fetchError }: Pro
             type="button"
             variant="outline"
             size="sm"
-            className="border-gray-700 bg-transparent text-gray-200 hover:bg-gray-800"
+            className="border-gray-700 bg-transparent text-zinc-200 hover:bg-emerald-950/40"
             onClick={refresh}
             disabled={refreshing}
           >
@@ -197,13 +197,13 @@ export function MonitorClient({ rows, clientId = "", page = 1, fetchError }: Pro
 
       <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end">
         <div className="w-full max-w-2xl space-y-1.5">
-          <Label htmlFor="monitor-client-filter" className="text-sm text-gray-400">
+          <Label htmlFor="monitor-client-filter" className="text-sm text-zinc-400">
             Client
           </Label>
           <Select value={selectedClientId} onValueChange={applyClientFilter}>
             <SelectTrigger
               id="monitor-client-filter"
-              className="h-10 w-full max-w-2xl border-gray-700 bg-[#111827] font-sans text-sm text-gray-100"
+              className="h-10 w-full max-w-2xl border-zinc-700 bg-zinc-950/80 font-sans text-sm text-zinc-100"
             >
               <SelectValue placeholder="All clients">
                 {(value: string | null) => {
@@ -215,11 +215,11 @@ export function MonitorClient({ rows, clientId = "", page = 1, fetchError }: Pro
             <SelectContent
               align="start"
               alignItemWithTrigger={false}
-              className="max-h-72 min-w-[32rem] max-w-2xl border-gray-700 bg-[#111827] font-sans text-sm text-gray-100"
+              className="max-h-72 min-w-[32rem] max-w-2xl border-zinc-700 bg-zinc-950/80 font-sans text-sm text-zinc-100"
             >
               <SelectItem
                 value={ALL_CLIENTS}
-                className="font-sans text-sm text-gray-100 hover:bg-gray-800"
+                className="font-sans text-sm text-zinc-100 hover:bg-emerald-950/40"
               >
                 All clients
               </SelectItem>
@@ -227,7 +227,7 @@ export function MonitorClient({ rows, clientId = "", page = 1, fetchError }: Pro
                 <SelectItem
                   key={c.id}
                   value={c.id}
-                  className="font-sans text-sm text-gray-100 hover:bg-gray-800"
+                  className="font-sans text-sm text-zinc-100 hover:bg-emerald-950/40"
                 >
                   {c.label}
                 </SelectItem>
@@ -237,37 +237,37 @@ export function MonitorClient({ rows, clientId = "", page = 1, fetchError }: Pro
         </div>
       </div>
 
-      <div className="mb-4 flex flex-wrap gap-4 text-sm text-gray-400">
+      <div className="mb-4 flex flex-wrap gap-4 text-sm text-zinc-400">
         <span>
-          Campaigns: <span className="tabular-nums text-gray-200">{filteredRows.length}</span>
+          Campaigns: <span className="tabular-nums text-zinc-200">{filteredRows.length}</span>
           {selectedClientId !== ALL_CLIENTS && rows.length !== filteredRows.length ? (
             <span className="text-gray-600"> / {rows.length} total</span>
           ) : null}
         </span>
         <span>
-          Emails sent: <span className="tabular-nums text-gray-200">{totals.sent.toLocaleString()}</span>
+          Emails sent: <span className="tabular-nums text-zinc-200">{totals.sent.toLocaleString()}</span>
         </span>
         <span>
-          Failed: <span className="tabular-nums text-gray-200">{totals.failed.toLocaleString()}</span>
+          Failed: <span className="tabular-nums text-zinc-200">{totals.failed.toLocaleString()}</span>
         </span>
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-gray-800 bg-[#111827]">
+      <div className="overflow-hidden rounded-lg border border-emerald-900/35 bg-zinc-900/75 backdrop-blur-sm">
         <Table>
           <TableHeader>
-            <TableRow className="border-gray-800 hover:bg-transparent">
-              <TableHead className="text-gray-400">Campaign</TableHead>
-              <TableHead className="text-gray-400">Client</TableHead>
-              <TableHead className="text-gray-400">Status</TableHead>
-              <TableHead className="text-right text-gray-400">Sent</TableHead>
-              <TableHead className="text-right text-gray-400">Failed</TableHead>
-              <TableHead className="text-right text-gray-400">Total</TableHead>
-              <TableHead className="text-gray-400">Started</TableHead>
+            <TableRow className="border-zinc-800 hover:bg-transparent">
+              <TableHead className="text-zinc-400">Campaign</TableHead>
+              <TableHead className="text-zinc-400">Client</TableHead>
+              <TableHead className="text-zinc-400">Status</TableHead>
+              <TableHead className="text-right text-zinc-400">Sent</TableHead>
+              <TableHead className="text-right text-zinc-400">Failed</TableHead>
+              <TableHead className="text-right text-zinc-400">Total</TableHead>
+              <TableHead className="text-zinc-400">Started</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {paginatedRows.length === 0 ? (
-              <TableRow className="border-gray-800 hover:bg-transparent">
+              <TableRow className="border-zinc-800 hover:bg-transparent">
                 <TableCell colSpan={7} className="py-10 text-center text-gray-500">
                   {rows.length === 0
                     ? "No campaigns yet. Client sends will appear here."
@@ -276,11 +276,11 @@ export function MonitorClient({ rows, clientId = "", page = 1, fetchError }: Pro
               </TableRow>
             ) : (
               paginatedRows.map((c) => (
-                <TableRow key={c.id} className="border-gray-800">
-                  <TableCell className="max-w-[200px] truncate font-medium text-white" title={c.name}>
+                <TableRow key={c.id} className="border-zinc-800">
+                  <TableCell className="max-w-[200px] truncate font-medium text-zinc-50" title={c.name}>
                     {c.name}
                   </TableCell>
-                  <TableCell className="max-w-[220px] text-gray-400">
+                  <TableCell className="max-w-[220px] text-zinc-400">
                     <div className="truncate font-sans text-sm" title={c.client}>
                       {c.client}
                     </div>
@@ -298,10 +298,10 @@ export function MonitorClient({ rows, clientId = "", page = 1, fetchError }: Pro
                       </p>
                     ) : null}
                   </TableCell>
-                  <TableCell className="text-right tabular-nums text-gray-300">
+                  <TableCell className="text-right tabular-nums text-zinc-300">
                     {c.emailsSent.toLocaleString()}
                   </TableCell>
-                  <TableCell className="text-right tabular-nums text-gray-400">
+                  <TableCell className="text-right tabular-nums text-zinc-400">
                     {c.failedCount.toLocaleString()}
                   </TableCell>
                   <TableCell className="text-right tabular-nums text-gray-500">
@@ -318,7 +318,7 @@ export function MonitorClient({ rows, clientId = "", page = 1, fetchError }: Pro
       </div>
 
       {filteredRows.length > 0 ? (
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-gray-400">
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-zinc-400">
           <span className="tabular-nums">
             Page {currentPage} of {totalPages}
             <span className="text-gray-600">
@@ -332,7 +332,7 @@ export function MonitorClient({ rows, clientId = "", page = 1, fetchError }: Pro
               type="button"
               variant="outline"
               size="sm"
-              className="border-gray-700 text-gray-200"
+              className="border-gray-700 text-zinc-200"
               onClick={() => goToPage(currentPage - 1)}
               disabled={currentPage <= 1}
             >
@@ -342,7 +342,7 @@ export function MonitorClient({ rows, clientId = "", page = 1, fetchError }: Pro
               type="button"
               variant="outline"
               size="sm"
-              className="border-gray-700 text-gray-200"
+              className="border-gray-700 text-zinc-200"
               onClick={() => goToPage(currentPage + 1)}
               disabled={currentPage >= totalPages}
             >

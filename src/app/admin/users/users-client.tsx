@@ -248,31 +248,31 @@ export function UsersClient({ initialRows }: { initialRows: AdminClientUserRow[]
           Create User
         </Button>
       </div>
-      <div className="overflow-hidden rounded-lg border border-gray-800 bg-[#111827]">
+      <div className="overflow-hidden rounded-lg border border-emerald-900/35 bg-zinc-900/75 backdrop-blur-sm">
         <Table>
           <TableHeader>
-            <TableRow className="border-gray-800 hover:bg-transparent">
-              <TableHead className="text-gray-400">Name</TableHead>
-              <TableHead className="text-gray-400">Email</TableHead>
-              <TableHead className="text-gray-400">Status</TableHead>
-              <TableHead className="text-gray-400">Created</TableHead>
-              <TableHead className="w-[120px] text-right text-gray-400">Actions</TableHead>
+            <TableRow className="border-zinc-800 hover:bg-transparent">
+              <TableHead className="text-zinc-400">Name</TableHead>
+              <TableHead className="text-zinc-400">Email</TableHead>
+              <TableHead className="text-zinc-400">Status</TableHead>
+              <TableHead className="text-zinc-400">Created</TableHead>
+              <TableHead className="w-[120px] text-right text-zinc-400">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {rows.length === 0 && (
-              <TableRow className="border-gray-800">
+              <TableRow className="border-zinc-800">
                 <TableCell colSpan={5} className="text-center text-gray-500">
-                  No client users yet. Click <span className="text-gray-300">Create User</span> to add one.
+                  No client users yet. Click <span className="text-zinc-300">Create User</span> to add one.
                 </TableCell>
               </TableRow>
             )}
             {rows.map((u) => (
-              <TableRow key={u.id} className="border-gray-800">
-                <TableCell className="font-medium text-white">
+              <TableRow key={u.id} className="border-zinc-800">
+                <TableCell className="font-medium text-zinc-50">
                   {u.full_name?.trim() || "—"}
                 </TableCell>
-                <TableCell className="text-gray-400">{u.email}</TableCell>
+                <TableCell className="text-zinc-400">{u.email}</TableCell>
                 <TableCell>
                   <Badge
                     variant="outline"
@@ -295,7 +295,7 @@ export function UsersClient({ initialRows }: { initialRows: AdminClientUserRow[]
                     type="button"
                     variant="outline"
                     size="sm"
-                    className="border-gray-700 text-gray-200 hover:border-indigo-600 hover:bg-indigo-600/10 hover:text-indigo-200"
+                    className="border-gray-700 text-zinc-200 hover:border-indigo-600 hover:bg-indigo-600/10 hover:text-indigo-200"
                     onClick={() => openEdit(u)}
                     aria-label={`Edit ${u.email}`}
                   >
@@ -310,14 +310,14 @@ export function UsersClient({ initialRows }: { initialRows: AdminClientUserRow[]
       </div>
 
       <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogContent className="border-gray-800 bg-[#111827] text-gray-100 sm:max-w-md">
+        <DialogContent className="border-emerald-900/35 bg-zinc-900/75 backdrop-blur-sm text-zinc-100 sm:max-w-md">
           <form onSubmit={handleSubmit}>
             <DialogHeader>
-              <DialogTitle className="text-white">Create client user</DialogTitle>
+              <DialogTitle className="text-zinc-50">Create client user</DialogTitle>
             </DialogHeader>
             <div className="space-y-4 py-2">
               <div className="space-y-2">
-                <Label htmlFor="create-org-name" className="text-gray-300">
+                <Label htmlFor="create-org-name" className="text-zinc-300">
                   Organization name
                 </Label>
                 <Input
@@ -340,7 +340,7 @@ export function UsersClient({ initialRows }: { initialRows: AdminClientUserRow[]
                     errors.organizationName ? "create-org-name-error" : undefined
                   }
                   className={cn(
-                    "border-gray-700 bg-[#0F172A] text-white",
+                    "border-gray-700 bg-[#0F172A] text-zinc-50",
                     errors.organizationName &&
                       "border-red-500 ring-1 ring-red-500/40 focus-visible:ring-red-500/50",
                   )}
@@ -353,7 +353,7 @@ export function UsersClient({ initialRows }: { initialRows: AdminClientUserRow[]
                 )}
               </div>
               <div className="space-y-2">
-                <Label htmlFor="create-email" className="text-gray-300">
+                <Label htmlFor="create-email" className="text-zinc-300">
                   Email
                 </Label>
                 <Input
@@ -372,7 +372,7 @@ export function UsersClient({ initialRows }: { initialRows: AdminClientUserRow[]
                   aria-invalid={Boolean(errors.email)}
                   aria-describedby={errors.email ? "create-email-error" : undefined}
                   className={cn(
-                    "border-gray-700 bg-[#0F172A] text-white",
+                    "border-gray-700 bg-[#0F172A] text-zinc-50",
                     errors.email &&
                       "border-red-500 ring-1 ring-red-500/40 focus-visible:ring-red-500/50",
                   )}
@@ -385,7 +385,7 @@ export function UsersClient({ initialRows }: { initialRows: AdminClientUserRow[]
                 )}
               </div>
               <div className="space-y-2">
-                <Label htmlFor="create-password" className="text-gray-300">
+                <Label htmlFor="create-password" className="text-zinc-300">
                   Temporary password
                 </Label>
                 <Input
@@ -410,7 +410,7 @@ export function UsersClient({ initialRows }: { initialRows: AdminClientUserRow[]
                   aria-invalid={Boolean(errors.password)}
                   aria-describedby={errors.password ? "create-password-error" : undefined}
                   className={cn(
-                    "border-gray-700 bg-[#0F172A] text-white",
+                    "border-gray-700 bg-[#0F172A] text-zinc-50",
                     errors.password &&
                       "border-red-500 ring-1 ring-red-500/40 focus-visible:ring-red-500/50",
                   )}
@@ -423,7 +423,7 @@ export function UsersClient({ initialRows }: { initialRows: AdminClientUserRow[]
                 )}
               </div>
               <div className="space-y-2">
-                <Label htmlFor="create-confirm-password" className="text-gray-300">
+                <Label htmlFor="create-confirm-password" className="text-zinc-300">
                   Confirm password
                 </Label>
                 <Input
@@ -447,7 +447,7 @@ export function UsersClient({ initialRows }: { initialRows: AdminClientUserRow[]
                     errors.confirmPassword ? "create-confirm-password-error" : undefined
                   }
                   className={cn(
-                    "border-gray-700 bg-[#0F172A] text-white",
+                    "border-gray-700 bg-[#0F172A] text-zinc-50",
                     errors.confirmPassword &&
                       "border-red-500 ring-1 ring-red-500/40 focus-visible:ring-red-500/50",
                   )}
@@ -483,24 +483,24 @@ export function UsersClient({ initialRows }: { initialRows: AdminClientUserRow[]
       </Dialog>
 
       <Dialog open={edit !== null} onOpenChange={handleEditOpenChange}>
-        <DialogContent className="border-gray-800 bg-[#111827] text-gray-100 sm:max-w-md">
+        <DialogContent className="border-emerald-900/35 bg-zinc-900/75 backdrop-blur-sm text-zinc-100 sm:max-w-md">
           <form onSubmit={handleEditSubmit}>
             <DialogHeader>
-              <DialogTitle className="text-white">Edit user email</DialogTitle>
+              <DialogTitle className="text-zinc-50">Edit user email</DialogTitle>
             </DialogHeader>
             <div className="space-y-4 py-2">
-              <div className="space-y-1.5 rounded-md border border-gray-800 bg-[#0F172A]/70 px-3 py-2 text-xs text-gray-400">
+              <div className="space-y-1.5 rounded-md border border-zinc-800 bg-zinc-950/70 px-3 py-2 text-xs text-zinc-400">
                 <div>
                   <span className="text-gray-500">Name: </span>
-                  <span className="text-gray-200">{edit?.user.full_name?.trim() || "—"}</span>
+                  <span className="text-zinc-200">{edit?.user.full_name?.trim() || "—"}</span>
                 </div>
                 <div>
                   <span className="text-gray-500">Current email: </span>
-                  <span className="font-mono text-gray-200">{edit?.user.email}</span>
+                  <span className="font-mono text-zinc-200">{edit?.user.email}</span>
                 </div>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="edit-email" className="text-gray-300">
+                <Label htmlFor="edit-email" className="text-zinc-300">
                   New email
                 </Label>
                 <Input
@@ -518,7 +518,7 @@ export function UsersClient({ initialRows }: { initialRows: AdminClientUserRow[]
                   aria-invalid={Boolean(edit?.error)}
                   aria-describedby={edit?.error ? "edit-email-error" : undefined}
                   className={cn(
-                    "border-gray-700 bg-[#0F172A] text-white",
+                    "border-gray-700 bg-[#0F172A] text-zinc-50",
                     edit?.error &&
                       "border-red-500 ring-1 ring-red-500/40 focus-visible:ring-red-500/50",
                   )}

@@ -93,15 +93,15 @@ export function AnnouncementsClient({ rows, fetchError }: Props) {
       )}
 
       <div className="grid gap-8 lg:grid-cols-2">
-        <div className="space-y-4 rounded-lg border border-gray-800 bg-[#111827] p-6">
-          <h2 className="text-lg font-semibold text-white">New announcement</h2>
+        <div className="space-y-4 rounded-lg border border-emerald-900/35 bg-zinc-900/75 backdrop-blur-sm p-6">
+          <h2 className="text-lg font-semibold text-zinc-50">New announcement</h2>
           <div className="space-y-2">
-            <Label className="text-gray-300" htmlFor="announcement-title">
+            <Label className="text-zinc-300" htmlFor="announcement-title">
               Title <span className="text-red-400">*</span>
             </Label>
             <Input
               id="announcement-title"
-              className="border-gray-700 bg-[#0F172A] text-white"
+              className="border-gray-700 bg-[#0F172A] text-zinc-50"
               placeholder="Short headline"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
@@ -112,12 +112,12 @@ export function AnnouncementsClient({ rows, fetchError }: Props) {
             />
           </div>
           <div className="space-y-2">
-            <Label className="text-gray-300" htmlFor="announcement-body">
+            <Label className="text-zinc-300" htmlFor="announcement-body">
               Message <span className="text-red-400">*</span>
             </Label>
             <Textarea
               id="announcement-body"
-              className="min-h-[120px] border-gray-700 bg-[#0F172A] text-white"
+              className="min-h-[120px] border-gray-700 bg-[#0F172A] text-zinc-50"
               placeholder="Body text shown to clients…"
               value={body}
               onChange={(e) => setBody(e.target.value)}
@@ -140,12 +140,12 @@ export function AnnouncementsClient({ rows, fetchError }: Props) {
           </Button>
         </div>
 
-        <div className="rounded-lg border border-gray-800 bg-[#111827] p-6">
-          <h2 className="text-lg font-semibold text-white">Recent</h2>
+        <div className="rounded-lg border border-emerald-900/35 bg-zinc-900/75 backdrop-blur-sm p-6">
+          <h2 className="text-lg font-semibold text-zinc-50">Recent</h2>
           <p className="mb-4 text-sm text-gray-500">Latest announcements (newest first).</p>
           {rows.length === 0 ? (
             <div className="rounded-md border border-dashed border-gray-800 px-4 py-8 text-center">
-              <p className="text-sm text-gray-400">No announcements yet.</p>
+              <p className="text-sm text-zinc-400">No announcements yet.</p>
               <p className="mt-1 text-xs text-gray-500">
                 Published announcements appear here and are shown to clients on sign-in.
               </p>
@@ -161,8 +161,8 @@ export function AnnouncementsClient({ rows, fetchError }: Props) {
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0 flex-1">
-                        <p className="font-medium text-white">{a.title}</p>
-                        <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-gray-400">
+                        <p className="font-medium text-zinc-50">{a.title}</p>
+                        <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-zinc-400">
                           {a.body}
                         </p>
                         <p className="mt-2 text-xs text-gray-500">{formatDate(a.created_at)}</p>
@@ -170,7 +170,7 @@ export function AnnouncementsClient({ rows, fetchError }: Props) {
                       <Button
                         variant="outline"
                         size="sm"
-                        className="shrink-0 border-gray-700 text-gray-400 hover:border-red-900 hover:bg-red-950/30 hover:text-red-300"
+                        className="shrink-0 border-gray-700 text-zinc-400 hover:border-red-900 hover:bg-red-950/30 hover:text-red-300"
                         onClick={() => onDelete(a.id)}
                         disabled={Boolean(isDeleting)}
                         aria-label={`Delete "${a.title}"`}

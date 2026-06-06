@@ -113,7 +113,7 @@ export function UsageReportsClient({ rows, filters, fetchError }: Props) {
         />
         <Button
           variant="outline"
-          className="shrink-0 border-gray-700 bg-[#111827] text-gray-200 hover:bg-gray-800"
+          className="shrink-0 border-zinc-700 bg-zinc-950/80 text-zinc-200 hover:bg-emerald-950/40"
           onClick={exportCsv}
           disabled={rows.length === 0}
         >
@@ -122,24 +122,24 @@ export function UsageReportsClient({ rows, filters, fetchError }: Props) {
         </Button>
       </div>
 
-      <div className="flex flex-col gap-4 rounded-lg border border-gray-800 bg-[#111827] p-4">
+      <div className="flex flex-col gap-4 rounded-lg border border-emerald-900/35 bg-zinc-900/75 p-4 backdrop-blur-sm">
         <div className="grid gap-3 sm:grid-cols-4">
           <div className="space-y-1.5">
-            <Label className="text-xs text-gray-400">From</Label>
+            <Label className="text-xs text-zinc-400">From</Label>
             <Input
               type="date"
               value={from}
               onChange={(e) => setFrom(e.target.value)}
-              className="border-gray-700 bg-[#0F172A] text-white"
+              className="border-gray-700 bg-[#0F172A] text-zinc-50"
             />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs text-gray-400">To</Label>
+            <Label className="text-xs text-zinc-400">To</Label>
             <Input
               type="date"
               value={to}
               onChange={(e) => setTo(e.target.value)}
-              className="border-gray-700 bg-[#0F172A] text-white"
+              className="border-gray-700 bg-[#0F172A] text-zinc-50"
             />
           </div>
         </div>
@@ -175,27 +175,27 @@ export function UsageReportsClient({ rows, filters, fetchError }: Props) {
         </p>
       )}
 
-      <div className={`overflow-hidden rounded-lg border border-gray-800 bg-[#111827] ${busyClass}`}>
+      <div className={`overflow-hidden rounded-lg border border-emerald-900/35 bg-zinc-900/75 backdrop-blur-sm ${busyClass}`}>
         <Table>
           <TableHeader>
-            <TableRow className="border-gray-800 hover:bg-transparent">
-              <TableHead className="text-gray-400">User</TableHead>
-              <TableHead className="text-right text-gray-400">Emails sent</TableHead>
-              <TableHead className="text-right text-gray-400">Credits used</TableHead>
-              <TableHead className="text-gray-400">Last activity</TableHead>
+            <TableRow className="border-zinc-800 hover:bg-transparent">
+              <TableHead className="text-zinc-400">User</TableHead>
+              <TableHead className="text-right text-zinc-400">Emails sent</TableHead>
+              <TableHead className="text-right text-zinc-400">Credits used</TableHead>
+              <TableHead className="text-zinc-400">Last activity</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {!fetchError && rows.length === 0 && (
-              <TableRow className="border-gray-800">
+              <TableRow className="border-zinc-800">
                 <TableCell colSpan={4} className="text-center text-gray-500">
                   No usage data available for the selected range
                 </TableCell>
               </TableRow>
             )}
             {rows.map((row) => (
-              <TableRow key={row.userId} className="border-gray-800">
-                <TableCell className="font-medium text-white">
+              <TableRow key={row.userId} className="border-zinc-800">
+                <TableCell className="font-medium text-zinc-50">
                   <div className="flex flex-col">
                     <span>{row.userName || row.userEmail}</span>
                     {row.userName && (
@@ -203,10 +203,10 @@ export function UsageReportsClient({ rows, filters, fetchError }: Props) {
                     )}
                   </div>
                 </TableCell>
-                <TableCell className="text-right tabular-nums text-gray-300">
+                <TableCell className="text-right tabular-nums text-zinc-300">
                   {row.emailsSent.toLocaleString()}
                 </TableCell>
-                <TableCell className="text-right tabular-nums text-gray-400">
+                <TableCell className="text-right tabular-nums text-zinc-400">
                   {row.creditsUsed.toLocaleString()}
                 </TableCell>
                 <TableCell className="text-gray-500">

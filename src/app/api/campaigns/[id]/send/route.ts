@@ -7,9 +7,7 @@ import {
   requireActivePlanForMailOrJson,
   hasNonExpiredActivePlan,
 } from "@/lib/active-plan-guard";
-
-/** Max recipients delivered synchronously in the request when Redis is not available. */
-const MAX_SYNC_RECIPIENTS = 200;
+import { maxSyncCampaignRecipients } from "@/lib/campaign-sync-limits";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -81,7 +79,8 @@ export async function POST(_req: Request, { params }: Params) {
     );
   }
 
-  const sendMode = await resolveCampaignSendMode(need, MAX_SYNC_RECIPIENTS);
+  const maxSyncRecipients = maxSyncCampaignRecipients();
+  const sendMode = await resolveCampaignSendMode(need, maxSyncRecipients);
 
   if (sendMode.mode === "blocked") {
     return NextResponse.json({ error: sendMode.message }, { status: 503 });
@@ -139,11 +138,11 @@ export async function POST(_req: Request, { params }: Params) {
     return NextResponse.json({ ok: true, mode: "queued" as const });
   }
 
-  if (need > MAX_SYNC_RECIPIENTS) {
+  if (need > maxSyncRecipients) {
     return NextResponse.json(
       {
         error:
-          `This campaign has ${need} recipients. For more than ${MAX_SYNC_RECIPIENTS}, ` +
+          `This campaign has ${need} recipients. For more than ${maxSyncRecipients}, ` +
           "set REDIS_URL, start Redis, and run the email worker (`npm run worker` or PM2 mymail-worker).",
       },
       { status: 503 },

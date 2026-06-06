@@ -21,6 +21,8 @@
     "db:migrate:wallet": "tsx scripts/apply-migrations.ts --only=20260428120000_wallet_and_plans.sql"
   },
   "dependencies": {
+    "@aws-sdk/client-ec2": "^3.1062.0",
+    "@aws-sdk/client-lightsail": "^3.1062.0",
     "@base-ui/react": "^1.4.0",
     "@supabase/ssr": "^0.10.2",
     "@supabase/supabase-js": "^2.103.3",

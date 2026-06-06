@@ -179,10 +179,10 @@ export function TopUpCreditsClient({
         title="Top-up Credits"
         description="Add credits to a client wallet. Clients spend credits to activate server plans."
       />
-      <div className="max-w-lg space-y-6 rounded-lg border border-gray-800 bg-[#111827] p-6">
+      <div className="max-w-lg space-y-6 rounded-lg border border-emerald-900/35 bg-zinc-900/75 backdrop-blur-sm p-6">
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-2">
-            <Label className="text-gray-300">User</Label>
+            <Label className="text-zinc-300">User</Label>
             {refreshing && (
               <span className="flex items-center gap-1.5 text-xs text-gray-500">
                 <Loader2 className="size-3.5 animate-spin" aria-hidden />
@@ -216,7 +216,7 @@ export function TopUpCreditsClient({
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search by name or email…"
-                className="border-gray-700 bg-[#0F172A] pl-9 text-white placeholder:text-gray-500"
+                className="border-gray-700 bg-[#0F172A] pl-9 text-zinc-50 placeholder:text-gray-500"
                 aria-label="Filter users"
               />
             </div>
@@ -233,7 +233,7 @@ export function TopUpCreditsClient({
             </div>
           ) : noSearchMatches ? (
             <div
-              className="rounded-md border border-gray-700 bg-[#0F172A]/80 px-3 py-2 text-sm text-gray-400"
+              className="rounded-md border border-gray-700 bg-[#0F172A]/80 px-3 py-2 text-sm text-zinc-400"
               role="status"
             >
               No users match &ldquo;{search.trim()}&rdquo;. Clear the search to see all users.
@@ -246,7 +246,7 @@ export function TopUpCreditsClient({
             >
               <SelectTrigger
                 className={cn(
-                  "h-auto min-h-9 w-full justify-between border-gray-700 bg-[#0F172A] py-2 text-left text-white",
+                  "h-auto min-h-9 w-full justify-between border-gray-700 bg-[#0F172A] py-2 text-left text-zinc-50",
                   "[&_[data-slot=select-value]]:line-clamp-2 [&_[data-slot=select-value]]:whitespace-normal",
                   selectDisabled && "opacity-70",
                 )}
@@ -261,7 +261,7 @@ export function TopUpCreditsClient({
                 </SelectValue>
               </SelectTrigger>
               <SelectContent
-                className="!w-max max-w-[min(36rem,calc(100vw-1.5rem))] !min-w-[min(26rem,calc(100vw-1.5rem))] border-gray-700 bg-[#111827]"
+                className="!w-max max-w-[min(36rem,calc(100vw-1.5rem))] !min-w-[min(26rem,calc(100vw-1.5rem))] border-zinc-700 bg-zinc-950/80"
                 alignItemWithTrigger={false}
                 align="start"
               >
@@ -271,7 +271,7 @@ export function TopUpCreditsClient({
                     value={u.id}
                     className="h-auto min-h-11 items-start py-2 [&>span:first-of-type]:min-w-0 [&>span:first-of-type]:w-full [&>span:first-of-type]:shrink [&>span:first-of-type]:whitespace-normal"
                   >
-                    <span className="block text-sm leading-snug text-white">
+                    <span className="block text-sm leading-snug text-zinc-50">
                       {displayLabel(u)}
                     </span>
                   </SelectItem>
@@ -282,16 +282,16 @@ export function TopUpCreditsClient({
         </div>
 
         {userId && (
-          <div className="flex items-center gap-3 rounded-md border border-gray-800 bg-[#0F172A]/60 px-3 py-2.5 text-sm">
+          <div className="flex items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/60 px-3 py-2.5 text-sm">
             <Wallet className="size-4 shrink-0 text-indigo-300" aria-hidden />
-            <span className="text-gray-400">Current balance:</span>
+            <span className="text-zinc-400">Current balance:</span>
             {balanceLoading ? (
               <span className="flex items-center gap-1.5 text-gray-500">
                 <Loader2 className="size-3.5 animate-spin" aria-hidden />
                 Loading…
               </span>
             ) : (
-              <span className="font-semibold tabular-nums text-white">
+              <span className="font-semibold tabular-nums text-zinc-50">
                 {balance === null ? "—" : `${formatCredits(balance)} credits`}
               </span>
             )}
@@ -299,7 +299,7 @@ export function TopUpCreditsClient({
         )}
 
         <div className="space-y-2">
-          <Label htmlFor="topup-amount" className="text-gray-300">
+          <Label htmlFor="topup-amount" className="text-zinc-300">
             Credit amount
           </Label>
           <Input
@@ -308,7 +308,7 @@ export function TopUpCreditsClient({
             min={1}
             step={1}
             inputMode="numeric"
-            className="border-gray-700 bg-[#0F172A] text-white"
+            className="border-gray-700 bg-[#0F172A] text-zinc-50"
             placeholder="e.g. 1000"
             value={amount}
             onChange={(e) => {

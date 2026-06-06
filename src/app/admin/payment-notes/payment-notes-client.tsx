@@ -73,49 +73,49 @@ export function PaymentNotesClient({ rows, fetchError }: PaymentNotesClientProps
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Filter by user name or email…"
-            className="border-gray-700 bg-[#111827] pl-9 text-white placeholder:text-gray-500"
+            className="border-zinc-700 bg-zinc-950/80 pl-9 text-zinc-50 placeholder:text-gray-500"
             aria-label="Filter payment notes by user"
           />
         </div>
       )}
 
-      <div className="overflow-hidden rounded-lg border border-gray-800 bg-[#111827]">
+      <div className="overflow-hidden rounded-lg border border-emerald-900/35 bg-zinc-900/75 backdrop-blur-sm">
         <Table>
           <TableHeader>
-            <TableRow className="border-gray-800 hover:bg-transparent">
-              <TableHead className="text-gray-400">User</TableHead>
-              <TableHead className="text-gray-400">Amount</TableHead>
-              <TableHead className="text-gray-400">Mode</TableHead>
-              <TableHead className="text-gray-400">Date</TableHead>
+            <TableRow className="border-zinc-800 hover:bg-transparent">
+              <TableHead className="text-zinc-400">User</TableHead>
+              <TableHead className="text-zinc-400">Amount</TableHead>
+              <TableHead className="text-zinc-400">Mode</TableHead>
+              <TableHead className="text-zinc-400">Date</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {fetchError && (
-              <TableRow className="border-gray-800">
+              <TableRow className="border-zinc-800">
                 <TableCell colSpan={4} className="text-center text-gray-500">
                   Unable to display payment notes. See the message above.
                 </TableCell>
               </TableRow>
             )}
             {!fetchError && rows.length === 0 && (
-              <TableRow className="border-gray-800">
+              <TableRow className="border-zinc-800">
                 <TableCell colSpan={4} className="text-center text-gray-500">
                   No payment notes available
                 </TableCell>
               </TableRow>
             )}
             {filtered.length === 0 && rows.length > 0 && search.trim() !== "" && (
-              <TableRow className="border-gray-800">
+              <TableRow className="border-zinc-800">
                 <TableCell colSpan={4} className="text-center text-gray-500">
                   No rows match your search.
                 </TableCell>
               </TableRow>
             )}
             {filtered.map((row) => (
-              <TableRow key={row.id} className="border-gray-800">
-                <TableCell className="font-medium text-white">{row.userLabel}</TableCell>
-                <TableCell className="text-gray-300">{row.amountDisplay}</TableCell>
-                <TableCell className="text-gray-400">{row.modeDisplay}</TableCell>
+              <TableRow key={row.id} className="border-zinc-800">
+                <TableCell className="font-medium text-zinc-50">{row.userLabel}</TableCell>
+                <TableCell className="text-zinc-300">{row.amountDisplay}</TableCell>
+                <TableCell className="text-zinc-400">{row.modeDisplay}</TableCell>
                 <TableCell className="text-gray-500">{row.dateDisplay}</TableCell>
               </TableRow>
             ))}
@@ -124,22 +124,22 @@ export function PaymentNotesClient({ rows, fetchError }: PaymentNotesClientProps
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="border-gray-800 bg-[#111827] text-gray-100 sm:max-w-md">
+        <DialogContent className="border-emerald-900/35 bg-zinc-900/75 backdrop-blur-sm text-zinc-100 sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="text-white">Add payment note</DialogTitle>
+            <DialogTitle className="text-zinc-50">Add payment note</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-2">
-              <Label className="text-gray-300">Amount</Label>
-              <Input className="border-gray-700 bg-[#0F172A] text-white" placeholder="₹0" />
+              <Label className="text-zinc-300">Amount</Label>
+              <Input className="border-gray-700 bg-[#0F172A] text-zinc-50" placeholder="₹0" />
             </div>
             <div className="space-y-2">
-              <Label className="text-gray-300">Mode</Label>
-              <Input className="border-gray-700 bg-[#0F172A] text-white" placeholder="UPI / Cash" />
+              <Label className="text-zinc-300">Mode</Label>
+              <Input className="border-gray-700 bg-[#0F172A] text-zinc-50" placeholder="UPI / Cash" />
             </div>
             <div className="space-y-2">
-              <Label className="text-gray-300">Date</Label>
-              <Input type="date" className="border-gray-700 bg-[#0F172A] text-white" />
+              <Label className="text-zinc-300">Date</Label>
+              <Input type="date" className="border-gray-700 bg-[#0F172A] text-zinc-50" />
             </div>
           </div>
           <DialogFooter>

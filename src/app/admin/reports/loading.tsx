@@ -16,25 +16,25 @@ export default function UsageReportsLoading() {
         title="Usage Reports"
         description="Aggregated emails sent and credits consumed per client."
       />
-      <div className="rounded-lg border border-gray-800 bg-[#111827] p-4">
+      <div className="rounded-lg border border-emerald-900/35 bg-zinc-900/75 backdrop-blur-sm p-4">
         <div className="grid gap-3 sm:grid-cols-4">
           <Skeleton className="h-16 bg-gray-700" />
           <Skeleton className="h-16 bg-gray-700" />
         </div>
       </div>
-      <div className="overflow-hidden rounded-lg border border-gray-800 bg-[#111827]">
+      <div className="overflow-hidden rounded-lg border border-emerald-900/35 bg-zinc-900/75 backdrop-blur-sm">
         <Table>
           <TableHeader>
-            <TableRow className="border-gray-800 hover:bg-transparent">
-              <TableHead className="text-gray-400">User</TableHead>
-              <TableHead className="text-right text-gray-400">Emails sent</TableHead>
-              <TableHead className="text-right text-gray-400">Credits used</TableHead>
-              <TableHead className="text-gray-400">Last activity</TableHead>
+            <TableRow className="border-zinc-800 hover:bg-transparent">
+              <TableHead className="text-zinc-400">User</TableHead>
+              <TableHead className="text-right text-zinc-400">Emails sent</TableHead>
+              <TableHead className="text-right text-zinc-400">Credits used</TableHead>
+              <TableHead className="text-zinc-400">Last activity</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {[1, 2, 3, 4].map((i) => (
-              <TableRow key={i} className="border-gray-800">
+              <TableRow key={i} className="border-zinc-800">
                 <TableCell>
                   <Skeleton className="h-5 w-48 bg-gray-700" />
                 </TableCell>
