@@ -23,7 +23,10 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { listSmtpServers } from "@/app/actions/smtp";
-import { getLastBulkImportedSmtpIds } from "@/lib/bulk-smtp-session";
+import {
+  clearLastBulkImportedSmtpIds,
+  getLastBulkImportedSmtpIds,
+} from "@/lib/bulk-smtp-session";
 import {
   previewCampaignEmail,
   queueCampaignSend,
@@ -350,6 +353,9 @@ export function EmailEditor({
       const bulkScope = getLastBulkImportedSmtpIds();
       const scopedBulkIds =
         bulkScope?.filter((id) => savedIdSet.has(id)) ?? [];
+      if (bulkScope && bulkScope.length > 0 && scopedBulkIds.length === 0) {
+        clearLastBulkImportedSmtpIds();
+      }
       const smtpServerIds =
         scopedBulkIds.length > 0 ? scopedBulkIds : smtpRows.map((r) => r.id);
       if (smtpServerIds.length === 0) {

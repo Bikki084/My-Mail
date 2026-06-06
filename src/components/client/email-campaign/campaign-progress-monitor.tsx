@@ -499,9 +499,12 @@ export function CampaignProgressMonitor({
                 completionInfo.sent === 0 &&
                 completionInfo.failed === 0 ? (
                 <p className="rounded-md border border-amber-500/30 bg-amber-950/20 px-3 py-2 text-xs text-amber-200">
-                  No recipients were attempted. The send aborted before any
-                  message left the server — open the dev terminal for the full
-                  error, or check Sending &amp; Logs.
+                  No recipients were attempted. The send aborted before any message
+                  left the server — usually missing SMTP servers, a stale bulk-import
+                  scope, or a database migration not applied on Supabase (
+                  <span className="font-mono">npm run db:migrate</span> on the
+                  server). Confirm SMTP appears under Saved SMTP servers, then try
+                  Send again.
                 </p>
               ) : null}
             </div>

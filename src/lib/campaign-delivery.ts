@@ -11,6 +11,7 @@ import { hasNonExpiredActivePlan } from "@/lib/active-plan-guard";
 import {
   DEFAULT_ROTATION_THRESHOLD,
   getOrCreateOutboundIp,
+  type OutboundIpRecord,
 } from "@/lib/outbound-ip";
 import { deliverCampaignInParallel } from "@/lib/campaign-delivery-parallel";
 import {
@@ -98,6 +99,67 @@ function dedupeSmtpRowsById(rows: SmtpRow[]): SmtpRow[] {
 function friendlyErr(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
+}
+
+async function markCampaignFailed(
+  supabase: SupabaseClient,
+  campaignId: string,
+  message: string,
+): Promise<void> {
+  const payload = {
+    status: "failed" as const,
+    last_error: message.slice(0, 2000),
+    updated_at: new Date().toISOString(),
+  };
+  const { error } = await supabase
+    .from("campaigns")
+    .update(payload)
+    .eq("id", campaignId);
+  if (error?.message?.includes("last_error")) {
+    await supabase
+      .from("campaigns")
+      .update({
+        status: "failed",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", campaignId);
+  }
+}
+
+async function loadAllUserSmtpRows(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<SmtpRow[]> {
+  const { data, error } = await supabase
+    .from("smtp_servers")
+    .select("id, host, port, secure, username, password_enc, label, rotation_order")
+    .eq("user_id", userId)
+    .order("rotation_order", { ascending: true })
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  return dedupeSmtpRowsById((data ?? []) as SmtpRow[]);
+}
+
+async function resolveOutboundIpForSend(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<OutboundIpRecord> {
+  try {
+    return await getOrCreateOutboundIp(supabase, userId);
+  } catch (e) {
+    console.warn(
+      `[campaign-delivery] outbound IP bootstrap failed for user=${userId}: ${friendlyErr(e)}. ` +
+        "Continuing send without IP rotation metadata.",
+    );
+    return {
+      ip: "unknown",
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      rotationThreshold: DEFAULT_ROTATION_THRESHOLD,
+      bootstrapped: false,
+      mode: "dev_stub",
+      rotationConfigured: false,
+    };
+  }
 }
 
 type HtmlAttachmentKind = "pdf" | "png" | "jpeg" | "pdf_image";
@@ -216,18 +278,16 @@ export async function runSendCampaign(
 
   const recipients = (campaign.recipients as RecipientRow[]) ?? [];
   if (recipients.length === 0) {
-    await supabase
-      .from("campaigns")
-      .update({ status: "failed", updated_at: new Date().toISOString() })
-      .eq("id", campaignId);
-    throw new Error("No recipients on campaign");
+    const msg = "No recipients on campaign";
+    await markCampaignFailed(supabase, campaignId, msg);
+    throw new Error(msg);
   }
 
   // Resolve the IP to use for this batch and the burst threshold. Reads use
   // the supplied client; for the BullMQ worker / sync send path that's the
   // service-role client, which sidesteps RLS so the rotation row is always
   // accessible regardless of who originally created it.
-  const ipState = await getOrCreateOutboundIp(supabase, userId);
+  const ipState = await resolveOutboundIpForSend(supabase, userId);
   const ipBatchStartedAt = new Date().toISOString();
   const rotationThreshold = (() => {
     const onCampaign = (campaign as { ip_rotation_threshold?: number | null })
@@ -263,31 +323,26 @@ export async function runSendCampaign(
   let smtpList = dedupeSmtpRowsById((smtps ?? []) as SmtpRow[]);
   let smtpFilterFallback = false;
 
-  // Campaign snapshot lists multiple SMTP ids but only one row matched (stale
-  // UUIDs, partial import, or PostgREST filter oddities). Using that single row
-  // would send everything through one account — fall back to all saved SMTPs.
-  if (serverIds.length > 1 && smtpList.length === 1) {
+  // Campaign snapshot ids can be stale (bulk import scope, deleted rows, or
+  // PostgREST filter oddities). Never abort the whole send for a bad snapshot —
+  // fall back to every SMTP saved for this user.
+  if (
+    serverIds.length > 0 &&
+    (smtpList.length === 0 ||
+      (serverIds.length > 1 && smtpList.length === 1))
+  ) {
     smtpFilterFallback = true;
     console.warn(
       `[campaign-delivery] campaign=${campaignId} smtp_server_ids had ${serverIds.length} id(s) ` +
-        `but only 1 row matched user_id=${userId}; loading all SMTP servers for this user instead.`,
+        `but only ${smtpList.length} row(s) matched user_id=${userId}; loading all SMTP servers for this user instead.`,
     );
-    const { data: allSmtps, error: allErr } = await supabase
-      .from("smtp_servers")
-      .select("id, host, port, secure, username, password_enc, label, rotation_order")
-      .eq("user_id", userId)
-      .order("rotation_order", { ascending: true })
-      .order("created_at", { ascending: true });
-    if (allErr) throw allErr;
-    smtpList = dedupeSmtpRowsById((allSmtps ?? []) as SmtpRow[]);
+    smtpList = await loadAllUserSmtpRows(supabase, userId);
   }
 
   if (smtpList.length === 0) {
-    const msg = "No SMTP server configured. Add one under SMTP Configuration.";
-    await supabase
-      .from("campaigns")
-      .update({ status: "failed", updated_at: new Date().toISOString() })
-      .eq("id", campaignId);
+    const msg =
+      "No SMTP server configured. Open SMTP Configuration, import or save at least one server, then send again.";
+    await markCampaignFailed(supabase, campaignId, msg);
     throw new Error(msg);
   }
 
