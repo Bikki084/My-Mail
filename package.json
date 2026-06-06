@@ -10,7 +10,7 @@
     "build": "next build",
     "build:prod": "node scripts/build-with-env.mjs",
     "verify:env": "node scripts/verify-build-env.mjs",
-    "start": "next start --hostname 0.0.0.0 --port 3000",
+    "start": "node scripts/start-prod.cjs",
     "lint": "eslint",
     "worker": "tsx scripts/email-worker.ts",
     "create-admin": "tsx scripts/create-admin-user.ts",

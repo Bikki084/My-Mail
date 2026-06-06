@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { runSendCampaign } from "@/lib/campaign-delivery";
+import { markCampaignFailed, runSendCampaign } from "@/lib/campaign-delivery";
 import { createServiceClient } from "@/lib/supabase/admin";
 import { resolveCampaignSendMode } from "@/lib/queue/send-mode";
 import {
@@ -183,14 +183,7 @@ export async function POST(_req: Request, { params }: Params) {
       // ("/api/campaigns/active" → CampaignProgressMonitor) can show the
       // user *why* their send died, instead of letting them believe the
       // green-tick toast meant success.
-      await service
-        .from("campaigns")
-        .update({
-          status: "failed",
-          last_error: message.slice(0, 2000),
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", campaignId);
+      await markCampaignFailed(service, campaignId, message);
     } catch {
       /* ignore */
     }

@@ -101,7 +101,7 @@ function friendlyErr(err: unknown): string {
   return String(err);
 }
 
-async function markCampaignFailed(
+export async function markCampaignFailed(
   supabase: SupabaseClient,
   campaignId: string,
   message: string,
@@ -238,36 +238,54 @@ type IpHistoryEntry = {
  *   - Already-sent recipients have rows in `sending_logs`, so any re-entry
  *     skips them (idempotency).
  */
+const CAMPAIGN_SELECT_TIERS = [
+  "id, user_id, status, subject, body_html, body_text, sender_name, stream_name, recipients, smtp_server_ids, total_emails, attachment_paths, html_attachment, encoding, ip_rotation_threshold, outbound_ip_history, rotation_strategy",
+  "id, user_id, status, subject, body_html, body_text, sender_name, stream_name, recipients, smtp_server_ids, total_emails, attachment_paths, encoding",
+  "id, user_id, status, subject, body_html, sender_name, stream_name, recipients, smtp_server_ids, total_emails",
+] as const;
+
+async function loadCampaignForDelivery(
+  supabase: SupabaseClient,
+  campaignId: string,
+): Promise<Record<string, unknown>> {
+  let lastErr = "unknown error";
+  for (let i = 0; i < CAMPAIGN_SELECT_TIERS.length; i++) {
+    const select = CAMPAIGN_SELECT_TIERS[i]!;
+    const { data, error } = await supabase
+      .from("campaigns")
+      .select(select)
+      .eq("id", campaignId)
+      .single();
+    if (!error && data) {
+      if (i > 0) {
+        console.warn(
+          `[campaign-delivery] campaign=${campaignId} loaded with reduced schema — ` +
+            "run `npm run db:migrate` or paste supabase/essential-for-send.sql in Supabase SQL Editor.",
+        );
+      }
+      return data as unknown as Record<string, unknown>;
+    }
+    lastErr = error?.message ?? "no row returned";
+  }
+  throw new Error(
+    `Failed to load campaign ${campaignId}: ${lastErr}. ` +
+      "Apply database migrations (npm run db:migrate with SUPABASE_ACCESS_TOKEN, or run supabase/essential-for-send.sql in Supabase SQL Editor).",
+  );
+}
+
 export async function runSendCampaign(
   supabase: SupabaseClient,
   campaignId: string,
   userId: string,
 ): Promise<void> {
-  const { data: campaign, error: cErr } = await supabase
-    .from("campaigns")
-    .select(
-      "id, user_id, status, subject, body_html, body_text, sender_name, stream_name, recipients, smtp_server_ids, total_emails, attachment_paths, html_attachment, encoding, ip_rotation_threshold, outbound_ip_history, rotation_strategy",
-    )
-    .eq("id", campaignId)
-    .single();
+  console.log(`[campaign-delivery] start campaign=${campaignId} user=${userId}`);
 
-  if (cErr) {
-    // Bubble the real Postgres error (e.g. "column campaigns.last_error does
-    // not exist" after a missed migration) rather than the generic
-    // "Campaign not found" we used to throw — that string actively hid the
-    // real cause and forced manual investigation on every silent failure.
-    throw new Error(
-      `Failed to load campaign ${campaignId}: ${cErr.message || friendlyErr(cErr)}`,
-    );
-  }
-  if (!campaign) {
-    throw new Error(`Campaign ${campaignId} not found (no row returned)`);
-  }
-  if (campaign.user_id !== userId) {
+  const campaign = await loadCampaignForDelivery(supabase, campaignId);
+  if (String(campaign.user_id) !== userId) {
     throw new Error("Campaign user mismatch");
   }
 
-  if ((campaign as { status?: string }).status === "cancelled") {
+  if (String(campaign.status ?? "") === "cancelled") {
     console.log(
       `[campaign-delivery] campaign=${campaignId} already cancelled — skipping delivery.`,
     );

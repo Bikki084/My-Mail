@@ -6,11 +6,14 @@
 import "./worker-preload.cjs";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { createRequire } from "node:module";
 import { Worker } from "bullmq";
 import IORedis from "ioredis";
 import { createServiceClient } from "../src/lib/supabase/admin";
-import { runSendCampaign } from "../src/lib/campaign-delivery";
+import { markCampaignFailed, runSendCampaign } from "../src/lib/campaign-delivery";
 import type { EmailJobPayload } from "../src/lib/queue/email-queue";
+
+const require = createRequire(import.meta.url);
 
 function loadEnvFromProjectFiles() {
   for (const name of [".env.local", ".env"]) {
@@ -31,80 +34,107 @@ function loadEnvFromProjectFiles() {
   }
 }
 
-loadEnvFromProjectFiles();
-
 function friendlyErr(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
 }
 
-const redisUrl = process.env.REDIS_URL;
-if (!redisUrl) {
-  console.error("REDIS_URL is required");
-  process.exit(1);
-}
-
-if (!process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()) {
-  console.error(
-    "[email-worker] SUPABASE_SERVICE_ROLE_KEY is missing. Add it to .env.local in the project root (Settings → API → service_role in Supabase). The worker needs it to read campaigns and SMTP.",
-  );
-  process.exit(1);
-}
-if (!process.env.SMTP_ENCRYPTION_KEY?.trim()) {
-  console.error(
-    "[email-worker] SMTP_ENCRYPTION_KEY is missing. It must match the key used when saving SMTP passwords. Add to .env.local.",
-  );
-  process.exit(1);
-}
-if (!process.env.NEXT_PUBLIC_SUPABASE_URL?.trim()) {
-  console.error("[email-worker] NEXT_PUBLIC_SUPABASE_URL is missing. Add to .env.local.");
-  process.exit(1);
-}
-
-const connection = new IORedis(redisUrl, {
-  maxRetriesPerRequest: null,
-  connectTimeout: 15_000,
-});
-
-const worker = new Worker<EmailJobPayload>(
-  "email-campaign",
-  async (job) => {
-    if (job.name !== "send-campaign") {
-      console.warn(
-        `[email-worker] skip unknown job name ${JSON.stringify(job.name)}`,
+async function autoMigrateOnStartup(): Promise<void> {
+  try {
+    const { applyPendingMigrations } = require("./lib/migrate-runner.cjs") as {
+      applyPendingMigrations: (opts?: { cwd?: string }) => Promise<{
+        ok: boolean;
+        mode?: string;
+        reason?: string;
+        applied?: string[];
+      }>;
+    };
+    const result = await applyPendingMigrations({ cwd: process.cwd() });
+    if (result.mode === "skipped") {
+      console.warn(`[email-worker] ${result.reason}`);
+    } else if (!result.ok) {
+      console.warn(`[email-worker] Auto-migrate: ${result.reason}`);
+    } else if (result.applied?.length) {
+      console.log(
+        `[email-worker] Auto-applied migrations: ${result.applied.join(", ")}`,
       );
-      return;
     }
-    const { campaignId, userId } = job.data;
-    console.log(
-      `[email-worker] job ${job.id} send-campaign campaign=${campaignId} user=${userId}`,
+  } catch (e) {
+    console.warn(`[email-worker] Auto-migrate threw: ${friendlyErr(e)}`);
+  }
+}
+
+async function main(): Promise<void> {
+  loadEnvFromProjectFiles();
+
+  const redisUrl = process.env.REDIS_URL;
+  if (!redisUrl) {
+    console.error("REDIS_URL is required");
+    process.exit(1);
+  }
+
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()) {
+    console.error(
+      "[email-worker] SUPABASE_SERVICE_ROLE_KEY is missing. Add it to .env.local in the project root (Settings → API → service_role in Supabase). The worker needs it to read campaigns and SMTP.",
     );
-    const supabase = createServiceClient();
-    try {
-      await runSendCampaign(supabase, campaignId, userId);
-    } catch (e) {
-      const msg = friendlyErr(e);
-      console.error(`[email-worker] ${msg}`);
-      await supabase
-        .from("campaigns")
-        .update({
-          status: "failed",
-          last_error: msg.slice(0, 2000),
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", campaignId);
-      throw e;
-    }
-  },
-  { connection },
-);
+    process.exit(1);
+  }
+  if (!process.env.SMTP_ENCRYPTION_KEY?.trim()) {
+    console.error(
+      "[email-worker] SMTP_ENCRYPTION_KEY is missing. It must match the key used when saving SMTP passwords. Add to .env.local.",
+    );
+    process.exit(1);
+  }
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL?.trim()) {
+    console.error("[email-worker] NEXT_PUBLIC_SUPABASE_URL is missing. Add to .env.local.");
+    process.exit(1);
+  }
 
-worker.on("failed", (job, err) => {
-  console.error(`[email-worker] job ${job?.id} failed`, err);
-});
+  await autoMigrateOnStartup();
 
-process.on("SIGINT", async () => {
-  await worker.close();
-  await connection.quit();
-  process.exit(0);
+  const connection = new IORedis(redisUrl, {
+    maxRetriesPerRequest: null,
+    connectTimeout: 15_000,
+  });
+
+  const worker = new Worker<EmailJobPayload>(
+    "email-campaign",
+    async (job) => {
+      if (job.name !== "send-campaign") {
+        console.warn(
+          `[email-worker] skip unknown job name ${JSON.stringify(job.name)}`,
+        );
+        return;
+      }
+      const { campaignId, userId } = job.data;
+      console.log(
+        `[email-worker] job ${job.id} send-campaign campaign=${campaignId} user=${userId}`,
+      );
+      const supabase = createServiceClient();
+      try {
+        await runSendCampaign(supabase, campaignId, userId);
+      } catch (e) {
+        const msg = friendlyErr(e);
+        console.error(`[email-worker] ${msg}`);
+        await markCampaignFailed(supabase, campaignId, msg);
+        throw e;
+      }
+    },
+    { connection },
+  );
+
+  worker.on("failed", (job, err) => {
+    console.error(`[email-worker] job ${job?.id} failed`, err);
+  });
+
+  process.on("SIGINT", async () => {
+    await worker.close();
+    await connection.quit();
+    process.exit(0);
+  });
+}
+
+main().catch((e) => {
+  console.error("[email-worker] fatal:", friendlyErr(e));
+  process.exit(1);
 });
