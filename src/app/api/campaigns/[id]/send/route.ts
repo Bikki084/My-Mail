@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { markCampaignFailed, runSendCampaign } from "@/lib/campaign-delivery";
+import { runSendPreflight } from "@/lib/campaign-send-preflight";
 import { createServiceClient } from "@/lib/supabase/admin";
 import { resolveCampaignSendMode } from "@/lib/queue/send-mode";
 import {
@@ -79,6 +80,19 @@ export async function POST(_req: Request, { params }: Params) {
     );
   }
 
+  let service: ReturnType<typeof createServiceClient>;
+  try {
+    service = createServiceClient();
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Server configuration error";
+    return NextResponse.json({ error: msg }, { status: 503 });
+  }
+
+  const preflight = await runSendPreflight(service, user.id);
+  if (!preflight.ok) {
+    return NextResponse.json({ error: preflight.error }, { status: preflight.status });
+  }
+
   const maxSyncRecipients = maxSyncCampaignRecipients();
   const sendMode = await resolveCampaignSendMode(need, maxSyncRecipients);
 
@@ -151,16 +165,9 @@ export async function POST(_req: Request, { params }: Params) {
 
   /**
    * Mark the campaign as `sending` synchronously so the Sending & Logs tab
-   * sees state change immediately, then run the actual delivery in the
-   * background and respond. The user gets a fast toast (< 1 s) instead of
-   * waiting for SMTP + per-recipient HTML→PDF rendering to finish.
-   *
-   * Note: Next.js (Node runtime) keeps the process alive after the response,
-   * so the unawaited promise completes normally. The campaign row's status
-   * (`sending` → `completed`/`failed`) and `sending_logs` rows are the
-   * source of truth for progress, polled by the UI.
+   * sees state change immediately, then run delivery via `after()` so Next.js
+   * keeps the task alive after the HTTP response (plain `void` can be dropped).
    */
-  const service = createServiceClient();
   const { error: markErr } = await service
     .from("campaigns")
     .update({ status: "sending", updated_at: new Date().toISOString() })
@@ -172,21 +179,19 @@ export async function POST(_req: Request, { params }: Params) {
     );
   }
 
-  void runSendCampaign(service, campaignId, user.id).catch(async (e) => {
-    const message = e instanceof Error ? e.message : "Delivery failed";
-    console.error(
-      `[api/campaigns/send] background delivery failed for ${campaignId}:`,
-      message,
-    );
-    try {
-      // Persist the failure reason on the campaign row so the polling UI
-      // ("/api/campaigns/active" → CampaignProgressMonitor) can show the
-      // user *why* their send died, instead of letting them believe the
-      // green-tick toast meant success.
-      await markCampaignFailed(service, campaignId, message);
-    } catch {
-      /* ignore */
-    }
+  after(() => {
+    runSendCampaign(service, campaignId, user.id).catch(async (e) => {
+      const message = e instanceof Error ? e.message : "Delivery failed";
+      console.error(
+        `[api/campaigns/send] background delivery failed for ${campaignId}:`,
+        message,
+      );
+      try {
+        await markCampaignFailed(service, campaignId, message);
+      } catch {
+        /* ignore */
+      }
+    });
   });
 
   return NextResponse.json({ ok: true, mode: "started" as const });

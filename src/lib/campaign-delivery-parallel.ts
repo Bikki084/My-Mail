@@ -77,6 +77,16 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function insertSendingLog(
+  supabase: SupabaseClient,
+  row: Record<string, unknown>,
+): Promise<void> {
+  const { error } = await supabase.from("sending_logs").insert(row);
+  if (error) {
+    console.warn(`[campaign-delivery] sending_logs insert failed: ${error.message}`);
+  }
+}
+
 async function loadAlreadySentEmails(
   supabase: SupabaseClient,
   campaignId: string,
@@ -317,7 +327,7 @@ export async function deliverCampaignInParallel(
         if (shared.alreadySent.has(emailKey)) continue;
         shared.alreadySent.add(emailKey);
         await recordFailedSend();
-        void supabase.from("sending_logs").insert({
+        await insertSendingLog(supabase, {
           campaign_id: campaignId,
           user_id: userId,
           recipient_email: recipient.email,
@@ -347,7 +357,7 @@ export async function deliverCampaignInParallel(
       if (suppressed.has(emailKey)) {
         shared.alreadySent.add(emailKey);
         await recordFailedSend();
-        void supabase.from("sending_logs").insert({
+        await insertSendingLog(supabase, {
           campaign_id: campaignId,
           user_id: userId,
           recipient_email: recipient.email,
@@ -475,7 +485,7 @@ export async function deliverCampaignInParallel(
 
         shared.alreadySent.add(emailKey);
         const sentAt = new Date().toISOString();
-        void supabase.from("sending_logs").insert({
+        await insertSendingLog(supabase, {
           campaign_id: campaignId,
           user_id: userId,
           recipient_email: recipient.email,
@@ -493,7 +503,7 @@ export async function deliverCampaignInParallel(
       } catch (e) {
         shared.alreadySent.add(emailKey);
         await recordFailedSend();
-        void supabase.from("sending_logs").insert({
+        await insertSendingLog(supabase, {
           campaign_id: campaignId,
           user_id: userId,
           recipient_email: recipient.email,

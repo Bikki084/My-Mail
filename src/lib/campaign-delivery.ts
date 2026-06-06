@@ -101,6 +101,29 @@ function friendlyErr(err: unknown): string {
   return String(err);
 }
 
+function parseCampaignRecipients(raw: unknown): RecipientRow[] {
+  if (Array.isArray(raw)) {
+    return raw.filter(
+      (r): r is RecipientRow =>
+        r != null &&
+        typeof r === "object" &&
+        typeof (r as RecipientRow).email === "string" &&
+        (r as RecipientRow).email.trim().length > 0,
+    );
+  }
+  if (typeof raw === "string") {
+    const s = raw.trim();
+    if (!s) return [];
+    try {
+      const j = JSON.parse(s) as unknown;
+      return parseCampaignRecipients(j);
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
 export async function markCampaignFailed(
   supabase: SupabaseClient,
   campaignId: string,
@@ -294,7 +317,7 @@ export async function runSendCampaign(
 
   const shouldAbort = createCampaignAbortChecker(supabase, campaignId);
 
-  const recipients = (campaign.recipients as RecipientRow[]) ?? [];
+  const recipients = parseCampaignRecipients(campaign.recipients);
   if (recipients.length === 0) {
     const msg = "No recipients on campaign";
     await markCampaignFailed(supabase, campaignId, msg);
@@ -592,6 +615,16 @@ export async function runSendCampaign(
   }
 
   const finalStatus = totalSent > 0 ? "completed" : "failed";
+  if (finalStatus === "failed" && totalSent === 0 && totalFailed === 0) {
+    const msg =
+      `Delivery finished with no send attempts (recipients=${recipients.length}, ` +
+      `smtp_accounts=${smtpList.length}). Check pm2 logs: pm2 logs mymail-web --lines 40 ` +
+      "and pm2 logs mymail-worker --lines 40";
+    await markCampaignFailed(supabase, campaignId, msg);
+    console.error(`[campaign-delivery] campaign=${campaignId} ${msg}`);
+    return;
+  }
+
   await supabase
     .from("campaigns")
     .update({
