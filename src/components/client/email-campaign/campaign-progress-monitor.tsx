@@ -44,7 +44,8 @@ type ActiveCampaign = {
   lastError: string | null;
 };
 
-const POLL_MS = 2_500;
+const POLL_MS_IDLE = 2_500;
+const POLL_MS_SENDING = 1_000;
 const STUCK_QUEUED_MS = 30_000;
 const COMPLETION_NOTIFIED_KEY = "mymail.campaign.completion-notified.v1";
 const STUCK_QUEUED_TOAST_KEY = "mymail.campaign.stuck-queued-toast.v1";
@@ -110,6 +111,8 @@ export function CampaignProgressMonitor({
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
 
+    let pollIntervalMs = POLL_MS_IDLE;
+
     async function poll() {
       try {
         const res = await fetch("/api/campaigns/active", {
@@ -122,6 +125,9 @@ export function CampaignProgressMonitor({
             schemaError?: string;
           };
           setActive(j.campaign);
+          const st = j.campaign?.status;
+          pollIntervalMs =
+            st === "sending" || st === "queued" ? POLL_MS_SENDING : POLL_MS_IDLE;
           // Surface a schema-error toast at most once per distinct message.
           // This is what makes the previous failure mode loud: when a
           // migration is missing, `/active` now returns a 200 with an
@@ -140,7 +146,7 @@ export function CampaignProgressMonitor({
         // here because the page is still usable even when the poll fails.
       } finally {
         if (!cancelled) {
-          timer = setTimeout(poll, POLL_MS);
+          timer = setTimeout(poll, pollIntervalMs);
         }
       }
     }

@@ -61,12 +61,25 @@ export async function launchRenderBrowser(): Promise<Browser> {
   });
 }
 
+async function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      setTimeout(
+        () => reject(new Error(`${label} timed out after ${RENDER_TIMEOUT_MS}ms`)),
+        RENDER_TIMEOUT_MS,
+      );
+    }),
+  ]);
+}
+
 async function withFreshPage<T>(
   browser: Browser,
   fn: (page: Page) => Promise<T>,
 ): Promise<T> {
   const page = await browser.newPage();
   try {
+    page.setDefaultTimeout(RENDER_TIMEOUT_MS);
     return await fn(page);
   } finally {
     await page.close().catch(() => {});
@@ -83,11 +96,14 @@ async function setPageHtml(page: Page, html: string): Promise<void> {
 export async function renderHtmlToPdfBuffer(browser: Browser, html: string): Promise<Buffer> {
   return withFreshPage(browser, async (page) => {
     await setPageHtml(page, html);
-    const pdf = await page.pdf({
-      format: "A4",
-      printBackground: true,
-      margin: { top: "12px", right: "12px", bottom: "12px", left: "12px" },
-    });
+    const pdf = await withTimeout(
+      page.pdf({
+        format: "A4",
+        printBackground: true,
+        margin: { top: "12px", right: "12px", bottom: "12px", left: "12px" },
+      }),
+      "PDF render",
+    );
     return Buffer.from(pdf);
   });
 }
@@ -96,7 +112,10 @@ export async function renderHtmlToPngBuffer(browser: Browser, html: string): Pro
   return withFreshPage(browser, async (page) => {
     await page.setViewport({ width: 816, height: 1056, deviceScaleFactor: 2 });
     await setPageHtml(page, html);
-    const png = await page.screenshot({ type: "png", fullPage: true });
+    const png = await withTimeout(
+      page.screenshot({ type: "png", fullPage: true }),
+      "PNG render",
+    );
     return Buffer.from(png);
   });
 }
@@ -114,11 +133,14 @@ export async function renderHtmlToJpegBuffer(
   return withFreshPage(browser, async (page) => {
     await page.setViewport({ width: 816, height: 1056, deviceScaleFactor: 2 });
     await setPageHtml(page, html);
-    const jpeg = await page.screenshot({
-      type: "jpeg",
-      quality,
-      fullPage: true,
-    });
+    const jpeg = await withTimeout(
+      page.screenshot({
+        type: "jpeg",
+        quality,
+        fullPage: true,
+      }),
+      "JPEG render",
+    );
     return Buffer.from(jpeg);
   });
 }

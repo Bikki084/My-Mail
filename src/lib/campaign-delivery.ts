@@ -9,9 +9,8 @@ import { nodemailerAttachmentsFromCampaignField } from "@/lib/campaign-attachmen
 import { launchRenderBrowser } from "@/lib/html-attachment-render";
 import { hasNonExpiredActivePlan } from "@/lib/active-plan-guard";
 import {
-  ensureLightsailEgressIpForSend,
+  ensureLightsailPrimaryStaticIpAttached,
   isAwsLightsailPoolRotationEnabled,
-  releaseLightsailEgressToPrimary,
 } from "@/lib/aws-outbound-ip";
 import {
   DEFAULT_ROTATION_THRESHOLD,
@@ -521,11 +520,13 @@ export async function runSendCampaign(
   let sentInBurst = 0;
   let pausedForRotation = false;
 
-  let egressPrepared = false;
   try {
     if (isAwsLightsailPoolRotationEnabled()) {
-      await ensureLightsailEgressIpForSend(ipState.ip);
-      egressPrepared = true;
+      await ensureLightsailPrimaryStaticIpAttached();
+      console.log(
+        `[campaign-delivery] campaign=${campaignId} primary static IP confirmed; ` +
+          `active send label=${ipState.ip} (AWS attach is not changed during send).`,
+      );
     }
     const parallelResult = await deliverCampaignInParallel({
       supabase,
@@ -559,13 +560,6 @@ export async function runSendCampaign(
     pausedForRotation = parallelResult.pausedForRotation;
     ipHistory.splice(0, ipHistory.length, ...parallelResult.ipHistory);
   } finally {
-    if (egressPrepared) {
-      await releaseLightsailEgressToPrimary().catch((e) => {
-        console.error(
-          `[campaign-delivery] campaign=${campaignId} failed to restore primary static IP: ${friendlyErr(e)}`,
-        );
-      });
-    }
     if (renderBrowser) {
       await renderBrowser.close().catch(() => {});
     }

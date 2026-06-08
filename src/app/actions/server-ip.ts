@@ -2,6 +2,7 @@
 
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import {
+  ensureLightsailPrimaryStaticIpAttached,
   fetchLightsailWebsiteIpv4,
   isAwsLightsailPoolRotationEnabled,
   type AwsOutboundIpMode,
@@ -76,6 +77,9 @@ export async function getServerIpAction(): Promise<ActionResult<ServerIpSnapshot
   const auth = await requireUserId();
   if (!auth.ok) return auth;
   try {
+    if (isAwsLightsailPoolRotationEnabled()) {
+      await ensureLightsailPrimaryStaticIpAttached();
+    }
     const rec = await getOrCreateOutboundIp(auth.supabase, auth.userId);
     return { ok: true, data: await buildServerIpSnapshot(rec) };
   } catch (e) {

@@ -252,7 +252,6 @@ async function syncLightsailPoolOutboundIp(
     rotation_threshold: number | null;
   },
 ): Promise<string> {
-  await ensureLightsailPrimaryStaticIpAttached();
   try {
     const poolIps = await fetchLightsailPoolIpv4List();
     if (poolIps.includes(row.current_ip)) return row.current_ip;

@@ -4,11 +4,11 @@ import "server-only";
  * AWS egress IP helpers for Lightsail / EC2 deployments.
  *
  * Default Lightsail behaviour (2+ static IPs): **pool rotation** — the primary
- * static IP stays attached so the website keeps working; Refresh cycles the
- * displayed / logged send IP across your pool addresses without detach/attach.
+ * static IP stays attached always (website + SMTP egress). Refresh only updates
+ * the rotation label in the database; AWS is never detached during send or rotate.
  *
- * Set `AWS_LIGHTSAIL_SWAP_ATTACH_ON_ROTATE=1` to restore the old behaviour
- * (swap which static IP is attached — moves the whole server, site URL changes).
+ * Set `AWS_LIGHTSAIL_SWAP_ATTACH_ON_ROTATE=1` to swap the attached static IP
+ * on Refresh (moves the whole server — site URL changes).
  */
 
 const IP_V4 =
@@ -271,26 +271,48 @@ async function rotateLightsailPoolLogical(previousIp: string | null): Promise<st
  * Keep the primary static IP attached so inbound HTTP/SSH stays on one address.
  * Safe to call on panel load after a legacy full-swap rotation.
  */
+const LIGHTSAIL_ATTACH_TIMEOUT_MS = Math.min(
+  60_000,
+  Math.max(15_000, Number(process.env.AWS_LIGHTSAIL_ATTACH_TIMEOUT_MS) || 45_000),
+);
+
 async function attachLightsailStaticIpByName(
   staticIpName: string,
   instanceName: string,
 ): Promise<void> {
-  const { LightsailClient, GetStaticIpsCommand, AttachStaticIpCommand, DetachStaticIpCommand } =
-    await import("@aws-sdk/client-lightsail");
-  const client = new LightsailClient({ region: awsRegion() });
-  const listing = await client.send(new GetStaticIpsCommand({}));
-  const attached = listing.staticIps?.find((s) => s.attachedTo === instanceName);
-  const attachedName = attached?.name?.trim() ?? null;
-  if (attachedName === staticIpName) return;
+  const work = async () => {
+    const { LightsailClient, GetStaticIpsCommand, AttachStaticIpCommand, DetachStaticIpCommand } =
+      await import("@aws-sdk/client-lightsail");
+    const client = new LightsailClient({ region: awsRegion() });
+    const listing = await client.send(new GetStaticIpsCommand({}));
+    const attached = listing.staticIps?.find((s) => s.attachedTo === instanceName);
+    const attachedName = attached?.name?.trim() ?? null;
+    if (attachedName === staticIpName) return;
 
-  if (attachedName) {
-    await client.send(new DetachStaticIpCommand({ staticIpName: attachedName }));
-    await sleep(2000);
-  }
-  await client.send(
-    new AttachStaticIpCommand({ staticIpName, instanceName }),
-  );
-  await sleep(1500);
+    if (attachedName) {
+      await client.send(new DetachStaticIpCommand({ staticIpName: attachedName }));
+      await sleep(2000);
+    }
+    await client.send(
+      new AttachStaticIpCommand({ staticIpName, instanceName }),
+    );
+    await sleep(1500);
+  };
+
+  await Promise.race([
+    work(),
+    new Promise<never>((_, reject) => {
+      setTimeout(
+        () =>
+          reject(
+            new Error(
+              `Lightsail attach "${staticIpName}" timed out after ${LIGHTSAIL_ATTACH_TIMEOUT_MS}ms. Check AWS credentials and static IP names.`,
+            ),
+          ),
+        LIGHTSAIL_ATTACH_TIMEOUT_MS,
+      );
+    }),
+  ]);
 }
 
 export async function ensureLightsailPrimaryStaticIpAttached(): Promise<void> {
@@ -301,8 +323,8 @@ export async function ensureLightsailPrimaryStaticIpAttached(): Promise<void> {
 }
 
 /**
- * Attach the pool static IP that owns `targetIp` so SMTP egress uses that address.
- * Used when sending while the website primary stays configured separately.
+ * @deprecated Not used — attaching a second static IP on send moves the whole server.
+ * Pool rotation keeps the primary attached; use a relay/second instance for true multi-IP egress.
  */
 export async function ensureLightsailEgressIpForSend(targetIp: string): Promise<void> {
   if (!isAwsLightsailRotationConfigured()) return;

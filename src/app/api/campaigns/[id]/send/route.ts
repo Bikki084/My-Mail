@@ -1,6 +1,10 @@
 import { after, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { markCampaignFailed, runSendCampaign } from "@/lib/campaign-delivery";
+import {
+  ensureLightsailPrimaryStaticIpAttached,
+  isAwsLightsailPoolRotationEnabled,
+} from "@/lib/aws-outbound-ip";
 import { runSendPreflight } from "@/lib/campaign-send-preflight";
 import { createServiceClient } from "@/lib/supabase/admin";
 import { resolveCampaignSendMode } from "@/lib/queue/send-mode";
@@ -168,6 +172,15 @@ export async function POST(_req: Request, { params }: Params) {
    * sees state change immediately, then run delivery via `after()` so Next.js
    * keeps the task alive after the HTTP response (plain `void` can be dropped).
    */
+  if (isAwsLightsailPoolRotationEnabled()) {
+    try {
+      await ensureLightsailPrimaryStaticIpAttached();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Could not confirm primary static IP";
+      return NextResponse.json({ error: msg }, { status: 503 });
+    }
+  }
+
   const { error: markErr } = await service
     .from("campaigns")
     .update({ status: "sending", updated_at: new Date().toISOString() })
@@ -179,7 +192,7 @@ export async function POST(_req: Request, { params }: Params) {
     );
   }
 
-  after(() => {
+  const runInBackground = () => {
     runSendCampaign(service, campaignId, user.id).catch(async (e) => {
       const message = e instanceof Error ? e.message : "Delivery failed";
       console.error(
@@ -192,7 +205,14 @@ export async function POST(_req: Request, { params }: Params) {
         /* ignore */
       }
     });
-  });
+  };
+
+  // PM2/VPS: fire-and-forget is more reliable than `after()` for long SMTP runs.
+  if (process.env.CAMPAIGN_DELIVERY_USE_AFTER === "1") {
+    after(runInBackground);
+  } else {
+    void runInBackground();
+  }
 
   return NextResponse.json({ ok: true, mode: "started" as const });
 }

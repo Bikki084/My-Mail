@@ -24,7 +24,6 @@ import {
 import { parsePositiveIntEnv, runAsyncPool } from "@/lib/async-pool";
 import { resolveMailEncoding } from "@/lib/mail-encoding";
 import { buildSmtpUserTransport } from "@/lib/smtp/transport";
-import { ensureLightsailEgressIpForSend, isAwsLightsailPoolRotationEnabled } from "@/lib/aws-outbound-ip";
 import { rotateOutboundIp } from "@/lib/outbound-ip";
 import {
   appendUnsubscribeFooter,
@@ -221,7 +220,39 @@ export async function deliverCampaignInParallel(
     alreadySent,
     /** Bumped after IP rotation so SMTP workers open fresh connections on the new egress IP. */
     smtpReconnectGeneration: 0,
+    liveSent: 0,
+    liveFailed: 0,
+    lastProgressFlushAt: 0,
   };
+
+  const [existingSentRes, existingFailedRes] = await Promise.all([
+    supabase
+      .from("sending_logs")
+      .select("id", { count: "exact", head: true })
+      .eq("campaign_id", campaignId)
+      .eq("status", "sent"),
+    supabase
+      .from("sending_logs")
+      .select("id", { count: "exact", head: true })
+      .eq("campaign_id", campaignId)
+      .in("status", ["failed", "bounced"]),
+  ]);
+  shared.liveSent = existingSentRes.count ?? 0;
+  shared.liveFailed = existingFailedRes.count ?? 0;
+
+  async function flushCampaignProgress(force = false): Promise<void> {
+    const now = Date.now();
+    if (!force && now - shared.lastProgressFlushAt < 400) return;
+    shared.lastProgressFlushAt = now;
+    await supabase
+      .from("campaigns")
+      .update({
+        sent_count: shared.liveSent,
+        failed_count: shared.liveFailed,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", campaignId);
+  }
 
   const partitions = partitionRecipientsBySmtp(
     recipients,
@@ -272,9 +303,6 @@ export async function deliverCampaignInParallel(
         ended_at: endedAt,
       };
       const newIpRec = await rotateOutboundIp(supabase, userId);
-      if (isAwsLightsailPoolRotationEnabled()) {
-        await ensureLightsailEgressIpForSend(newIpRec.ip);
-      }
       const startedAt = new Date().toISOString();
       shared.ipHistory.unshift({
         ip: newIpRec.ip,
@@ -342,6 +370,8 @@ export async function deliverCampaignInParallel(
           status: "failed",
           error_message: errMsg,
         });
+        shared.liveFailed += 1;
+        void flushCampaignProgress();
       }
       return;
     }
@@ -390,6 +420,8 @@ export async function deliverCampaignInParallel(
           status: "failed",
           error_message: "Recipient previously unsubscribed (skipped).",
         });
+        shared.liveFailed += 1;
+        void flushCampaignProgress();
         return;
       }
 
@@ -519,6 +551,8 @@ export async function deliverCampaignInParallel(
           error_message: null,
           sent_at: sentAt,
         });
+        shared.liveSent += 1;
+        void flushCampaignProgress();
         await onEmailSent();
         await recordSuccessfulSend();
 
@@ -536,6 +570,8 @@ export async function deliverCampaignInParallel(
           status: "failed",
           error_message: friendlyErr(e).slice(0, 2000),
         });
+        shared.liveFailed += 1;
+        void flushCampaignProgress();
       }
     }
 
@@ -556,6 +592,8 @@ export async function deliverCampaignInParallel(
   await Promise.all(
     smtpList.map((smtp, smtpIndex) => runSmtpWorker(smtpIndex, smtp)),
   );
+
+  await flushCampaignProgress(true);
 
   return {
     failed: shared.failed,

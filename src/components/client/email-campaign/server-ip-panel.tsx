@@ -44,7 +44,7 @@ function leaseHint(snapshot: ServerIpSnapshot): string {
     const site = snapshot.websiteIp
       ? `Website stays on ${snapshot.websiteIp}. `
       : "";
-    return `${site}Click Refresh to switch the active send IP to the next address in your AWS static IP pool — the app does not go down.`;
+    return `${site}Click Refresh to switch the rotation label to the next pool IP. AWS static IP attachment does not change.`;
   }
   if (snapshot.rotationConfigured) {
     return `Full AWS attach-swap is active (${modeLabel(snapshot.mode)}). Refresh moves the whole server to the next IP (website URL changes).`;
@@ -140,7 +140,7 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
       setThresholdDraft(String(res.data.rotationThreshold));
       toast.success("Active send IP updated", {
         description: res.data.poolRotation
-          ? `Now using ${res.data.ip} for this send cycle. Your website stays on ${res.data.websiteIp ?? "the primary IP"}.`
+          ? `Rotation label is ${res.data.ip}. Website and SMTP stay on ${res.data.websiteIp ?? "the primary IP"}.`
           : `Now sending from ${res.data.ip}.`,
       });
     } finally {
@@ -210,12 +210,13 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
         <CardDescription>
           {snapshot?.poolRotation ? (
             <>
-              Your website stays on the primary IP. The active send IP below is used for mail —
-              while a campaign is sending, AWS briefly attaches that IP for real SMTP egress, then
-              restores the website IP when the batch finishes. After every{" "}
-              <span className="text-zinc-300">{snapshot?.rotationThreshold ?? 1000}</span> sends,{" "}
+              Your website always stays on the primary static IP. The active send IP below is a{" "}
+              <span className="text-zinc-300">rotation label</span> for campaigns and logs — AWS is
+              never switched when you send or click Refresh. SMTP egress uses the primary IP. After
+              every <span className="text-zinc-300">{snapshot?.rotationThreshold ?? 1000}</span>{" "}
+              sends,{" "}
               {snapshot?.autoRotateOnThreshold ? (
-                <>the app switches to the next pool IP automatically.</>
+                <>the label switches to the next pool IP automatically.</>
               ) : (
                 <>
                   the campaign pauses — click Refresh IP, then resume on Sending &amp; Logs.
