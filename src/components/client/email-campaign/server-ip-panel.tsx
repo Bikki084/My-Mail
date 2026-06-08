@@ -13,13 +13,41 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import type { AwsOutboundIpMode } from "@/lib/aws-outbound-ip";
 import {
   getServerIpAction,
   rotateServerIpAction,
   setRotationThresholdAction,
   type ServerIpSnapshot,
 } from "@/app/actions/server-ip";
+
+function modeLabel(mode: AwsOutboundIpMode): string {
+  switch (mode) {
+    case "aws_lightsail":
+      return "AWS Lightsail";
+    case "aws_ec2":
+      return "AWS EC2";
+    case "rotation_url":
+      return "Rotation URL";
+    case "instance":
+      return "Server IP";
+    case "dev_stub":
+    default:
+      return "Dev stub";
+  }
+}
+
+function leaseHint(snapshot: ServerIpSnapshot): string {
+  if (snapshot.rotationConfigured) {
+    return `Real egress rotation is active (${modeLabel(snapshot.mode)}). Click Refresh to swap the server's public IP on AWS — new SMTP connections egress from the new address automatically.`;
+  }
+  if (snapshot.mode === "instance") {
+    return `Displaying this server's public IP (${snapshot.ip}). For real rotation between 2+ IPs, set AWS_LIGHTSAIL_STATIC_IP_NAMES and AWS_LIGHTSAIL_INSTANCE_NAME in .env.local on the VPS, then restart PM2.`;
+  }
+  return "Development stub: the panel stores a random IP for testing. SMTP still uses the server's real network route until AWS rotation is configured.";
+}
 
 function formatExpire(iso: string | null): string {
   if (!iso) return "—";
@@ -133,12 +161,39 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
   return (
     <Card className="border-zinc-800 bg-zinc-900/40 ring-zinc-800">
       <CardHeader className="space-y-0.5 pb-3">
-        <CardTitle className="text-base text-zinc-100">Server &amp; outbound IP</CardTitle>
+        <CardTitle className="flex flex-wrap items-center gap-2 text-base text-zinc-100">
+          Server &amp; outbound IP
+          {snapshot && !loading ? (
+            <Badge
+              variant="outline"
+              className={cn(
+                "text-xs font-normal",
+                snapshot.rotationConfigured
+                  ? "border-emerald-700/80 bg-emerald-950/50 text-emerald-200"
+                  : "border-amber-700/80 bg-amber-950/40 text-amber-200",
+              )}
+            >
+              {snapshot.rotationConfigured
+                ? `${modeLabel(snapshot.mode)} · live rotation`
+                : `${modeLabel(snapshot.mode)} · read-only`}
+            </Badge>
+          ) : null}
+        </CardTitle>
         <CardDescription>
-          Campaigns send from this IP. After every{" "}
+          Outbound mail egresses from this server&apos;s public IP. After every{" "}
           <span className="text-zinc-300">{snapshot?.rotationThreshold ?? 1000}</span> successful
-          sends the campaign auto-pauses so you can rotate the IP and protect deliverability — the
-          rest of the recipients resume on the new IP automatically.
+          sends,{" "}
+          {snapshot?.autoRotateOnThreshold ? (
+            <>
+              the app <span className="text-zinc-300">automatically rotates</span> the IP and
+              continues sending on the new address.
+            </>
+          ) : (
+            <>
+              the campaign <span className="text-zinc-300">pauses</span> — click Refresh IP here,
+              then resume on Sending &amp; Logs.
+            </>
+          )}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -180,8 +235,8 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
           </div>
           <p className="text-xs text-zinc-500">
             <ShieldCheck className="mr-1 inline-block size-3.5 align-text-bottom text-emerald-500/80" />
-            Lease expires <span className="text-zinc-300">{expires}</span>. In production, swap the
-            stub generator with a call to your proxy/VPS provider.
+            Lease expires <span className="text-zinc-300">{expires}</span>.{" "}
+            {snapshot ? leaseHint(snapshot) : null}
           </p>
         </div>
 

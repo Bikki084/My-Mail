@@ -284,7 +284,22 @@ export async function rotateOutboundIp(
       ? Number(before.data.rotation_threshold)
       : DEFAULT_ROTATION_THRESHOLD;
   const previousIp = before.data?.current_ip?.trim() || null;
-  const ip = await resolveOutboundIpForRotation(previousIp);
+  let ip = await resolveOutboundIpForRotation(previousIp);
+  // When rotation swaps the host's public IP, persist the live address the SMTP
+  // stack will actually egress from (not a stale value).
+  if (isOutboundIpRotationConfigured() || useInstancePublicIpMode()) {
+    try {
+      const live = await fetchInstancePublicIpv4();
+      if (live && live !== ip) {
+        console.warn(
+          `[outbound-ip] rotation returned ${ip} but live public IP is ${live}; using live.`,
+        );
+        ip = live;
+      }
+    } catch {
+      /* keep resolved ip */
+    }
+  }
   const expiresAt = new Date(Date.now() + LEASE_DURATION_MS).toISOString();
   const { error } = await supabase.from("user_outbound_ip").upsert(
     {

@@ -218,6 +218,8 @@ export async function deliverCampaignInParallel(
     rotationThreshold,
     recipientsTotal: recipients.length,
     alreadySent,
+    /** Bumped after IP rotation so SMTP workers open fresh connections on the new egress IP. */
+    smtpReconnectGeneration: 0,
   };
 
   const partitions = partitionRecipientsBySmtp(
@@ -286,8 +288,9 @@ export async function deliverCampaignInParallel(
         .eq("id", campaignId);
       shared.sentInBurst = 0;
       shared.failedInBurst = 0;
+      shared.smtpReconnectGeneration += 1;
       console.log(
-        `[campaign-delivery] campaign=${campaignId} auto IP rotation after burst; new outbound ip=${newIpRec.ip} (~${remaining} recipients left).`,
+        `[campaign-delivery] campaign=${campaignId} auto IP rotation after burst; new outbound ip=${newIpRec.ip} (~${remaining} recipients left). SMTP pools will reconnect.`,
       );
     });
   }
@@ -339,13 +342,31 @@ export async function deliverCampaignInParallel(
       return;
     }
 
-    const transporter = buildSmtpUserTransport({
-      host: smtp.host,
-      port: smtp.port,
-      secure: smtp.secure,
-      username: smtp.username,
-      password: pass,
-    });
+    const transportState: {
+      generation: number;
+      transporter: ReturnType<typeof buildSmtpUserTransport> | null;
+    } = { generation: -1, transporter: null };
+
+    function ensureTransporter(): ReturnType<typeof buildSmtpUserTransport> {
+      if (
+        transportState.transporter &&
+        transportState.generation === shared.smtpReconnectGeneration
+      ) {
+        return transportState.transporter;
+      }
+      if (transportState.transporter) {
+        transportState.transporter.close();
+      }
+      transportState.transporter = buildSmtpUserTransport({
+        host: smtp.host,
+        port: smtp.port,
+        secure: smtp.secure,
+        username: smtp.username,
+        password: pass,
+      });
+      transportState.generation = shared.smtpReconnectGeneration;
+      return transportState.transporter;
+    }
 
     async function sendOne({ recipient }: { recipient: RecipientRow }): Promise<void> {
       if (shared.pausedForRotation) return;
@@ -467,7 +488,7 @@ export async function deliverCampaignInParallel(
           } as const);
 
         const fromAddr = extractAddress(from);
-        await transporter.sendMail({
+        await ensureTransporter().sendMail({
           from,
           to: recipient.email,
           envelope: {
@@ -519,7 +540,10 @@ export async function deliverCampaignInParallel(
         await sendOne(item);
       });
     } finally {
-      transporter.close();
+      if (transportState.transporter) {
+        transportState.transporter.close();
+        transportState.transporter = null;
+      }
     }
 
     console.log(`[campaign-delivery] worker done smtp=${smtpLabel}`);
