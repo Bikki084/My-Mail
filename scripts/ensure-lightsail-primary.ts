@@ -55,6 +55,23 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+const AWS_OP_TIMEOUT_MS = Math.min(
+  90_000,
+  Math.max(20_000, Number(process.env.AWS_LIGHTSAIL_ATTACH_TIMEOUT_MS) || 60_000),
+);
+
+async function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      setTimeout(
+        () => reject(new Error(`${label} timed out after ${AWS_OP_TIMEOUT_MS}ms`)),
+        AWS_OP_TIMEOUT_MS,
+      );
+    }),
+  ]);
+}
+
 async function fetchAttachedIpv4(
   client: LightsailClient,
   instanceName: string,
@@ -86,15 +103,21 @@ async function attachPrimary(): Promise<void> {
   }
 
   if (attachedName) {
-    console.log(`[ensure-primary] Detaching ${attachedName} …`);
-    await client.send(new DetachStaticIpCommand({ staticIpName: attachedName }));
+    console.log(`[ensure-primary] Detaching ${attachedName} … (up to ${AWS_OP_TIMEOUT_MS / 1000}s)`);
+    await withTimeout(
+      client.send(new DetachStaticIpCommand({ staticIpName: attachedName })),
+      `Detach ${attachedName}`,
+    );
+    console.log(`[ensure-primary] Detached ${attachedName}.`);
     await sleep(2000);
   }
 
   console.log(`[ensure-primary] Attaching ${primary} to ${instanceName} …`);
-  await client.send(
-    new AttachStaticIpCommand({ staticIpName: primary, instanceName }),
+  await withTimeout(
+    client.send(new AttachStaticIpCommand({ staticIpName: primary, instanceName })),
+    `Attach ${primary}`,
   );
+  console.log(`[ensure-primary] Attached ${primary}.`);
   await sleep(1500);
 }
 
