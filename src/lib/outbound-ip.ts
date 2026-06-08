@@ -7,13 +7,17 @@
  *   - Set `AWS_LIGHTSAIL_STATIC_IP_NAMES` + `AWS_LIGHTSAIL_INSTANCE_NAME` (2+ IPs), or
  *   - `AWS_EC2_ALLOCATION_IDS` + `AWS_EC2_INSTANCE_ID` (2+ Elastic IPs), or
  *   - `OUTBOUND_IP_ROTATION_URL` for a proxy/VPS webhook.
- *   After rotation the server's public IP changes and new SMTP connections egress
- *   from that address automatically.
+ *   Default Lightsail pool rotation keeps the primary static IP attached (website
+ *   stays up) and cycles the logged send IP across your pool addresses.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
-  fetchInstancePublicIpv4,
+  ensureLightsailPrimaryStaticIpAttached,
+  fetchLightsailPoolIpv4List,
+  fetchLightsailWebsiteIpv4,
+  fetchLivePublicIpv4,
   isAwsEc2RotationConfigured,
+  isAwsLightsailPoolRotationEnabled,
   isAwsLightsailRotationConfigured,
   isRotationUrlConfigured,
   resolveOutboundIpMode,
@@ -159,7 +163,7 @@ export async function resolveOutboundIpForRotation(
   }
 
   if (useInstancePublicIpMode()) {
-    const ip = await fetchInstancePublicIpv4();
+    const ip = await fetchLivePublicIpv4();
     if (prev && ip === prev) {
       throw new Error(
         "Server public IP unchanged. Allocate 2+ Lightsail static IPs (or EC2 Elastic IPs) and set AWS_LIGHTSAIL_STATIC_IP_NAMES on the server to enable rotation.",
@@ -187,13 +191,93 @@ export async function resolveOutboundIpForRotation(
 
 /** Initial IP for a new user row (no rotation — read current egress). */
 async function resolveInitialOutboundIp(): Promise<string> {
+  if (isAwsLightsailPoolRotationEnabled()) {
+    await ensureLightsailPrimaryStaticIpAttached();
+    return (
+      (await fetchLightsailWebsiteIpv4()) ?? (await fetchLivePublicIpv4())
+    );
+  }
   if (useInstancePublicIpMode()) {
-    return fetchInstancePublicIpv4();
+    return fetchLivePublicIpv4();
   }
   if (process.env.NODE_ENV === "production") {
-    return fetchInstancePublicIpv4();
+    return fetchLivePublicIpv4();
   }
   return generateOutboundIp();
+}
+
+async function syncLiveOutboundIp(
+  supabase: SupabaseClient,
+  userId: string,
+  row: {
+    current_ip: string;
+    expires_at: string | null;
+    rotation_threshold: number | null;
+  },
+): Promise<string> {
+  if (isAwsLightsailPoolRotationEnabled()) {
+    return syncLightsailPoolOutboundIp(supabase, userId, row);
+  }
+  try {
+    const live = await fetchLivePublicIpv4();
+    if (live === row.current_ip) return live;
+    const expiresAt =
+      row.expires_at ?? new Date(Date.now() + LEASE_DURATION_MS).toISOString();
+    const rotationThreshold =
+      Number.isFinite(row.rotation_threshold) && row.rotation_threshold! > 0
+        ? Number(row.rotation_threshold)
+        : DEFAULT_ROTATION_THRESHOLD;
+    await supabase.from("user_outbound_ip").upsert(
+      {
+        user_id: userId,
+        current_ip: live,
+        expires_at: expiresAt,
+        rotation_threshold: rotationThreshold,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id" },
+    );
+    return live;
+  } catch {
+    return row.current_ip;
+  }
+}
+
+async function syncLightsailPoolOutboundIp(
+  supabase: SupabaseClient,
+  userId: string,
+  row: {
+    current_ip: string;
+    expires_at: string | null;
+    rotation_threshold: number | null;
+  },
+): Promise<string> {
+  await ensureLightsailPrimaryStaticIpAttached();
+  try {
+    const poolIps = await fetchLightsailPoolIpv4List();
+    if (poolIps.includes(row.current_ip)) return row.current_ip;
+    const fallback =
+      (await fetchLightsailWebsiteIpv4()) ?? poolIps[0] ?? row.current_ip;
+    const expiresAt =
+      row.expires_at ?? new Date(Date.now() + LEASE_DURATION_MS).toISOString();
+    const rotationThreshold =
+      Number.isFinite(row.rotation_threshold) && row.rotation_threshold! > 0
+        ? Number(row.rotation_threshold)
+        : DEFAULT_ROTATION_THRESHOLD;
+    await supabase.from("user_outbound_ip").upsert(
+      {
+        user_id: userId,
+        current_ip: fallback,
+        expires_at: expiresAt,
+        rotation_threshold: rotationThreshold,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id" },
+    );
+    return fallback;
+  } catch {
+    return row.current_ip;
+  }
 }
 
 function pickFromRanges(ranges: ReadonlyArray<readonly [number, number]>): number {
@@ -228,8 +312,13 @@ export async function getOrCreateOutboundIp(
     .eq("user_id", userId)
     .maybeSingle();
   if (existing.data && existing.data.current_ip) {
+    const ip = isAwsLightsailRotationConfigured()
+      ? await syncLightsailPoolOutboundIp(supabase, userId, existing.data)
+      : useInstancePublicIpMode() || isOutboundIpRotationConfigured()
+        ? await syncLiveOutboundIp(supabase, userId, existing.data)
+        : existing.data.current_ip;
     return {
-      ip: existing.data.current_ip,
+      ip,
       expiresAt:
         existing.data.expires_at ??
         new Date(Date.now() + LEASE_DURATION_MS).toISOString(),
@@ -285,11 +374,13 @@ export async function rotateOutboundIp(
       : DEFAULT_ROTATION_THRESHOLD;
   const previousIp = before.data?.current_ip?.trim() || null;
   let ip = await resolveOutboundIpForRotation(previousIp);
-  // When rotation swaps the host's public IP, persist the live address the SMTP
-  // stack will actually egress from (not a stale value).
-  if (isOutboundIpRotationConfigured() || useInstancePublicIpMode()) {
+  // Full AWS attach-swap: confirm live egress matches. Pool rotation keeps DB IP.
+  if (
+    !isAwsLightsailPoolRotationEnabled() &&
+    (isOutboundIpRotationConfigured() || useInstancePublicIpMode())
+  ) {
     try {
-      const live = await fetchInstancePublicIpv4();
+      const live = await fetchLivePublicIpv4();
       if (live && live !== ip) {
         console.warn(
           `[outbound-ip] rotation returned ${ip} but live public IP is ${live}; using live.`,

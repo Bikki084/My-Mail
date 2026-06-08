@@ -1,7 +1,11 @@
 "use server";
 
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
-import type { AwsOutboundIpMode } from "@/lib/aws-outbound-ip";
+import {
+  fetchLightsailWebsiteIpv4,
+  isAwsLightsailPoolRotationEnabled,
+  type AwsOutboundIpMode,
+} from "@/lib/aws-outbound-ip";
 import {
   DEFAULT_ROTATION_THRESHOLD,
   MAX_ROTATION_THRESHOLD,
@@ -17,14 +21,44 @@ export type ActionResult<T = undefined> =
 
 export type ServerIpSnapshot = {
   ip: string;
+  /** Lightsail primary static IP — where the website stays reachable. */
+  websiteIp: string | null;
   expiresAt: string;
   rotationThreshold: number;
   defaultThreshold: number;
   maxThreshold: number;
   mode: AwsOutboundIpMode;
   rotationConfigured: boolean;
+  /** Pool rotation: toggle send IP without moving the website. */
+  poolRotation: boolean;
   autoRotateOnThreshold: boolean;
 };
+
+async function buildServerIpSnapshot(
+  rec: Awaited<ReturnType<typeof getOrCreateOutboundIp>>,
+): Promise<ServerIpSnapshot> {
+  const poolRotation = isAwsLightsailPoolRotationEnabled();
+  let websiteIp: string | null = null;
+  if (poolRotation) {
+    try {
+      websiteIp = await fetchLightsailWebsiteIpv4();
+    } catch {
+      websiteIp = null;
+    }
+  }
+  return {
+    ip: rec.ip,
+    websiteIp,
+    expiresAt: rec.expiresAt,
+    rotationThreshold: rec.rotationThreshold,
+    defaultThreshold: DEFAULT_ROTATION_THRESHOLD,
+    maxThreshold: MAX_ROTATION_THRESHOLD,
+    mode: rec.mode,
+    rotationConfigured: rec.rotationConfigured,
+    poolRotation,
+    autoRotateOnThreshold: !shouldManualPauseForIpRotation(),
+  };
+}
 
 async function requireUserId(): Promise<
   { ok: true; userId: string; supabase: Awaited<ReturnType<typeof createServerSupabase>> }
@@ -43,19 +77,7 @@ export async function getServerIpAction(): Promise<ActionResult<ServerIpSnapshot
   if (!auth.ok) return auth;
   try {
     const rec = await getOrCreateOutboundIp(auth.supabase, auth.userId);
-    return {
-      ok: true,
-      data: {
-        ip: rec.ip,
-        expiresAt: rec.expiresAt,
-        rotationThreshold: rec.rotationThreshold,
-        defaultThreshold: DEFAULT_ROTATION_THRESHOLD,
-        maxThreshold: MAX_ROTATION_THRESHOLD,
-        mode: rec.mode,
-        rotationConfigured: rec.rotationConfigured,
-        autoRotateOnThreshold: !shouldManualPauseForIpRotation(),
-      },
-    };
+    return { ok: true, data: await buildServerIpSnapshot(rec) };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
@@ -66,19 +88,7 @@ export async function rotateServerIpAction(): Promise<ActionResult<ServerIpSnaps
   if (!auth.ok) return auth;
   try {
     const rec = await rotateOutboundIp(auth.supabase, auth.userId);
-    return {
-      ok: true,
-      data: {
-        ip: rec.ip,
-        expiresAt: rec.expiresAt,
-        rotationThreshold: rec.rotationThreshold,
-        defaultThreshold: DEFAULT_ROTATION_THRESHOLD,
-        maxThreshold: MAX_ROTATION_THRESHOLD,
-        mode: rec.mode,
-        rotationConfigured: rec.rotationConfigured,
-        autoRotateOnThreshold: !shouldManualPauseForIpRotation(),
-      },
-    };
+    return { ok: true, data: await buildServerIpSnapshot(rec) };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }

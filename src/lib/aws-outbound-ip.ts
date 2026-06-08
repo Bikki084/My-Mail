@@ -3,9 +3,12 @@ import "server-only";
 /**
  * AWS egress IP helpers for Lightsail / EC2 deployments.
  *
- * When `AWS_LIGHTSAIL_STATIC_IP_NAMES` or `AWS_EC2_ALLOCATION_IDS` is set,
- * rotation detaches the current address and attaches the next one in the pool.
- * New SMTP connections then egress from the new public IP automatically.
+ * Default Lightsail behaviour (2+ static IPs): **pool rotation** — the primary
+ * static IP stays attached so the website keeps working; Refresh cycles the
+ * displayed / logged send IP across your pool addresses without detach/attach.
+ *
+ * Set `AWS_LIGHTSAIL_SWAP_ATTACH_ON_ROTATE=1` to restore the old behaviour
+ * (swap which static IP is attached — moves the whole server, site URL changes).
  */
 
 const IP_V4 =
@@ -41,6 +44,24 @@ export function isAwsLightsailRotationConfigured(): boolean {
   return (
     getAwsLightsailPool().length >= 2 &&
     Boolean(process.env.AWS_LIGHTSAIL_INSTANCE_NAME?.trim())
+  );
+}
+
+/** Primary static IP — always kept attached so the web app URL stays stable. */
+export function getLightsailPrimaryStaticIpName(): string {
+  const explicit = process.env.AWS_LIGHTSAIL_PRIMARY_STATIC_IP_NAME?.trim();
+  if (explicit) return explicit;
+  return getAwsLightsailPool()[0]!;
+}
+
+/**
+ * Default: cycle pool IPs in the panel/DB without AWS detach (website stays up).
+ * Opt-in `AWS_LIGHTSAIL_SWAP_ATTACH_ON_ROTATE=1` swaps the attached static IP.
+ */
+export function isAwsLightsailPoolRotationEnabled(): boolean {
+  return (
+    isAwsLightsailRotationConfigured() &&
+    process.env.AWS_LIGHTSAIL_SWAP_ATTACH_ON_ROTATE !== "1"
   );
 }
 
@@ -132,19 +153,63 @@ async function sleep(ms: number): Promise<void> {
 
 async function waitForPublicIpChange(
   previousIp: string | null,
-  timeoutMs = 90_000,
+  timeoutMs = 25_000,
 ): Promise<string> {
   const deadline = Date.now() + timeoutMs;
   let last = previousIp ?? "";
   while (Date.now() < deadline) {
-    const ip = await fetchInstancePublicIpv4();
+    const ip = await fetchLivePublicIpv4();
     if (!previousIp || ip !== previousIp) return ip;
     last = ip;
-    await sleep(2500);
+    await sleep(2000);
   }
   throw new Error(
     `Timed out waiting for a new public IP (still ${last || "unknown"}). Check AWS static IP / Elastic IP pool.`,
   );
+}
+
+/** Read the static IP currently attached to the Lightsail instance (authoritative for egress). */
+export async function fetchLightsailAttachedStaticIpv4(): Promise<string | null> {
+  const instanceName = process.env.AWS_LIGHTSAIL_INSTANCE_NAME?.trim();
+  if (!instanceName) return null;
+  try {
+    const { LightsailClient, GetStaticIpsCommand } =
+      await import("@aws-sdk/client-lightsail");
+    const client = new LightsailClient({ region: awsRegion() });
+    const listing = await client.send(new GetStaticIpsCommand({}));
+    const attached = listing.staticIps?.find((s) => s.attachedTo === instanceName);
+    const ip = attached?.ipAddress?.trim() ?? "";
+    return IP_V4.test(ip) ? ip : null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchEc2AttachedElasticIpv4(): Promise<string | null> {
+  const instanceId = process.env.AWS_EC2_INSTANCE_ID?.trim();
+  if (!instanceId) return null;
+  try {
+    const { EC2Client, DescribeAddressesCommand } =
+      await import("@aws-sdk/client-ec2");
+    const client = new EC2Client({ region: awsRegion() });
+    const listed = await client.send(new DescribeAddressesCommand({}));
+    const attached = listed.Addresses?.find((a) => a.InstanceId === instanceId);
+    const ip = attached?.PublicIp?.trim() ?? "";
+    return IP_V4.test(ip) ? ip : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Best-effort live egress IP: Lightsail/EC2 API first (authoritative), then IMDS/ipify.
+ */
+export async function fetchLivePublicIpv4(): Promise<string> {
+  const lightsail = await fetchLightsailAttachedStaticIpv4();
+  if (lightsail) return lightsail;
+  const ec2 = await fetchEc2AttachedElasticIpv4();
+  if (ec2) return ec2;
+  return fetchInstancePublicIpv4();
 }
 
 function awsRegion(): string {
@@ -154,6 +219,130 @@ function awsRegion(): string {
     process.env.AWS_DEFAULT_REGION?.trim() ||
     "us-east-1"
   );
+}
+
+type LightsailPoolEntry = { name: string; ip: string };
+
+async function fetchLightsailPoolEntries(): Promise<LightsailPoolEntry[]> {
+  const pool = getAwsLightsailPool();
+  const { LightsailClient, GetStaticIpCommand } =
+    await import("@aws-sdk/client-lightsail");
+  const client = new LightsailClient({ region: awsRegion() });
+  const entries: LightsailPoolEntry[] = [];
+  for (const name of pool) {
+    const detail = await client.send(new GetStaticIpCommand({ staticIpName: name }));
+    const ip = detail.staticIp?.ipAddress?.trim() ?? "";
+    if (IP_V4.test(ip)) entries.push({ name, ip });
+  }
+  if (entries.length < 2) {
+    throw new Error(
+      "Could not read 2+ Lightsail static IP addresses from AWS. Check AWS_LIGHTSAIL_STATIC_IP_NAMES and IAM permissions.",
+    );
+  }
+  return entries;
+}
+
+export async function fetchLightsailPoolIpv4List(): Promise<string[]> {
+  const entries = await fetchLightsailPoolEntries();
+  return entries.map((e) => e.ip);
+}
+
+/** Cycle send IP across the pool without detaching the website's primary static IP. */
+async function rotateLightsailPoolLogical(previousIp: string | null): Promise<string> {
+  const entries = await fetchLightsailPoolEntries();
+  const ips = entries.map((e) => e.ip);
+  const prev = previousIp?.trim() || null;
+
+  if (!prev) {
+    const attached = await fetchLightsailAttachedStaticIpv4();
+    if (attached && ips.includes(attached)) return attached;
+    return ips[0]!;
+  }
+
+  const idx = ips.indexOf(prev);
+  const nextIp = ips[(idx >= 0 ? idx + 1 : 0) % ips.length]!;
+  if (nextIp === prev) {
+    throw new Error("No alternate Lightsail static IP available in the pool.");
+  }
+  return nextIp;
+}
+
+/**
+ * Keep the primary static IP attached so inbound HTTP/SSH stays on one address.
+ * Safe to call on panel load after a legacy full-swap rotation.
+ */
+async function attachLightsailStaticIpByName(
+  staticIpName: string,
+  instanceName: string,
+): Promise<void> {
+  const { LightsailClient, GetStaticIpsCommand, AttachStaticIpCommand, DetachStaticIpCommand } =
+    await import("@aws-sdk/client-lightsail");
+  const client = new LightsailClient({ region: awsRegion() });
+  const listing = await client.send(new GetStaticIpsCommand({}));
+  const attached = listing.staticIps?.find((s) => s.attachedTo === instanceName);
+  const attachedName = attached?.name?.trim() ?? null;
+  if (attachedName === staticIpName) return;
+
+  if (attachedName) {
+    await client.send(new DetachStaticIpCommand({ staticIpName: attachedName }));
+    await sleep(2000);
+  }
+  await client.send(
+    new AttachStaticIpCommand({ staticIpName, instanceName }),
+  );
+  await sleep(1500);
+}
+
+export async function ensureLightsailPrimaryStaticIpAttached(): Promise<void> {
+  if (!isAwsLightsailRotationConfigured()) return;
+  const primary = getLightsailPrimaryStaticIpName();
+  const instanceName = process.env.AWS_LIGHTSAIL_INSTANCE_NAME!.trim();
+  await attachLightsailStaticIpByName(primary, instanceName);
+}
+
+/**
+ * Attach the pool static IP that owns `targetIp` so SMTP egress uses that address.
+ * Used when sending while the website primary stays configured separately.
+ */
+export async function ensureLightsailEgressIpForSend(targetIp: string): Promise<void> {
+  if (!isAwsLightsailRotationConfigured()) return;
+  const wanted = targetIp.trim();
+  if (!IP_V4.test(wanted)) return;
+
+  const entries = await fetchLightsailPoolEntries();
+  const entry = entries.find((e) => e.ip === wanted);
+  if (!entry) {
+    throw new Error(
+      `Send IP ${wanted} is not in AWS_LIGHTSAIL_STATIC_IP_NAMES. Known pool: ${entries.map((e) => e.ip).join(", ")}.`,
+    );
+  }
+
+  const instanceName = process.env.AWS_LIGHTSAIL_INSTANCE_NAME!.trim();
+  await attachLightsailStaticIpByName(entry.name, instanceName);
+  console.log(
+    `[aws-outbound-ip] SMTP egress attached ${entry.name} (${entry.ip}) on ${instanceName}`,
+  );
+}
+
+/** After a send batch, put the website primary static IP back on the instance. */
+export async function releaseLightsailEgressToPrimary(): Promise<void> {
+  if (!isAwsLightsailPoolRotationEnabled()) return;
+  await ensureLightsailPrimaryStaticIpAttached();
+  console.log("[aws-outbound-ip] restored primary static IP for website access");
+}
+
+export async function fetchLightsailWebsiteIpv4(): Promise<string | null> {
+  if (!isAwsLightsailRotationConfigured()) {
+    return fetchLightsailAttachedStaticIpv4();
+  }
+  try {
+    const entries = await fetchLightsailPoolEntries();
+    const primary = getLightsailPrimaryStaticIpName();
+    const row = entries.find((e) => e.name === primary);
+    return row?.ip ?? (await fetchLightsailAttachedStaticIpv4());
+  } catch {
+    return fetchLightsailAttachedStaticIpv4();
+  }
 }
 
 async function rotateLightsailStaticIp(previousIp: string | null): Promise<string> {
@@ -181,6 +370,19 @@ async function rotateLightsailStaticIp(previousIp: string | null): Promise<strin
     await client.send(
       new AttachStaticIpCommand({ staticIpName: nextName, instanceName }),
     );
+    await sleep(2000);
+  }
+
+  const { GetStaticIpCommand } = await import("@aws-sdk/client-lightsail");
+  const detail = await client.send(new GetStaticIpCommand({ staticIpName: nextName }));
+  const apiIp = detail.staticIp?.ipAddress?.trim() ?? "";
+  if (IP_V4.test(apiIp)) {
+    if (previousIp && apiIp === previousIp) {
+      throw new Error(
+        `Lightsail static IP "${nextName}" attached but address did not change (${apiIp}).`,
+      );
+    }
+    return apiIp;
   }
 
   const ip = await waitForPublicIpChange(previousIp);
@@ -222,6 +424,19 @@ async function rotateEc2ElasticIp(previousIp: string | null): Promise<string> {
       InstanceId: instanceId,
     }),
   );
+  await sleep(2000);
+
+  const refreshed = await client.send(new DescribeAddressesCommand({}));
+  const nextAddr = refreshed.Addresses?.find((a) => a.AllocationId === nextAlloc);
+  const apiIp = nextAddr?.PublicIp?.trim() ?? "";
+  if (IP_V4.test(apiIp)) {
+    if (previousIp && apiIp === previousIp) {
+      throw new Error(
+        `EC2 Elastic IP ${nextAlloc} associated but address did not change (${apiIp}).`,
+      );
+    }
+    return apiIp;
+  }
 
   const ip = await waitForPublicIpChange(previousIp);
   if (previousIp && ip === previousIp) {
@@ -237,6 +452,10 @@ async function rotateEc2ElasticIp(previousIp: string | null): Promise<string> {
  */
 export async function rotateAwsOutboundIp(previousIp: string | null): Promise<string> {
   if (isAwsLightsailRotationConfigured()) {
+    if (isAwsLightsailPoolRotationEnabled()) {
+      // Panel rotate: DB only — never detach/attach on AWS (website stays up).
+      return rotateLightsailPoolLogical(previousIp);
+    }
     return rotateLightsailStaticIp(previousIp);
   }
   if (isAwsEc2RotationConfigured()) {

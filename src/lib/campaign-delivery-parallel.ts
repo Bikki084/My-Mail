@@ -24,6 +24,7 @@ import {
 import { parsePositiveIntEnv, runAsyncPool } from "@/lib/async-pool";
 import { resolveMailEncoding } from "@/lib/mail-encoding";
 import { buildSmtpUserTransport } from "@/lib/smtp/transport";
+import { ensureLightsailEgressIpForSend, isAwsLightsailPoolRotationEnabled } from "@/lib/aws-outbound-ip";
 import { rotateOutboundIp } from "@/lib/outbound-ip";
 import {
   appendUnsubscribeFooter,
@@ -271,6 +272,9 @@ export async function deliverCampaignInParallel(
         ended_at: endedAt,
       };
       const newIpRec = await rotateOutboundIp(supabase, userId);
+      if (isAwsLightsailPoolRotationEnabled()) {
+        await ensureLightsailEgressIpForSend(newIpRec.ip);
+      }
       const startedAt = new Date().toISOString();
       shared.ipHistory.unshift({
         ip: newIpRec.ip,

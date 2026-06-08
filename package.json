@@ -19,6 +19,8 @@
     "check": "tsx scripts/check-connections.ts",
     "db:migrate": "tsx scripts/apply-migrations.ts",
     "db:essential": "tsx scripts/apply-essential-sql.ts",
+    "lightsail:ensure-primary": "tsx scripts/ensure-lightsail-primary.ts",
+    "db:fix-outbound-ip": "tsx scripts/fix-outbound-ip.ts",
     "db:migrate:wallet": "tsx scripts/apply-migrations.ts --only=20260428120000_wallet_and_plans.sql"
   },
   "dependencies": {

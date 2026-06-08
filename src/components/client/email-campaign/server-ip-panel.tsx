@@ -40,8 +40,14 @@ function modeLabel(mode: AwsOutboundIpMode): string {
 }
 
 function leaseHint(snapshot: ServerIpSnapshot): string {
+  if (snapshot.poolRotation) {
+    const site = snapshot.websiteIp
+      ? `Website stays on ${snapshot.websiteIp}. `
+      : "";
+    return `${site}Click Refresh to switch the active send IP to the next address in your AWS static IP pool — the app does not go down.`;
+  }
   if (snapshot.rotationConfigured) {
-    return `Real egress rotation is active (${modeLabel(snapshot.mode)}). Click Refresh to swap the server's public IP on AWS — new SMTP connections egress from the new address automatically.`;
+    return `Full AWS attach-swap is active (${modeLabel(snapshot.mode)}). Refresh moves the whole server to the next IP (website URL changes).`;
   }
   if (snapshot.mode === "instance") {
     return `Displaying this server's public IP (${snapshot.ip}). For real rotation between 2+ IPs, set AWS_LIGHTSAIL_STATIC_IP_NAMES and AWS_LIGHTSAIL_INSTANCE_NAME in .env.local on the VPS, then restart PM2.`;
@@ -71,12 +77,14 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
     if (previewMode) {
       setSnapshot({
         ip: "32.192.186.36",
+        websiteIp: null,
         expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
         rotationThreshold: 1000,
         defaultThreshold: 1000,
         maxThreshold: 100_000,
         mode: "dev_stub",
         rotationConfigured: false,
+        poolRotation: false,
         autoRotateOnThreshold: false,
       });
       setThresholdDraft("1000");
@@ -109,17 +117,35 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
       return;
     }
     setRotating(true);
-    const res = await rotateServerIpAction();
-    setRotating(false);
-    if (!res.ok) {
-      toast.error("Could not rotate outbound IP", { description: res.error });
-      return;
+    try {
+      const res = await Promise.race([
+        rotateServerIpAction(),
+        new Promise<{ ok: false; error: string }>((resolve) => {
+          window.setTimeout(
+            () =>
+              resolve({
+                ok: false,
+                error:
+                  "Rotation is taking longer than expected. Check AWS credentials and static IP names on the server, then try again.",
+              }),
+            20_000,
+          );
+        }),
+      ]);
+      if (!res.ok) {
+        toast.error("Could not rotate outbound IP", { description: res.error });
+        return;
+      }
+      setSnapshot(res.data);
+      setThresholdDraft(String(res.data.rotationThreshold));
+      toast.success("Active send IP updated", {
+        description: res.data.poolRotation
+          ? `Now using ${res.data.ip} for this send cycle. Your website stays on ${res.data.websiteIp ?? "the primary IP"}.`
+          : `Now sending from ${res.data.ip}.`,
+      });
+    } finally {
+      setRotating(false);
     }
-    setSnapshot(res.data);
-    setThresholdDraft(String(res.data.rotationThreshold));
-    toast.success("New outbound IP assigned", {
-      description: `Now sending from ${res.data.ip}.`,
-    });
   }
 
   async function handleSaveThreshold() {
@@ -173,25 +199,45 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
                   : "border-amber-700/80 bg-amber-950/40 text-amber-200",
               )}
             >
-              {snapshot.rotationConfigured
-                ? `${modeLabel(snapshot.mode)} · live rotation`
-                : `${modeLabel(snapshot.mode)} · read-only`}
+              {snapshot.poolRotation
+                ? `${modeLabel(snapshot.mode)} · pool rotation`
+                : snapshot.rotationConfigured
+                  ? `${modeLabel(snapshot.mode)} · live rotation`
+                  : `${modeLabel(snapshot.mode)} · read-only`}
             </Badge>
           ) : null}
         </CardTitle>
         <CardDescription>
-          Outbound mail egresses from this server&apos;s public IP. After every{" "}
-          <span className="text-zinc-300">{snapshot?.rotationThreshold ?? 1000}</span> successful
-          sends,{" "}
-          {snapshot?.autoRotateOnThreshold ? (
+          {snapshot?.poolRotation ? (
             <>
-              the app <span className="text-zinc-300">automatically rotates</span> the IP and
-              continues sending on the new address.
+              Your website stays on the primary IP. The active send IP below is used for mail —
+              while a campaign is sending, AWS briefly attaches that IP for real SMTP egress, then
+              restores the website IP when the batch finishes. After every{" "}
+              <span className="text-zinc-300">{snapshot?.rotationThreshold ?? 1000}</span> sends,{" "}
+              {snapshot?.autoRotateOnThreshold ? (
+                <>the app switches to the next pool IP automatically.</>
+              ) : (
+                <>
+                  the campaign pauses — click Refresh IP, then resume on Sending &amp; Logs.
+                </>
+              )}
             </>
           ) : (
             <>
-              the campaign <span className="text-zinc-300">pauses</span> — click Refresh IP here,
-              then resume on Sending &amp; Logs.
+              Outbound mail egresses from this server&apos;s public IP. After every{" "}
+              <span className="text-zinc-300">{snapshot?.rotationThreshold ?? 1000}</span> successful
+              sends,{" "}
+              {snapshot?.autoRotateOnThreshold ? (
+                <>
+                  the app <span className="text-zinc-300">automatically rotates</span> the IP and
+                  continues sending on the new address.
+                </>
+              ) : (
+                <>
+                  the campaign <span className="text-zinc-300">pauses</span> — click Refresh IP here,
+                  then resume on Sending &amp; Logs.
+                </>
+              )}
             </>
           )}
         </CardDescription>
@@ -204,7 +250,9 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
         ) : null}
 
         <div className="space-y-2">
-          <p className="text-xs font-medium text-zinc-400">Server IP</p>
+          <p className="text-xs font-medium text-zinc-400">
+            {snapshot?.poolRotation ? "Active send IP" : "Server IP"}
+          </p>
           <div className="flex gap-2">
             <div
               className={cn(
@@ -238,6 +286,12 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
             Lease expires <span className="text-zinc-300">{expires}</span>.{" "}
             {snapshot ? leaseHint(snapshot) : null}
           </p>
+          {snapshot?.poolRotation && snapshot.websiteIp ? (
+            <p className="text-xs text-zinc-500">
+              Website URL (unchanged):{" "}
+              <span className="font-mono text-zinc-300">{snapshot.websiteIp}</span>
+            </p>
+          ) : null}
         </div>
 
         <div className="space-y-2 border-t border-zinc-800 pt-3">
