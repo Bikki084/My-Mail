@@ -7,6 +7,7 @@ import {
   fetchLightsailSendPoolIpv4List,
   fetchLightsailWebsiteIpv4,
   isAwsLightsailPoolRotationEnabled,
+  resolveLightsailWebsitePrimaryIpv4,
   type AwsOutboundIpMode,
 } from "@/lib/aws-outbound-ip";
 import {
@@ -53,9 +54,13 @@ async function buildServerIpSnapshot(
   let sendPoolIndex: number | null = null;
   if (poolRotation) {
     try {
-      websiteIp = await fetchLightsailWebsiteIpv4();
+      websiteIp = await resolveLightsailWebsitePrimaryIpv4();
     } catch {
-      websiteIp = null;
+      try {
+        websiteIp = await fetchLightsailWebsiteIpv4();
+      } catch {
+        websiteIp = null;
+      }
     }
     try {
       const pool = await fetchLightsailPoolIpv4List();

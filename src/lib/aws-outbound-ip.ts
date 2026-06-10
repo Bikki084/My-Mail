@@ -252,11 +252,20 @@ export async function fetchLightsailPoolIpv4List(): Promise<string[]> {
 export async function fetchLightsailSendPoolIpv4List(): Promise<string[]> {
   const entries = await fetchLightsailPoolEntries();
   const primaryName = getLightsailPrimaryStaticIpName();
-  const primaryIp = entries.find((e) => e.name === primaryName)?.ip ?? null;
+  const primaryIp =
+    entries.find((e) => e.name === primaryName)?.ip ??
+    (await fetchLightsailAttachedStaticIpv4());
   const allIps = entries.map((e) => e.ip);
   if (!primaryIp) return allIps;
   const sendIps = allIps.filter((ip) => ip !== primaryIp);
   return sendIps.length > 0 ? sendIps : allIps;
+}
+
+/** Website primary IPv4 — configured static IP name, else the IP attached to the instance. */
+export async function resolveLightsailWebsitePrimaryIpv4(): Promise<string | null> {
+  const fromName = await fetchLightsailWebsiteIpv4();
+  const attached = await fetchLightsailAttachedStaticIpv4();
+  return attached ?? fromName;
 }
 
 /** Cycle send IP across the pool without detaching the website's primary static IP. */
@@ -265,10 +274,10 @@ async function rotateLightsailPoolLogical(previousIp: string | null): Promise<st
   if (sendIps.length === 0) {
     throw new Error("No send IPs configured in AWS_LIGHTSAIL_STATIC_IP_NAMES.");
   }
-  const websiteIp = (await fetchLightsailWebsiteIpv4())?.trim() ?? null;
+  const websiteIp = (await resolveLightsailWebsitePrimaryIpv4())?.trim() ?? null;
   const prev = previousIp?.trim() || null;
 
-  // Default / after page load: primary is shown; first Refresh picks the first send IP.
+  // On primary (panel default): first Refresh picks the first send IP (IP-2).
   if (!prev || (websiteIp && prev === websiteIp)) {
     return sendIps[0]!;
   }

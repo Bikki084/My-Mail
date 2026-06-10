@@ -19,6 +19,7 @@ import {
   fetchLightsailPoolIpv4List,
   fetchLightsailSendPoolIpv4List,
   fetchLightsailWebsiteIpv4,
+  resolveLightsailWebsitePrimaryIpv4,
   fetchLivePublicIpv4,
   isAwsEc2RotationConfigured,
   isAwsLightsailPoolRotationEnabled,
@@ -199,7 +200,9 @@ async function resolveInitialOutboundIp(): Promise<string> {
   if (isAwsLightsailPoolRotationEnabled()) {
     await ensureLightsailPrimaryStaticIpAttached();
     return (
-      (await fetchLightsailWebsiteIpv4()) ?? (await fetchLivePublicIpv4())
+      (await resolveLightsailWebsitePrimaryIpv4()) ??
+      (await fetchLightsailWebsiteIpv4()) ??
+      (await fetchLivePublicIpv4())
     );
   }
   if (useInstancePublicIpMode()) {
@@ -248,7 +251,7 @@ async function syncLiveOutboundIp(
   }
 }
 
-/** Panel load: keep a valid rotated send IP; reset unknown/stale values to primary. */
+/** Panel load: always default the active send IP to the website primary (IP-1). */
 async function alignLightsailPoolToPrimaryIp(
   supabase: SupabaseClient,
   userId: string,
@@ -259,16 +262,12 @@ async function alignLightsailPoolToPrimaryIp(
   },
 ): Promise<string> {
   try {
-    const poolIps = await fetchLightsailPoolIpv4List();
-    const sendIps = await fetchLightsailSendPoolIpv4List();
     const primary =
+      (await resolveLightsailWebsitePrimaryIpv4()) ??
       (await fetchLightsailWebsiteIpv4()) ??
       (await fetchLightsailAttachedStaticIpv4()) ??
-      poolIps[0] ??
       row.current_ip;
     if (row.current_ip === primary) return primary;
-    if (sendIps.includes(row.current_ip)) return row.current_ip;
-    if (poolIps.includes(row.current_ip)) return row.current_ip;
     const expiresAt =
       row.expires_at ?? new Date(Date.now() + LEASE_DURATION_MS).toISOString();
     const rotationThreshold =
@@ -304,7 +303,7 @@ export async function prepareLightsailEgressForCampaign(sendIp: string): Promise
   if (!isAwsLightsailPoolRotationEnabled()) return;
   const wanted = sendIp.trim();
   if (!wanted) return;
-  const websiteIp = (await fetchLightsailWebsiteIpv4())?.trim() ?? null;
+  const websiteIp = (await resolveLightsailWebsitePrimaryIpv4())?.trim() ?? null;
   if (websiteIp && wanted === websiteIp) {
     await ensureLightsailPrimaryStaticIpAttached();
   } else {
@@ -328,7 +327,7 @@ export async function restoreLightsailWebsiteEgress(
   await releaseLightsailEgressToPrimary();
   if (!supabase || !userId || !isAwsLightsailPoolRotationEnabled()) return;
   try {
-    const primary = await fetchLightsailWebsiteIpv4();
+    const primary = await resolveLightsailWebsitePrimaryIpv4();
     if (!primary) return;
     await supabase.from("user_outbound_ip").upsert(
       {
