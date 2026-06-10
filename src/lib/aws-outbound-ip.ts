@@ -4,8 +4,9 @@ import "server-only";
  * AWS egress IP helpers for Lightsail / EC2 deployments.
  *
  * Default Lightsail behaviour (2+ static IPs): **pool rotation** — the primary
- * static IP stays attached always (website + SMTP egress). Refresh only updates
- * the rotation label in the database; AWS is never detached during send or rotate.
+ * static IP stays attached for the website. Refresh cycles the active send IP in
+ * the database; during campaigns the send IP is attached for SMTP egress, then
+ * the primary is restored when sending finishes.
  *
  * Set `AWS_LIGHTSAIL_SWAP_ATTACH_ON_ROTATE=1` to swap the attached static IP
  * on Refresh (moves the whole server — site URL changes).
@@ -247,24 +248,33 @@ export async function fetchLightsailPoolIpv4List(): Promise<string[]> {
   return entries.map((e) => e.ip);
 }
 
+/** Send pool = all configured static IPs except the website primary. */
+export async function fetchLightsailSendPoolIpv4List(): Promise<string[]> {
+  const entries = await fetchLightsailPoolEntries();
+  const primaryName = getLightsailPrimaryStaticIpName();
+  const primaryIp = entries.find((e) => e.name === primaryName)?.ip ?? null;
+  const allIps = entries.map((e) => e.ip);
+  if (!primaryIp) return allIps;
+  const sendIps = allIps.filter((ip) => ip !== primaryIp);
+  return sendIps.length > 0 ? sendIps : allIps;
+}
+
 /** Cycle send IP across the pool without detaching the website's primary static IP. */
 async function rotateLightsailPoolLogical(previousIp: string | null): Promise<string> {
-  const entries = await fetchLightsailPoolEntries();
-  const ips = entries.map((e) => e.ip);
+  const sendIps = await fetchLightsailSendPoolIpv4List();
+  if (sendIps.length === 0) {
+    throw new Error("No send IPs configured in AWS_LIGHTSAIL_STATIC_IP_NAMES.");
+  }
+  const websiteIp = (await fetchLightsailWebsiteIpv4())?.trim() ?? null;
   const prev = previousIp?.trim() || null;
 
-  if (!prev) {
-    const attached = await fetchLightsailAttachedStaticIpv4();
-    if (attached && ips.includes(attached)) return attached;
-    return ips[0]!;
+  // Default / after page load: primary is shown; first Refresh picks the first send IP.
+  if (!prev || (websiteIp && prev === websiteIp)) {
+    return sendIps[0]!;
   }
 
-  const idx = ips.indexOf(prev);
-  const nextIp = ips[(idx >= 0 ? idx + 1 : 0) % ips.length]!;
-  if (nextIp === prev) {
-    throw new Error("No alternate Lightsail static IP available in the pool.");
-  }
-  return nextIp;
+  const idx = sendIps.indexOf(prev);
+  return sendIps[(idx >= 0 ? idx + 1 : 0) % sendIps.length]!;
 }
 
 /**
@@ -323,8 +333,8 @@ export async function ensureLightsailPrimaryStaticIpAttached(): Promise<void> {
 }
 
 /**
- * @deprecated Not used — attaching a second static IP on send moves the whole server.
- * Pool rotation keeps the primary attached; use a relay/second instance for true multi-IP egress.
+ * Attach the pool IP used for SMTP egress. The website primary is restored after
+ * the campaign via `releaseLightsailEgressToPrimary`.
  */
 export async function ensureLightsailEgressIpForSend(targetIp: string): Promise<void> {
   if (!isAwsLightsailRotationConfigured()) return;

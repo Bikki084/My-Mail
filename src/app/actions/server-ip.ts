@@ -3,6 +3,8 @@
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import {
   ensureLightsailPrimaryStaticIpAttached,
+  fetchLightsailPoolIpv4List,
+  fetchLightsailSendPoolIpv4List,
   fetchLightsailWebsiteIpv4,
   isAwsLightsailPoolRotationEnabled,
   type AwsOutboundIpMode,
@@ -33,6 +35,12 @@ export type ServerIpSnapshot = {
   /** Pool rotation: toggle send IP without moving the website. */
   poolRotation: boolean;
   autoRotateOnThreshold: boolean;
+  /** Total static IPs in AWS_LIGHTSAIL_STATIC_IP_NAMES. */
+  poolSize: number | null;
+  /** Send IPs available for rotation (pool minus website primary). */
+  sendPoolSize: number | null;
+  /** 1-based index in the send pool when active IP is not the website primary. */
+  sendPoolIndex: number | null;
 };
 
 async function buildServerIpSnapshot(
@@ -40,11 +48,28 @@ async function buildServerIpSnapshot(
 ): Promise<ServerIpSnapshot> {
   const poolRotation = isAwsLightsailPoolRotationEnabled();
   let websiteIp: string | null = null;
+  let poolSize: number | null = null;
+  let sendPoolSize: number | null = null;
+  let sendPoolIndex: number | null = null;
   if (poolRotation) {
     try {
       websiteIp = await fetchLightsailWebsiteIpv4();
     } catch {
       websiteIp = null;
+    }
+    try {
+      const pool = await fetchLightsailPoolIpv4List();
+      const sendPool = await fetchLightsailSendPoolIpv4List();
+      poolSize = pool.length;
+      sendPoolSize = sendPool.length;
+      if (websiteIp && rec.ip !== websiteIp) {
+        const idx = sendPool.indexOf(rec.ip);
+        sendPoolIndex = idx >= 0 ? idx + 1 : null;
+      }
+    } catch {
+      poolSize = null;
+      sendPoolSize = null;
+      sendPoolIndex = null;
     }
   }
   return {
@@ -58,6 +83,9 @@ async function buildServerIpSnapshot(
     rotationConfigured: rec.rotationConfigured,
     poolRotation,
     autoRotateOnThreshold: !shouldManualPauseForIpRotation(),
+    poolSize,
+    sendPoolSize,
+    sendPoolIndex,
   };
 }
 

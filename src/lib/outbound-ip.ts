@@ -7,19 +7,24 @@
  *   - Set `AWS_LIGHTSAIL_STATIC_IP_NAMES` + `AWS_LIGHTSAIL_INSTANCE_NAME` (2+ IPs), or
  *   - `AWS_EC2_ALLOCATION_IDS` + `AWS_EC2_INSTANCE_ID` (2+ Elastic IPs), or
  *   - `OUTBOUND_IP_ROTATION_URL` for a proxy/VPS webhook.
- *   Default Lightsail pool rotation keeps the primary static IP attached (website
- *   stays up) and cycles the logged send IP across your pool addresses.
+ *   Default Lightsail pool rotation keeps the primary static IP attached for the
+ *   website, cycles the active send IP in the panel/DB, attaches the send IP for
+ *   SMTP during campaigns, and restores the primary when sending finishes.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
+  ensureLightsailEgressIpForSend,
   ensureLightsailPrimaryStaticIpAttached,
+  fetchLightsailAttachedStaticIpv4,
   fetchLightsailPoolIpv4List,
+  fetchLightsailSendPoolIpv4List,
   fetchLightsailWebsiteIpv4,
   fetchLivePublicIpv4,
   isAwsEc2RotationConfigured,
   isAwsLightsailPoolRotationEnabled,
   isAwsLightsailRotationConfigured,
   isRotationUrlConfigured,
+  releaseLightsailEgressToPrimary,
   resolveOutboundIpMode,
   rotateAwsOutboundIp,
   useInstancePublicIpMode,
@@ -243,7 +248,7 @@ async function syncLiveOutboundIp(
   }
 }
 
-/** Panel load: default rotation label to the primary (website) static IP. */
+/** Panel load: keep a valid rotated send IP; reset unknown/stale values to primary. */
 async function alignLightsailPoolToPrimaryIp(
   supabase: SupabaseClient,
   userId: string,
@@ -255,9 +260,15 @@ async function alignLightsailPoolToPrimaryIp(
 ): Promise<string> {
   try {
     const poolIps = await fetchLightsailPoolIpv4List();
+    const sendIps = await fetchLightsailSendPoolIpv4List();
     const primary =
-      (await fetchLightsailWebsiteIpv4()) ?? poolIps[0] ?? row.current_ip;
+      (await fetchLightsailWebsiteIpv4()) ??
+      (await fetchLightsailAttachedStaticIpv4()) ??
+      poolIps[0] ??
+      row.current_ip;
     if (row.current_ip === primary) return primary;
+    if (sendIps.includes(row.current_ip)) return row.current_ip;
+    if (poolIps.includes(row.current_ip)) return row.current_ip;
     const expiresAt =
       row.expires_at ?? new Date(Date.now() + LEASE_DURATION_MS).toISOString();
     const rotationThreshold =
@@ -275,8 +286,65 @@ async function alignLightsailPoolToPrimaryIp(
       { onConflict: "user_id" },
     );
     return primary;
-  } catch {
+  } catch (e) {
+    console.warn(
+      `[outbound-ip] align to primary failed for user=${userId}: ${
+        e instanceof Error ? e.message : String(e)
+      }`,
+    );
     return row.current_ip;
+  }
+}
+
+/**
+ * Before sending: attach the pool IP used for SMTP egress. When it matches the
+ * website primary, only confirm primary is attached.
+ */
+export async function prepareLightsailEgressForCampaign(sendIp: string): Promise<void> {
+  if (!isAwsLightsailPoolRotationEnabled()) return;
+  const wanted = sendIp.trim();
+  if (!wanted) return;
+  const websiteIp = (await fetchLightsailWebsiteIpv4())?.trim() ?? null;
+  if (websiteIp && wanted === websiteIp) {
+    await ensureLightsailPrimaryStaticIpAttached();
+  } else {
+    await ensureLightsailEgressIpForSend(wanted);
+  }
+  const live = await fetchLivePublicIpv4();
+  if (live !== wanted) {
+    throw new Error(
+      `SMTP egress IP mismatch: expected ${wanted} but the server public IP is ${live}. ` +
+        "Check AWS_LIGHTSAIL_STATIC_IP_NAMES and IAM permissions for AttachStaticIp.",
+    );
+  }
+  console.log(`[outbound-ip] SMTP egress confirmed on ${live}`);
+}
+
+/** After sending: restore website primary on AWS and reset the panel row to IP-1. */
+export async function restoreLightsailWebsiteEgress(
+  supabase?: SupabaseClient,
+  userId?: string,
+): Promise<void> {
+  await releaseLightsailEgressToPrimary();
+  if (!supabase || !userId || !isAwsLightsailPoolRotationEnabled()) return;
+  try {
+    const primary = await fetchLightsailWebsiteIpv4();
+    if (!primary) return;
+    await supabase.from("user_outbound_ip").upsert(
+      {
+        user_id: userId,
+        current_ip: primary,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id" },
+    );
+    console.log(`[outbound-ip] panel send IP reset to website primary ${primary}`);
+  } catch (e) {
+    console.warn(
+      `[outbound-ip] could not reset panel send IP to primary: ${
+        e instanceof Error ? e.message : String(e)
+      }`,
+    );
   }
 }
 

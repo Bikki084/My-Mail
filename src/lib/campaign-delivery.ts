@@ -8,13 +8,12 @@ import { type RecipientRow } from "@/lib/merge-tags";
 import { nodemailerAttachmentsFromCampaignField } from "@/lib/campaign-attachments";
 import { launchRenderBrowser } from "@/lib/html-attachment-render";
 import { hasNonExpiredActivePlan } from "@/lib/active-plan-guard";
-import {
-  ensureLightsailPrimaryStaticIpAttached,
-  isAwsLightsailPoolRotationEnabled,
-} from "@/lib/aws-outbound-ip";
+import { isAwsLightsailPoolRotationEnabled } from "@/lib/aws-outbound-ip";
 import {
   DEFAULT_ROTATION_THRESHOLD,
   getOrCreateOutboundIp,
+  prepareLightsailEgressForCampaign,
+  restoreLightsailWebsiteEgress,
   type OutboundIpRecord,
 } from "@/lib/outbound-ip";
 import { deliverCampaignInParallel } from "@/lib/campaign-delivery-parallel";
@@ -522,10 +521,9 @@ export async function runSendCampaign(
 
   try {
     if (isAwsLightsailPoolRotationEnabled()) {
-      await ensureLightsailPrimaryStaticIpAttached();
+      await prepareLightsailEgressForCampaign(ipState.ip);
       console.log(
-        `[campaign-delivery] campaign=${campaignId} primary static IP confirmed; ` +
-          `active send label=${ipState.ip} (AWS attach is not changed during send).`,
+        `[campaign-delivery] campaign=${campaignId} SMTP egress prepared for send IP=${ipState.ip}.`,
       );
     }
     const parallelResult = await deliverCampaignInParallel({
@@ -560,6 +558,15 @@ export async function runSendCampaign(
     pausedForRotation = parallelResult.pausedForRotation;
     ipHistory.splice(0, ipHistory.length, ...parallelResult.ipHistory);
   } finally {
+    if (isAwsLightsailPoolRotationEnabled()) {
+      await restoreLightsailWebsiteEgress(supabase, userId).catch((e) => {
+        console.error(
+          `[campaign-delivery] campaign=${campaignId} failed to restore primary website IP: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      });
+    }
     if (renderBrowser) {
       await renderBrowser.close().catch(() => {});
     }

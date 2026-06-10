@@ -44,7 +44,7 @@ function leaseHint(snapshot: ServerIpSnapshot): string {
     const site = snapshot.websiteIp
       ? `Website stays on ${snapshot.websiteIp}. `
       : "";
-    return `${site}Click Refresh to switch the rotation label to the next pool IP. AWS static IP attachment does not change.`;
+    return `${site}Click Refresh to pick the next pool IP for outgoing mail. During a campaign, SMTP uses the active send IP above, then the website IP is restored when sending finishes.`;
   }
   if (snapshot.rotationConfigured) {
     return `Full AWS attach-swap is active (${modeLabel(snapshot.mode)}). Refresh moves the whole server to the next IP (website URL changes).`;
@@ -86,6 +86,9 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
         rotationConfigured: false,
         poolRotation: false,
         autoRotateOnThreshold: false,
+        poolSize: null,
+        sendPoolSize: null,
+        sendPoolIndex: null,
       });
       setThresholdDraft("1000");
       setLoading(false);
@@ -139,9 +142,12 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
       setSnapshot(res.data);
       setThresholdDraft(String(res.data.rotationThreshold));
       toast.success("Active send IP updated", {
-        description: res.data.poolRotation
-          ? `Rotation label is ${res.data.ip}. Website and SMTP stay on ${res.data.websiteIp ?? "the primary IP"}.`
-          : `Now sending from ${res.data.ip}.`,
+        description:
+          res.data.poolRotation && res.data.websiteIp && res.data.ip !== res.data.websiteIp
+            ? `Website stays on ${res.data.websiteIp}. The next campaign sends mail from ${res.data.ip}, then ${res.data.websiteIp} is restored automatically.`
+            : res.data.poolRotation && res.data.websiteIp
+              ? `Active IP is ${res.data.ip} (website primary). Click Refresh to pick a send IP from your pool.`
+              : `Now sending from ${res.data.ip}.`,
       });
     } finally {
       setRotating(false);
@@ -200,7 +206,7 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
               )}
             >
               {snapshot.poolRotation
-                ? `${modeLabel(snapshot.mode)} · pool rotation`
+                ? `${modeLabel(snapshot.mode)} · ${snapshot.sendPoolSize ?? "?"} send IPs`
                 : snapshot.rotationConfigured
                   ? `${modeLabel(snapshot.mode)} · live rotation`
                   : `${modeLabel(snapshot.mode)} · read-only`}
@@ -210,13 +216,13 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
         <CardDescription>
           {snapshot?.poolRotation ? (
             <>
-              Your website always stays on the primary static IP. The active send IP below is a{" "}
-              <span className="text-zinc-300">rotation label</span> for campaigns and logs — AWS is
-              never switched when you send or click Refresh. SMTP egress uses the primary IP. After
-              every <span className="text-zinc-300">{snapshot?.rotationThreshold ?? 1000}</span>{" "}
+              Your website always stays on the primary static IP (IP-1). Click Refresh to cycle
+              through your send IP pool (IP-2, IP-3, …) — each selected IP is attached for SMTP
+              during campaigns, then IP-1 is restored when sending finishes. After every{" "}
+              <span className="text-zinc-300">{snapshot?.rotationThreshold ?? 1000}</span>{" "}
               sends,{" "}
               {snapshot?.autoRotateOnThreshold ? (
-                <>the label switches to the next pool IP automatically.</>
+                <>the send IP switches to the next pool address automatically.</>
               ) : (
                 <>
                   the campaign pauses — click Refresh IP, then resume on Sending &amp; Logs.
@@ -252,7 +258,7 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
 
         <div className="space-y-2">
           <p className="text-xs font-medium text-zinc-400">
-            {snapshot?.poolRotation ? "Rotation label (campaigns & logs)" : "Server IP"}
+            {snapshot?.poolRotation ? "Active send IP" : "Server IP"}
           </p>
           <div className="flex gap-2">
             <div
@@ -289,10 +295,23 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
           </p>
           {snapshot?.poolRotation && snapshot.websiteIp ? (
             <p className="text-xs text-zinc-500">
-              Website + real SMTP egress (always):{" "}
+              Website URL (always):{" "}
               <span className="font-mono text-zinc-300">{snapshot.websiteIp}</span>
-              {" — "}
-              the field above is only a label; mail does not send from a different IP.
+              {snapshot.sendPoolSize != null && snapshot.sendPoolSize > 0 ? (
+                <>
+                  {" · "}
+                  {snapshot.ip === snapshot.websiteIp ? (
+                    <>Primary — click Refresh to use send IP 1 of {snapshot.sendPoolSize}</>
+                  ) : snapshot.sendPoolIndex != null ? (
+                    <>
+                      Send IP{" "}
+                      <span className="font-mono text-zinc-300">
+                        {snapshot.sendPoolIndex} of {snapshot.sendPoolSize}
+                      </span>
+                    </>
+                  ) : null}
+                </>
+              ) : null}
             </p>
           ) : null}
         </div>
