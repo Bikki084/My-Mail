@@ -17,6 +17,147 @@ const IP_V4 =
 
 const METADATA_BASE = "http://169.254.169.254/latest";
 
+/** Min ms between Lightsail API calls (default 800ms — avoids account rate limits). */
+const LIGHTSAIL_API_MIN_INTERVAL_MS = Math.max(
+  200,
+  Number(process.env.AWS_LIGHTSAIL_API_MIN_INTERVAL_MS) || 800,
+);
+
+/** Cache static IP name → address listings (pool rarely changes). */
+const POOL_CACHE_TTL_MS = Math.max(
+  60_000,
+  Number(process.env.AWS_LIGHTSAIL_POOL_CACHE_TTL_MS) || 10 * 60 * 1000,
+);
+
+const LISTING_CACHE_TTL_MS = Math.max(
+  5_000,
+  Number(process.env.AWS_LIGHTSAIL_LISTING_CACHE_TTL_MS) || 45_000,
+);
+
+const DETACH_SETTLE_MS = Math.max(
+  1500,
+  Number(process.env.AWS_LIGHTSAIL_DETACH_SETTLE_MS) || 3000,
+);
+
+const ATTACH_SETTLE_MS = Math.max(
+  1000,
+  Number(process.env.AWS_LIGHTSAIL_ATTACH_SETTLE_MS) || 2500,
+);
+
+type LightsailPoolEntry = { name: string; ip: string };
+
+type StaticIpRow = {
+  name?: string | null;
+  ipAddress?: string | null;
+  attachedTo?: string | null;
+};
+
+let poolEntriesCache: { at: number; entries: LightsailPoolEntry[] } | null = null;
+let staticIpsListingCache: { at: number; rows: StaticIpRow[] } | null = null;
+let lightsailClientPromise: Promise<import("@aws-sdk/client-lightsail").LightsailClient> | null =
+  null;
+let lastLightsailApiAt = 0;
+let lightsailApiChain: Promise<unknown> = Promise.resolve();
+
+function invalidateLightsailCaches(): void {
+  poolEntriesCache = null;
+  staticIpsListingCache = null;
+}
+
+function isLightsailRateLimitError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  const name =
+    err && typeof err === "object" && "name" in err
+      ? String((err as { name?: string }).name ?? "").toLowerCase()
+      : "";
+  return (
+    name.includes("throttl") ||
+    name.includes("toomany") ||
+    msg.includes("maximum api request rate") ||
+    msg.includes("rate has been exceeded") ||
+    msg.includes("throttl")
+  );
+}
+
+async function retryLightsailApi<T>(fn: () => Promise<T>, label: string): Promise<T> {
+  const maxAttempts = Math.max(2, Number(process.env.AWS_LIGHTSAIL_API_MAX_RETRIES) || 6);
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (!isLightsailRateLimitError(err) || attempt >= maxAttempts - 1) throw err;
+      const delayMs = Math.min(45_000, 2500 * 2 ** attempt);
+      console.warn(
+        `[aws-outbound-ip] Lightsail rate limit on ${label}; retry ${attempt + 1}/${maxAttempts - 1} in ${delayMs}ms`,
+      );
+      await sleep(delayMs);
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
+
+async function runLightsailApi<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  const task = async () => {
+    const waitMs = Math.max(0, LIGHTSAIL_API_MIN_INTERVAL_MS - (Date.now() - lastLightsailApiAt));
+    if (waitMs > 0) await sleep(waitMs);
+    lastLightsailApiAt = Date.now();
+    return retryLightsailApi(fn, label);
+  };
+  const chained = lightsailApiChain.then(task, task);
+  lightsailApiChain = chained.then(
+    () => undefined,
+    () => undefined,
+  );
+  return chained;
+}
+
+async function getLightsailClient(): Promise<import("@aws-sdk/client-lightsail").LightsailClient> {
+  if (!lightsailClientPromise) {
+    lightsailClientPromise = import("@aws-sdk/client-lightsail").then(
+      ({ LightsailClient }) => new LightsailClient({ region: awsRegion() }),
+    );
+  }
+  return lightsailClientPromise;
+}
+
+/** Optional: StaticIp-1:1.2.3.4,StaticIp-2:5.6.7.8 — skips pool lookup API calls. */
+function readLightsailPoolFromEnvMap(): LightsailPoolEntry[] | null {
+  const raw = process.env.AWS_LIGHTSAIL_STATIC_IP_MAP?.trim();
+  if (!raw) return null;
+  const byName = new Map<string, string>();
+  for (const part of raw.split(",")) {
+    const colon = part.indexOf(":");
+    if (colon <= 0) continue;
+    const name = part.slice(0, colon).trim();
+    const ip = part.slice(colon + 1).trim();
+    if (name && IP_V4.test(ip)) byName.set(name, ip);
+  }
+  if (byName.size === 0) return null;
+  const entries: LightsailPoolEntry[] = [];
+  for (const name of getAwsLightsailPool()) {
+    const ip = byName.get(name);
+    if (ip) entries.push({ name, ip });
+  }
+  return entries.length >= 2 ? entries : null;
+}
+
+async function fetchLightsailStaticIpListing(force = false): Promise<StaticIpRow[]> {
+  const now = Date.now();
+  if (!force && staticIpsListingCache && now - staticIpsListingCache.at < LISTING_CACHE_TTL_MS) {
+    return staticIpsListingCache.rows;
+  }
+  const client = await getLightsailClient();
+  const { GetStaticIpsCommand } = await import("@aws-sdk/client-lightsail");
+  const listing = await runLightsailApi("GetStaticIps", () =>
+    client.send(new GetStaticIpsCommand({})),
+  );
+  const rows = listing.staticIps ?? [];
+  staticIpsListingCache = { at: now, rows };
+  return rows;
+}
+
 export type AwsOutboundIpMode =
   | "aws_lightsail"
   | "aws_ec2"
@@ -174,11 +315,8 @@ export async function fetchLightsailAttachedStaticIpv4(): Promise<string | null>
   const instanceName = process.env.AWS_LIGHTSAIL_INSTANCE_NAME?.trim();
   if (!instanceName) return null;
   try {
-    const { LightsailClient, GetStaticIpsCommand } =
-      await import("@aws-sdk/client-lightsail");
-    const client = new LightsailClient({ region: awsRegion() });
-    const listing = await client.send(new GetStaticIpsCommand({}));
-    const attached = listing.staticIps?.find((s) => s.attachedTo === instanceName);
+    const rows = await fetchLightsailStaticIpListing();
+    const attached = rows.find((s) => s.attachedTo === instanceName);
     const ip = attached?.ipAddress?.trim() ?? "";
     return IP_V4.test(ip) ? ip : null;
   } catch {
@@ -222,17 +360,29 @@ function awsRegion(): string {
   );
 }
 
-type LightsailPoolEntry = { name: string; ip: string };
-
 async function fetchLightsailPoolEntries(): Promise<LightsailPoolEntry[]> {
+  const now = Date.now();
+  if (poolEntriesCache && now - poolEntriesCache.at < POOL_CACHE_TTL_MS) {
+    return poolEntriesCache.entries;
+  }
+
+  const fromEnv = readLightsailPoolFromEnvMap();
+  if (fromEnv) {
+    poolEntriesCache = { at: now, entries: fromEnv };
+    return fromEnv;
+  }
+
   const pool = getAwsLightsailPool();
-  const { LightsailClient, GetStaticIpCommand } =
-    await import("@aws-sdk/client-lightsail");
-  const client = new LightsailClient({ region: awsRegion() });
+  const rows = await fetchLightsailStaticIpListing();
+  const byName = new Map<string, StaticIpRow>();
+  for (const row of rows) {
+    const name = row.name?.trim();
+    if (name) byName.set(name, row);
+  }
   const entries: LightsailPoolEntry[] = [];
   for (const name of pool) {
-    const detail = await client.send(new GetStaticIpCommand({ staticIpName: name }));
-    const ip = detail.staticIp?.ipAddress?.trim() ?? "";
+    const row = byName.get(name);
+    const ip = row?.ipAddress?.trim() ?? "";
     if (IP_V4.test(ip)) entries.push({ name, ip });
   }
   if (entries.length < 2) {
@@ -240,6 +390,7 @@ async function fetchLightsailPoolEntries(): Promise<LightsailPoolEntry[]> {
       "Could not read 2+ Lightsail static IP addresses from AWS. Check AWS_LIGHTSAIL_STATIC_IP_NAMES and IAM permissions.",
     );
   }
+  poolEntriesCache = { at: now, entries };
   return entries;
 }
 
@@ -252,20 +403,18 @@ export async function fetchLightsailPoolIpv4List(): Promise<string[]> {
 export async function fetchLightsailSendPoolIpv4List(): Promise<string[]> {
   const entries = await fetchLightsailPoolEntries();
   const primaryName = getLightsailPrimaryStaticIpName();
-  const primaryIp =
-    entries.find((e) => e.name === primaryName)?.ip ??
-    (await fetchLightsailAttachedStaticIpv4());
+  const primaryIp = entries.find((e) => e.name === primaryName)?.ip ?? null;
   const allIps = entries.map((e) => e.ip);
   if (!primaryIp) return allIps;
   const sendIps = allIps.filter((ip) => ip !== primaryIp);
   return sendIps.length > 0 ? sendIps : allIps;
 }
 
-/** Website primary IPv4 — configured static IP name, else the IP attached to the instance. */
+/** Website primary IPv4 — attached instance IP first (one cached listing call). */
 export async function resolveLightsailWebsitePrimaryIpv4(): Promise<string | null> {
-  const fromName = await fetchLightsailWebsiteIpv4();
   const attached = await fetchLightsailAttachedStaticIpv4();
-  return attached ?? fromName;
+  if (attached) return attached;
+  return fetchLightsailWebsiteIpv4();
 }
 
 /** Cycle send IP across the pool without detaching the website's primary static IP. */
@@ -300,22 +449,27 @@ async function attachLightsailStaticIpByName(
   instanceName: string,
 ): Promise<void> {
   const work = async () => {
-    const { LightsailClient, GetStaticIpsCommand, AttachStaticIpCommand, DetachStaticIpCommand } =
-      await import("@aws-sdk/client-lightsail");
-    const client = new LightsailClient({ region: awsRegion() });
-    const listing = await client.send(new GetStaticIpsCommand({}));
-    const attached = listing.staticIps?.find((s) => s.attachedTo === instanceName);
+    const rows = await fetchLightsailStaticIpListing();
+    const attached = rows.find((s) => s.attachedTo === instanceName);
     const attachedName = attached?.name?.trim() ?? null;
     if (attachedName === staticIpName) return;
 
+    const client = await getLightsailClient();
+    const { AttachStaticIpCommand, DetachStaticIpCommand } =
+      await import("@aws-sdk/client-lightsail");
+
     if (attachedName) {
-      await client.send(new DetachStaticIpCommand({ staticIpName: attachedName }));
-      await sleep(2000);
+      await runLightsailApi(`DetachStaticIp:${attachedName}`, () =>
+        client.send(new DetachStaticIpCommand({ staticIpName: attachedName })),
+      );
+      invalidateLightsailCaches();
+      await sleep(DETACH_SETTLE_MS);
     }
-    await client.send(
-      new AttachStaticIpCommand({ staticIpName, instanceName }),
+    await runLightsailApi(`AttachStaticIp:${staticIpName}`, () =>
+      client.send(new AttachStaticIpCommand({ staticIpName, instanceName })),
     );
-    await sleep(1500);
+    invalidateLightsailCaches();
+    await sleep(ATTACH_SETTLE_MS);
   };
 
   await Promise.race([

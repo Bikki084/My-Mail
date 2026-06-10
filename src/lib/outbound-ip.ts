@@ -309,7 +309,7 @@ export async function prepareLightsailEgressForCampaign(sendIp: string): Promise
   } else {
     await ensureLightsailEgressIpForSend(wanted);
   }
-  const live = await fetchLivePublicIpv4();
+  const live = await fetchLightsailAttachedStaticIpv4();
   if (live !== wanted) {
     throw new Error(
       `SMTP egress IP mismatch: expected ${wanted} but the server public IP is ${live}. ` +
