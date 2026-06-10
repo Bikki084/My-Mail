@@ -80,7 +80,9 @@ export async function getServerIpAction(): Promise<ActionResult<ServerIpSnapshot
     if (isAwsLightsailPoolRotationEnabled()) {
       await ensureLightsailPrimaryStaticIpAttached();
     }
-    const rec = await getOrCreateOutboundIp(auth.supabase, auth.userId);
+    const rec = await getOrCreateOutboundIp(auth.supabase, auth.userId, {
+      alignPoolToPrimaryOnRead: isAwsLightsailPoolRotationEnabled(),
+    });
     return { ok: true, data: await buildServerIpSnapshot(rec) };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };

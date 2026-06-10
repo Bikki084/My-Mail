@@ -252,7 +252,7 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
 
         <div className="space-y-2">
           <p className="text-xs font-medium text-zinc-400">
-            {snapshot?.poolRotation ? "Active send IP" : "Server IP"}
+            {snapshot?.poolRotation ? "Rotation label (campaigns & logs)" : "Server IP"}
           </p>
           <div className="flex gap-2">
             <div
@@ -289,8 +289,10 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
           </p>
           {snapshot?.poolRotation && snapshot.websiteIp ? (
             <p className="text-xs text-zinc-500">
-              Website URL (unchanged):{" "}
+              Website + real SMTP egress (always):{" "}
               <span className="font-mono text-zinc-300">{snapshot.websiteIp}</span>
+              {" — "}
+              the field above is only a label; mail does not send from a different IP.
             </p>
           ) : null}
         </div>

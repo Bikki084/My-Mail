@@ -243,6 +243,43 @@ async function syncLiveOutboundIp(
   }
 }
 
+/** Panel load: default rotation label to the primary (website) static IP. */
+async function alignLightsailPoolToPrimaryIp(
+  supabase: SupabaseClient,
+  userId: string,
+  row: {
+    current_ip: string;
+    expires_at: string | null;
+    rotation_threshold: number | null;
+  },
+): Promise<string> {
+  try {
+    const poolIps = await fetchLightsailPoolIpv4List();
+    const primary =
+      (await fetchLightsailWebsiteIpv4()) ?? poolIps[0] ?? row.current_ip;
+    if (row.current_ip === primary) return primary;
+    const expiresAt =
+      row.expires_at ?? new Date(Date.now() + LEASE_DURATION_MS).toISOString();
+    const rotationThreshold =
+      Number.isFinite(row.rotation_threshold) && row.rotation_threshold! > 0
+        ? Number(row.rotation_threshold)
+        : DEFAULT_ROTATION_THRESHOLD;
+    await supabase.from("user_outbound_ip").upsert(
+      {
+        user_id: userId,
+        current_ip: primary,
+        expires_at: expiresAt,
+        rotation_threshold: rotationThreshold,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id" },
+    );
+    return primary;
+  } catch {
+    return row.current_ip;
+  }
+}
+
 async function syncLightsailPoolOutboundIp(
   supabase: SupabaseClient,
   userId: string,
@@ -301,9 +338,15 @@ function recordMeta(): Pick<OutboundIpRecord, "mode" | "rotationConfigured"> {
  * Read the user's outbound IP record. Lazily creates the row with the server's
  * current public IP (or dev stub) on first access.
  */
+export type GetOutboundIpOptions = {
+  /** SMTP panel read: show primary website IP until user clicks Rotate. */
+  alignPoolToPrimaryOnRead?: boolean;
+};
+
 export async function getOrCreateOutboundIp(
   supabase: SupabaseClient,
   userId: string,
+  opts?: GetOutboundIpOptions,
 ): Promise<OutboundIpRecord> {
   const existing = await supabase
     .from("user_outbound_ip")
@@ -312,7 +355,9 @@ export async function getOrCreateOutboundIp(
     .maybeSingle();
   if (existing.data && existing.data.current_ip) {
     const ip = isAwsLightsailRotationConfigured()
-      ? await syncLightsailPoolOutboundIp(supabase, userId, existing.data)
+      ? opts?.alignPoolToPrimaryOnRead
+        ? await alignLightsailPoolToPrimaryIp(supabase, userId, existing.data)
+        : await syncLightsailPoolOutboundIp(supabase, userId, existing.data)
       : useInstancePublicIpMode() || isOutboundIpRotationConfigured()
         ? await syncLiveOutboundIp(supabase, userId, existing.data)
         : existing.data.current_ip;
