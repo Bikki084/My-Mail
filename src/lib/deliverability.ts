@@ -204,7 +204,7 @@ export function buildDeliverabilityHeaders(
       headers["X-MSMail-Priority"] = "Normal";
     } else {
       headers["List-ID"] = listId;
-      headers["X-Mailer"] = "MyMail SaaS (https://github.com/mymail-saas)";
+      headers["X-Mailer"] = "MyMail";
       headers["Feedback-ID"] = feedbackId;
       headers.Precedence = "bulk";
     }
@@ -332,9 +332,44 @@ export function getDkimConfigFromEnv(): DkimConfig | null {
   const domain = (process.env.DKIM_DOMAIN ?? "").trim();
   const selector = (process.env.DKIM_KEY_SELECTOR ?? "").trim();
   const rawKey = process.env.DKIM_PRIVATE_KEY ?? "";
-  if (!domain || !selector || !rawKey) return null;
+  if (!selector || !rawKey) return null;
 
-  // Allow the key to be passed with literal `\n` (common in single-line env files).
   const privateKey = rawKey.includes("BEGIN") ? rawKey.replace(/\\n/g, "\n") : rawKey;
-  return { domainName: domain, keySelector: selector, privateKey };
+  const domainName = domain || "";
+  if (!domainName && process.env.DKIM_AUTO_ALIGN_FROM === "0") return null;
+
+  return {
+    domainName,
+    keySelector: selector,
+    privateKey,
+  };
+}
+
+export function isDkimConfigured(): boolean {
+  if (!process.env.DKIM_KEY_SELECTOR?.trim() || !process.env.DKIM_PRIVATE_KEY?.trim()) {
+    return false;
+  }
+  if (process.env.DKIM_DOMAIN?.trim()) return true;
+  return process.env.DKIM_AUTO_ALIGN_FROM !== "0";
+}
+
+/**
+ * DKIM-sign when the From domain matches DKIM_DOMAIN (or auto-align from From).
+ * Misaligned signing hurts deliverability more than no signature.
+ */
+export function resolveDkimForFromAddress(fromAddress: string): DkimConfig | null {
+  const base = getDkimConfigFromEnv();
+  if (!base) return null;
+
+  const fromDomain = domainOf(extractAddress(fromAddress));
+  if (!fromDomain) return null;
+
+  const configuredDomain = base.domainName.trim().toLowerCase();
+  if (configuredDomain) {
+    if (configuredDomain === fromDomain) return base;
+    return null;
+  }
+
+  if (process.env.DKIM_AUTO_ALIGN_FROM === "0") return null;
+  return { ...base, domainName: fromDomain };
 }

@@ -20,6 +20,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { isClientDashboardPreviewMode } from "@/lib/auth-config";
 import { createClient } from "@/lib/supabase/server";
+import { DnsSetupPanel } from "@/components/client/deliverability/dns-setup-panel";
 
 export const dynamic = "force-dynamic";
 
@@ -113,6 +114,8 @@ export default async function ClientDeliverabilityPage() {
         </p>
       </header>
 
+      <DnsSetupPanel />
+
       {/* What the platform does for you ----------------------------------- */}
       <Card>
         <CardHeader>
@@ -137,6 +140,7 @@ export default async function ClientDeliverabilityPage() {
               "Outlook/Hotmail recipients get transactional-style headers (no bulk/marketing signals)",
               "Plain-text body auto-generated from your HTML so the MIME parts never drift",
               "Per-recipient X-Entity-Ref-ID for FBL / abuse triage",
+              "Optional in-process DKIM signing when DKIM_* env vars are set (aligned with your From domain)",
             ].map((line) => (
               <li key={line} className="flex items-start gap-2">
                 <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-500" />
