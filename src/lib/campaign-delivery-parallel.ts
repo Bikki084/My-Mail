@@ -31,9 +31,7 @@ import {
   buildDeliverabilityHeaders,
   resolveDeliverabilityProfile,
   extractAddress,
-  resolveDkimForFromAddress,
 } from "@/lib/deliverability";
-import { resolveMailerPublicBaseUrl } from "@/lib/mailer-public-url";
 import { partitionRecipientsBySmtp } from "@/lib/smtp-distribution";
 
 type SmtpRow = {
@@ -501,7 +499,7 @@ export async function deliverCampaignInParallel(
           streamName: (campaign.stream_name as string | null) ?? null,
           recipientEmail: recipient.email,
           fromAddress: from,
-          publicBaseUrl: resolveMailerPublicBaseUrl(),
+          publicBaseUrl: process.env.MAILER_PUBLIC_URL?.trim() || null,
           unsubscribeMailbox:
             process.env.MAILER_UNSUBSCRIBE_MAILBOX?.trim() || null,
         });
@@ -530,7 +528,6 @@ export async function deliverCampaignInParallel(
           } as const);
 
         const fromAddr = extractAddress(from);
-        const dkim = resolveDkimForFromAddress(from, smtp.host);
         await ensureTransporter().sendMail({
           from,
           to: recipient.email,
@@ -544,7 +541,6 @@ export async function deliverCampaignInParallel(
           headers: delivery.headers,
           text: textPayload || undefined,
           html: htmlPayload || undefined,
-          ...(dkim ? { dkim } : {}),
           ...(allAttachments.length ? { attachments: allAttachments } : {}),
         });
 

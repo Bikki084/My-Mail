@@ -1,4 +1,5 @@
 import nodemailer, { type Transporter, type TransportOptions } from "nodemailer";
+import { getDkimConfigFromEnv } from "@/lib/deliverability";
 import { parsePositiveIntEnv } from "@/lib/async-pool";
 
 /**
@@ -16,6 +17,7 @@ export function buildSmtpUserTransport(v: {
   password: string;
 }): Transporter {
   const usesImplicitTls = v.port === 465 ? true : v.port === 587 ? false : v.secure;
+  const dkim = getDkimConfigFromEnv();
   const poolEnabled = process.env.SMTP_POOL !== "0";
   const maxConnections = parsePositiveIntEnv("SMTP_MAX_CONNECTIONS", 10);
   const connectionTimeout = parsePositiveIntEnv("SMTP_CONNECTION_TIMEOUT_MS", 8_000);
@@ -37,5 +39,6 @@ export function buildSmtpUserTransport(v: {
           maxMessages: parsePositiveIntEnv("SMTP_MAX_MESSAGES_PER_CONNECTION", 500),
         }
       : {}),
+    ...(dkim ? { dkim } : {}),
   } as TransportOptions);
 }

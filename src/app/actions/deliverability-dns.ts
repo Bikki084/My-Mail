@@ -7,9 +7,12 @@ import {
   type DeliverabilityDnsBundle,
 } from "@/lib/dns-deliverability";
 import { fetchLightsailPoolIpv4List, isAwsLightsailRotationConfigured } from "@/lib/aws-outbound-ip";
-import { getDkimConfigFromEnv, isDkimConfigured } from "@/lib/deliverability";
-import { isMailerPublicUrlConfigured, resolveMailerPublicBaseUrl } from "@/lib/mailer-public-url";
+import { getDkimConfigFromEnv } from "@/lib/deliverability";
 import { domainOfEmail, isFreeMailDomain } from "@/lib/mailbox-domains";
+
+function mailerPublicUrl(): string | null {
+  return process.env.MAILER_PUBLIC_URL?.trim().replace(/\/+$/, "") || null;
+}
 
 export type ActionResult<T = undefined> =
   | { ok: true; data: T }
@@ -58,26 +61,26 @@ export async function getDeliverabilityStatusAction(): Promise<
 
   const dkim = getDkimConfigFromEnv();
   const hasFreeMailSender = smtpDomains.some((d) => isFreeMailDomain(d));
-  const mailerPublicUrl = resolveMailerPublicBaseUrl();
+  const publicUrl = mailerPublicUrl();
 
   const recommendations: string[] = [];
   if (hasFreeMailSender) {
     recommendations.push(
-      "Switch From address to a domain you own (not @gmail.com / @yahoo.com). Free-mail From addresses cannot pass DKIM/DMARC alignment and land in Spam.",
+      "CRITICAL: Sending From @gmail.com / @yahoo.com via a VPS IP fails SPF — 100% spam on inbox checkers. Use smtp.gmail.com with an App Password (same @gmail From), or buy your own domain + DNS auth.",
     );
   }
-  if (!isDkimConfigured()) {
+  if (!dkim) {
     const partialDkim =
       process.env.DKIM_PRIVATE_KEY?.trim() || process.env.DKIM_KEY_SELECTOR?.trim();
-    recommendations.push(
-      partialDkim
-        ? "Remove partial DKIM_* lines from .env.local unless DKIM_DOMAIN matches your From address and DNS is published — broken DKIM causes 100% spam."
-        : "Publish SPF+DKIM+DMARC DNS, then set DKIM_* env vars with DKIM_SIGNING_ENABLED=1.",
-    );
+    if (partialDkim) {
+      recommendations.push(
+        "Remove partial DKIM_* lines from .env.local on the server — they can break inbox placement.",
+      );
+    }
   }
-  if (!isMailerPublicUrlConfigured()) {
+  if (!publicUrl) {
     recommendations.push(
-      "Set MAILER_PUBLIC_URL (HTTPS) or NEXT_PUBLIC_APP_URL to your public site URL so Gmail/Yahoo get a one-click unsubscribe link.",
+      "Optional: set MAILER_PUBLIC_URL (HTTPS) for one-click unsubscribe links.",
     );
   }
   if (sendingIpv4.length > 0) {
@@ -91,9 +94,9 @@ export async function getDeliverabilityStatusAction(): Promise<
     data: {
       smtpDomains,
       hasFreeMailSender,
-      dkimConfigured: isDkimConfigured(),
+      dkimConfigured: dkim !== null,
       dkimDomain: dkim?.domainName ?? null,
-      mailerPublicUrl,
+      mailerPublicUrl: publicUrl,
       sendingIpv4,
       recommendations,
     },
@@ -153,16 +156,10 @@ export async function generateDeliverabilityDnsAction(input: {
 
     const envSnippet = bundle.dkim
       ? [
-          `# Add to .env.local on the VPS AFTER publishing DNS TXT records above.`,
-          `# Then: npm run build && pm2 restart all`,
-          `# Remove any DKIM_* lines if your From address is still @gmail.com — broken DKIM = 100% spam.`,
+          `# Optional — only after DNS TXT records above are published:`,
           `DKIM_DOMAIN=${bundle.domain}`,
           `DKIM_KEY_SELECTOR=${bundle.dkim.selector}`,
           `DKIM_PRIVATE_KEY=${dkimPrivateKeyForEnv(bundle.dkim.privateKeyPem)}`,
-          `# Only when From matches DKIM_DOMAIN and DNS is live:`,
-          `DKIM_SIGNING_ENABLED=1`,
-          `# Optional — HTTPS app URL with working /api/unsubscribe (not your domain unless app is hosted there):`,
-          `# MAILER_PUBLIC_URL=https://your-app.example.com`,
           `MAILER_POSTAL_ADDRESS=Your Company, Street, City, State ZIP, Country`,
         ].join("\n")
       : "";

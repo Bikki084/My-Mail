@@ -204,7 +204,7 @@ export function buildDeliverabilityHeaders(
       headers["X-MSMail-Priority"] = "Normal";
     } else {
       headers["List-ID"] = listId;
-      headers["X-Mailer"] = "MyMail";
+      headers["X-Mailer"] = "MyMail SaaS (https://github.com/mymail-saas)";
       headers["Feedback-ID"] = feedbackId;
       headers.Precedence = "bulk";
     }
@@ -329,59 +329,12 @@ export type DkimConfig = {
  * that's fine.
  */
 export function getDkimConfigFromEnv(): DkimConfig | null {
-  const domain = (process.env.DKIM_DOMAIN ?? "").trim().toLowerCase();
+  const domain = (process.env.DKIM_DOMAIN ?? "").trim();
   const selector = (process.env.DKIM_KEY_SELECTOR ?? "").trim();
   const rawKey = process.env.DKIM_PRIVATE_KEY ?? "";
   if (!domain || !selector || !rawKey) return null;
-  if (isFreeMailDomain(domain)) return null;
-  if (process.env.DKIM_SIGNING_ENABLED === "0") return null;
 
+  // Allow the key to be passed with literal `\n` (common in single-line env files).
   const privateKey = rawKey.includes("BEGIN") ? rawKey.replace(/\\n/g, "\n") : rawKey;
   return { domainName: domain, keySelector: selector, privateKey };
-}
-
-export function isDkimConfigured(): boolean {
-  return getDkimConfigFromEnv() !== null;
-}
-
-/** Known relays that DKIM-sign outbound mail — app signing on top often breaks auth. */
-export function isEspSmtpRelayHost(host: string): boolean {
-  const h = host.trim().toLowerCase();
-  return (
-    h.includes("gmail.com") ||
-    h.includes("googlemail.com") ||
-    h.includes("sendgrid.net") ||
-    h.includes("mailgun.org") ||
-    h.includes("mailgun.com") ||
-    h.includes("amazonses.com") ||
-    h.includes("email-smtp.") ||
-    h.includes("outlook.com") ||
-    h.includes("office365.com") ||
-    h.includes("smtp-mail.outlook.com") ||
-    h.includes("brevo.com") ||
-    h.includes("sendinblue.com") ||
-    h.includes("postmarkapp.com") ||
-    h.includes("resend.com")
-  );
-}
-
-/**
- * DKIM-sign only when DKIM_DOMAIN exactly matches the From domain and DNS is
- * configured. Misaligned or auto-guessed signing causes 100% spam — worse than
- * no signature.
- */
-export function resolveDkimForFromAddress(
-  fromAddress: string,
-  smtpHost?: string | null,
-): DkimConfig | null {
-  if (smtpHost && isEspSmtpRelayHost(smtpHost)) return null;
-
-  const base = getDkimConfigFromEnv();
-  if (!base) return null;
-
-  const fromDomain = domainOf(extractAddress(fromAddress));
-  if (!fromDomain || isFreeMailDomain(fromDomain)) return null;
-
-  if (base.domainName === fromDomain) return base;
-  return null;
 }
