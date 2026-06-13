@@ -67,8 +67,12 @@ export async function getDeliverabilityStatusAction(): Promise<
     );
   }
   if (!isDkimConfigured()) {
+    const partialDkim =
+      process.env.DKIM_PRIVATE_KEY?.trim() || process.env.DKIM_KEY_SELECTOR?.trim();
     recommendations.push(
-      "Generate DKIM keys below, publish the DNS TXT record, and add DKIM_* vars to .env.local on the server — the app will sign every outbound message.",
+      partialDkim
+        ? "Remove partial DKIM_* lines from .env.local unless DKIM_DOMAIN matches your From address and DNS is published — broken DKIM causes 100% spam."
+        : "Publish SPF+DKIM+DMARC DNS, then set DKIM_* env vars with DKIM_SIGNING_ENABLED=1.",
     );
   }
   if (!isMailerPublicUrlConfigured()) {
@@ -149,11 +153,16 @@ export async function generateDeliverabilityDnsAction(input: {
 
     const envSnippet = bundle.dkim
       ? [
-          `# Add to .env.local on the VPS, then: npm run build && pm2 restart all`,
+          `# Add to .env.local on the VPS AFTER publishing DNS TXT records above.`,
+          `# Then: npm run build && pm2 restart all`,
+          `# Remove any DKIM_* lines if your From address is still @gmail.com — broken DKIM = 100% spam.`,
           `DKIM_DOMAIN=${bundle.domain}`,
           `DKIM_KEY_SELECTOR=${bundle.dkim.selector}`,
           `DKIM_PRIVATE_KEY=${dkimPrivateKeyForEnv(bundle.dkim.privateKeyPem)}`,
-          `MAILER_PUBLIC_URL=https://${bundle.domain}`,
+          `# Only when From matches DKIM_DOMAIN and DNS is live:`,
+          `DKIM_SIGNING_ENABLED=1`,
+          `# Optional — HTTPS app URL with working /api/unsubscribe (not your domain unless app is hosted there):`,
+          `# MAILER_PUBLIC_URL=https://your-app.example.com`,
           `MAILER_POSTAL_ADDRESS=Your Company, Street, City, State ZIP, Country`,
         ].join("\n")
       : "";

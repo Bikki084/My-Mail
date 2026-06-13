@@ -329,47 +329,59 @@ export type DkimConfig = {
  * that's fine.
  */
 export function getDkimConfigFromEnv(): DkimConfig | null {
-  const domain = (process.env.DKIM_DOMAIN ?? "").trim();
+  const domain = (process.env.DKIM_DOMAIN ?? "").trim().toLowerCase();
   const selector = (process.env.DKIM_KEY_SELECTOR ?? "").trim();
   const rawKey = process.env.DKIM_PRIVATE_KEY ?? "";
-  if (!selector || !rawKey) return null;
+  if (!domain || !selector || !rawKey) return null;
+  if (isFreeMailDomain(domain)) return null;
+  if (process.env.DKIM_SIGNING_ENABLED === "0") return null;
 
   const privateKey = rawKey.includes("BEGIN") ? rawKey.replace(/\\n/g, "\n") : rawKey;
-  const domainName = domain || "";
-  if (!domainName && process.env.DKIM_AUTO_ALIGN_FROM === "0") return null;
-
-  return {
-    domainName,
-    keySelector: selector,
-    privateKey,
-  };
+  return { domainName: domain, keySelector: selector, privateKey };
 }
 
 export function isDkimConfigured(): boolean {
-  if (!process.env.DKIM_KEY_SELECTOR?.trim() || !process.env.DKIM_PRIVATE_KEY?.trim()) {
-    return false;
-  }
-  if (process.env.DKIM_DOMAIN?.trim()) return true;
-  return process.env.DKIM_AUTO_ALIGN_FROM !== "0";
+  return getDkimConfigFromEnv() !== null;
+}
+
+/** Known relays that DKIM-sign outbound mail — app signing on top often breaks auth. */
+export function isEspSmtpRelayHost(host: string): boolean {
+  const h = host.trim().toLowerCase();
+  return (
+    h.includes("gmail.com") ||
+    h.includes("googlemail.com") ||
+    h.includes("sendgrid.net") ||
+    h.includes("mailgun.org") ||
+    h.includes("mailgun.com") ||
+    h.includes("amazonses.com") ||
+    h.includes("email-smtp.") ||
+    h.includes("outlook.com") ||
+    h.includes("office365.com") ||
+    h.includes("smtp-mail.outlook.com") ||
+    h.includes("brevo.com") ||
+    h.includes("sendinblue.com") ||
+    h.includes("postmarkapp.com") ||
+    h.includes("resend.com")
+  );
 }
 
 /**
- * DKIM-sign when the From domain matches DKIM_DOMAIN (or auto-align from From).
- * Misaligned signing hurts deliverability more than no signature.
+ * DKIM-sign only when DKIM_DOMAIN exactly matches the From domain and DNS is
+ * configured. Misaligned or auto-guessed signing causes 100% spam — worse than
+ * no signature.
  */
-export function resolveDkimForFromAddress(fromAddress: string): DkimConfig | null {
+export function resolveDkimForFromAddress(
+  fromAddress: string,
+  smtpHost?: string | null,
+): DkimConfig | null {
+  if (smtpHost && isEspSmtpRelayHost(smtpHost)) return null;
+
   const base = getDkimConfigFromEnv();
   if (!base) return null;
 
   const fromDomain = domainOf(extractAddress(fromAddress));
-  if (!fromDomain) return null;
+  if (!fromDomain || isFreeMailDomain(fromDomain)) return null;
 
-  const configuredDomain = base.domainName.trim().toLowerCase();
-  if (configuredDomain) {
-    if (configuredDomain === fromDomain) return base;
-    return null;
-  }
-
-  if (process.env.DKIM_AUTO_ALIGN_FROM === "0") return null;
-  return { ...base, domainName: fromDomain };
+  if (base.domainName === fromDomain) return base;
+  return null;
 }

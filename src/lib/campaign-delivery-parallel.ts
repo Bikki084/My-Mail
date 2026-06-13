@@ -530,7 +530,7 @@ export async function deliverCampaignInParallel(
           } as const);
 
         const fromAddr = extractAddress(from);
-        const dkim = resolveDkimForFromAddress(from);
+        const dkim = resolveDkimForFromAddress(from, smtp.host);
         await ensureTransporter().sendMail({
           from,
           to: recipient.email,
