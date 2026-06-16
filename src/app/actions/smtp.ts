@@ -37,6 +37,14 @@ export type SmtpFormInput = {
 };
 
 const HOST_RE = /^[a-z0-9.-]+\.[a-z]{2,}$/i;
+const IP_V4 =
+  /^(?:(?:25[0-5]|2[0-4]\d|[01]?\d{1,2})\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d{1,2})$/;
+
+function isValidSmtpHost(host: string): boolean {
+  if (host === "localhost") return true;
+  if (IP_V4.test(host)) return true;
+  return HOST_RE.test(host);
+}
 
 type ValidatedSmtpInput = {
   host: string;
@@ -51,7 +59,9 @@ type ValidatedSmtpInput = {
 function validateSmtpInput(input: SmtpFormInput): ValidatedSmtpInput | string {
   const host = String(input.host ?? "").trim().toLowerCase();
   if (!host) return "Host is required.";
-  if (!HOST_RE.test(host)) return "Host looks invalid (expected e.g. smtp.gmail.com).";
+  if (!isValidSmtpHost(host)) {
+    return "Host looks invalid (use e.g. smtp.gmail.com, localhost, or 127.0.0.1).";
+  }
 
   const portNum =
     typeof input.port === "number" ? input.port : parseInt(String(input.port ?? ""), 10);
