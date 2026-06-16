@@ -400,6 +400,15 @@ export function SmtpForm({
     void refreshSaved();
   }, [refreshSaved]);
 
+  const isLocalPostfix =
+    (smtpHost.trim() === "127.0.0.1" ||
+      smtpHost.trim().toLowerCase() === "localhost") &&
+    smtpPort.trim() === "25";
+
+  React.useEffect(() => {
+    if (isLocalPostfix && secure) setSecure(false);
+  }, [isLocalPostfix, secure]);
+
   async function handleNextToComposer() {
     if (previewMode) {
       toast.message("Sign in to continue.");
@@ -943,10 +952,16 @@ export function SmtpForm({
             <div>
               <p className="text-sm font-medium text-zinc-200">Secure (TLS / SSL)</p>
               <p className="text-xs text-zinc-500">
-                Port 465 uses implicit TLS; 587 uses STARTTLS. Leave on for Gmail/Yahoo/Outlook.
+                {isLocalPostfix
+                  ? "Keep OFF for local Postfix on port 25 (plain SMTP on 127.0.0.1)."
+                  : "Port 465 uses implicit TLS; 587 uses STARTTLS. Leave on for Gmail/Yahoo/Outlook."}
               </p>
             </div>
-            <Switch checked={secure} onCheckedChange={setSecure} />
+            <Switch
+              checked={secure}
+              onCheckedChange={setSecure}
+              disabled={isLocalPostfix}
+            />
           </div>
           <div className="flex flex-wrap items-center gap-2 pt-1">
             <Button

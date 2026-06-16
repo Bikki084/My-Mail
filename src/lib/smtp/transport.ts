@@ -34,6 +34,17 @@ export function smtpAuthOptions(
 }
 
 /**
+ * Nodemailer `secure` = implicit TLS. Port 25 is plain SMTP (never implicit TLS).
+ * Port 587 uses STARTTLS with secure:false; only 465 uses secure:true.
+ */
+export function resolveSmtpImplicitTls(host: string, port: number, secure: boolean): boolean {
+  if (port === 465) return true;
+  if (port === 587 || port === 25) return false;
+  if (isLocalSmtpHost(host)) return false;
+  return secure;
+}
+
+/**
  * Nodemailer transport for user SMTP, matching server actions' host/port/secure rules
  * (Gmail/587 STARTTLS, 465 implicit TLS, etc.).
  *
@@ -47,7 +58,7 @@ export function buildSmtpUserTransport(v: {
   username: string;
   password: string;
 }): Transporter {
-  const usesImplicitTls = v.port === 465 ? true : v.port === 587 ? false : v.secure;
+  const usesImplicitTls = resolveSmtpImplicitTls(v.host, v.port, v.secure);
   const dkim = getDkimConfigFromEnv();
   const poolEnabled = process.env.SMTP_POOL !== "0";
   const maxConnections = parsePositiveIntEnv("SMTP_MAX_CONNECTIONS", 10);

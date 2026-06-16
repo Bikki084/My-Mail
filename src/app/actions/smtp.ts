@@ -15,7 +15,7 @@ import {
   isUniqueViolation,
   smtpIdentityKey,
 } from "@/lib/smtp-identity";
-import { smtpAuthOptions, smtpConnectionExtras } from "@/lib/smtp/transport";
+import { smtpAuthOptions, smtpConnectionExtras, resolveSmtpImplicitTls } from "@/lib/smtp/transport";
 
 export type ActionResult<T = undefined> =
   | { ok: true; data?: T }
@@ -100,12 +100,7 @@ function validateSmtpInput(input: SmtpFormInput): ValidatedSmtpInput | string {
 }
 
 function buildTransportOptions(v: ValidatedSmtpInput): TransportOptions {
-  // Nodemailer convention:
-  //   secure: true  => implicit TLS (port 465)
-  //   secure: false => STARTTLS upgrade on ports 587 / 25
-  // When the caller asks for 587 + secure:true we force STARTTLS instead,
-  // because 587 does *not* accept implicit TLS on Gmail/Yahoo/Outlook.
-  const usesImplicitTls = v.port === 465 ? true : v.port === 587 ? false : v.secure;
+  const usesImplicitTls = resolveSmtpImplicitTls(v.host, v.port, v.secure);
   return {
     host: v.host,
     port: v.port,
@@ -157,7 +152,10 @@ function friendlySmtpError(err: unknown, hostHint?: string): string {
     return `DNS lookup failed for the host (${msg}).`;
   }
   if (/self-signed certificate/i.test(msg)) {
-    return `TLS certificate rejected (${msg}). For local Postfix on 127.0.0.1:25, redeploy the latest app build — it skips TLS on loopback.`;
+    return `TLS certificate rejected (${msg}). For local Postfix on 127.0.0.1:25, turn Secure OFF — port 25 is plain SMTP.`;
+  }
+  if (/wrong version number/i.test(msg)) {
+    return `TLS mismatch on ${host}: turn Secure (TLS) OFF for port 25 / local Postfix (127.0.0.1). Port 25 does not use implicit TLS.`;
   }
   return msg;
 }
