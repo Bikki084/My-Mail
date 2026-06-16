@@ -15,7 +15,7 @@ import {
   isUniqueViolation,
   smtpIdentityKey,
 } from "@/lib/smtp-identity";
-import { smtpConnectionExtras } from "@/lib/smtp/transport";
+import { smtpAuthOptions, smtpConnectionExtras } from "@/lib/smtp/transport";
 
 export type ActionResult<T = undefined> =
   | { ok: true; data?: T }
@@ -110,7 +110,7 @@ function buildTransportOptions(v: ValidatedSmtpInput): TransportOptions {
     host: v.host,
     port: v.port,
     secure: usesImplicitTls,
-    auth: { user: v.username, pass: v.password },
+    ...smtpAuthOptions(v.host, v.username, v.password),
     // Fail fast — no point waiting 60s on a bad host/port combo.
     connectionTimeout: 15_000,
     greetingTimeout: 10_000,

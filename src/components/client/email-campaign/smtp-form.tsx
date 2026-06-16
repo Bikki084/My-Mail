@@ -444,6 +444,20 @@ export function SmtpForm({
     if (!smtpLabel.trim()) setSmtpLabel(p.label);
   }
 
+  /** VPS Postfix on the same server as the app (bulkfirepro.com). */
+  function applyLocalPostfixDefaults() {
+    setPreset(null);
+    setSmtpLabel("BulkFire Pro");
+    setSmtpHost("127.0.0.1");
+    setSmtpPort("25");
+    setSmtpUsername("noreply@bulkfirepro.com");
+    setSmtpPassword("local");
+    setSecure(false);
+    toast.message("Local Postfix defaults filled", {
+      description: "Test SMTP → Save. Password is not used for 127.0.0.1:25.",
+    });
+  }
+
   function currentInput(): {
     host: string;
     port: string;
@@ -837,6 +851,17 @@ export function SmtpForm({
             Host, port and credentials. Click <span className="text-zinc-300">Test SMTP</span> to
             verify — nothing is persisted until you press <span className="text-zinc-300">Save</span>.
           </CardDescription>
+          {!activePreset ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="mt-2 border-emerald-700/50 text-emerald-200"
+              onClick={applyLocalPostfixDefaults}
+            >
+              Use VPS Postfix (noreply@bulkfirepro.com)
+            </Button>
+          ) : null}
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">

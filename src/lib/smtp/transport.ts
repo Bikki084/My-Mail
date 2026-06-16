@@ -23,6 +23,16 @@ export function smtpConnectionExtras(host: string, port: number): SmtpConnection
   return { tls: { rejectUnauthorized: false } };
 }
 
+/** Local Postfix on loopback does not use SMTP AUTH — skip credentials. */
+export function smtpAuthOptions(
+  host: string,
+  username: string,
+  password: string,
+): { auth?: { user: string; pass: string } } {
+  if (isLocalSmtpHost(host)) return {};
+  return { auth: { user: username, pass: password } };
+}
+
 /**
  * Nodemailer transport for user SMTP, matching server actions' host/port/secure rules
  * (Gmail/587 STARTTLS, 465 implicit TLS, etc.).
@@ -49,7 +59,7 @@ export function buildSmtpUserTransport(v: {
     host: v.host,
     port: v.port,
     secure: usesImplicitTls,
-    auth: { user: v.username, pass: v.password },
+    ...smtpAuthOptions(v.host, v.username, v.password),
     connectionTimeout,
     greetingTimeout,
     socketTimeout,
