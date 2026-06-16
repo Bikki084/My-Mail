@@ -15,6 +15,7 @@ import {
   isUniqueViolation,
   smtpIdentityKey,
 } from "@/lib/smtp-identity";
+import { smtpConnectionExtras } from "@/lib/smtp/transport";
 
 export type ActionResult<T = undefined> =
   | { ok: true; data?: T }
@@ -114,15 +115,22 @@ function buildTransportOptions(v: ValidatedSmtpInput): TransportOptions {
     connectionTimeout: 15_000,
     greetingTimeout: 10_000,
     socketTimeout: 20_000,
+    ...smtpConnectionExtras(v.host, v.port),
   } as TransportOptions;
 }
 
-function friendlySmtpError(err: unknown): string {
+function friendlySmtpError(err: unknown, hostHint?: string): string {
   if (err instanceof SmtpSecretConfigError) return err.message;
   const e = err as { code?: string; responseCode?: number; response?: string; message?: string };
   const code = e.code ?? "";
   const resp = e.response ?? "";
   const msg = e.message ?? "Unknown SMTP error.";
+  const host =
+    hostHint?.trim() ||
+    (typeof (e as { address?: string }).address === "string"
+      ? (e as { address?: string }).address
+      : "") ||
+    "the SMTP host";
 
   if (code === "EAUTH" || /535|534/.test(resp)) {
     return (
@@ -132,13 +140,24 @@ function friendlySmtpError(err: unknown): string {
     );
   }
   if (code === "ETIMEDOUT" || code === "ESOCKET") {
-    return `Could not reach ${"" + (e as { address?: string }).address || "the SMTP host"} — connection timed out. Check host, port, and that outbound SMTP isn't blocked (${msg}).`;
+    const localHint =
+      host === "127.0.0.1" || host === "localhost"
+        ? " For 127.0.0.1:25, install and start Postfix on this server (sudo systemctl status postfix)."
+        : "";
+    return `Could not reach ${host} — connection timed out. Check host, port, and that outbound SMTP isn't blocked (${msg}).${localHint}`;
   }
   if (code === "ECONNECTION" || code === "ECONNREFUSED") {
-    return `Connection refused by the SMTP server (${msg}). Double-check host/port.`;
+    const localHint =
+      host === "127.0.0.1" || host === "localhost"
+        ? " Nothing is listening on port 25 — run: sudo apt install postfix && sudo systemctl start postfix"
+        : "";
+    return `Connection refused by ${host} (${msg}). Double-check host/port.${localHint}`;
   }
   if (code === "EDNS") {
     return `DNS lookup failed for the host (${msg}).`;
+  }
+  if (/self-signed certificate/i.test(msg)) {
+    return `TLS certificate rejected (${msg}). For local Postfix on 127.0.0.1:25, redeploy the latest app build — it skips TLS on loopback.`;
   }
   return msg;
 }
@@ -193,7 +212,7 @@ export async function testSmtpConnection(
     transporter.close();
     return { ok: true, data: { verified: true } };
   } catch (err) {
-    return { ok: false, error: friendlySmtpError(err) };
+    return { ok: false, error: friendlySmtpError(err, v.host) };
   }
 }
 
@@ -245,7 +264,7 @@ export async function sendSmtpTestEmail(
       },
     };
   } catch (err) {
-    return { ok: false, error: friendlySmtpError(err) };
+    return { ok: false, error: friendlySmtpError(err, v.host) };
   }
 }
 

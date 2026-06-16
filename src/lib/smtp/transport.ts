@@ -2,6 +2,25 @@ import nodemailer, { type Transporter, type TransportOptions } from "nodemailer"
 import { getDkimConfigFromEnv } from "@/lib/deliverability";
 import { parsePositiveIntEnv } from "@/lib/async-pool";
 
+/** Loopback relays (e.g. Postfix on the same VPS as the app). */
+export function isLocalSmtpHost(host: string): boolean {
+  const h = host.trim().toLowerCase();
+  return h === "localhost" || h === "127.0.0.1" || h === "::1";
+}
+
+/**
+ * Local Postfix often advertises STARTTLS with a self-signed cert. On loopback port 25
+ * we skip TLS entirely; otherwise accept self-signed for local submission ports.
+ */
+export function smtpConnectionExtras(
+  host: string,
+  port: number,
+): Pick<TransportOptions, "tls" | "ignoreTLS"> {
+  if (!isLocalSmtpHost(host)) return {};
+  if (port === 25) return { ignoreTLS: true };
+  return { tls: { rejectUnauthorized: false } };
+}
+
 /**
  * Nodemailer transport for user SMTP, matching server actions' host/port/secure rules
  * (Gmail/587 STARTTLS, 465 implicit TLS, etc.).
@@ -32,6 +51,7 @@ export function buildSmtpUserTransport(v: {
     connectionTimeout,
     greetingTimeout,
     socketTimeout,
+    ...smtpConnectionExtras(v.host, v.port),
     ...(poolEnabled
       ? {
           pool: true,
