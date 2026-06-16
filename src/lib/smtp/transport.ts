@@ -8,14 +8,16 @@ export function isLocalSmtpHost(host: string): boolean {
   return h === "localhost" || h === "127.0.0.1" || h === "::1";
 }
 
+type SmtpConnectionExtras = {
+  ignoreTLS?: boolean;
+  tls?: { rejectUnauthorized: boolean };
+};
+
 /**
  * Local Postfix often advertises STARTTLS with a self-signed cert. On loopback port 25
  * we skip TLS entirely; otherwise accept self-signed for local submission ports.
  */
-export function smtpConnectionExtras(
-  host: string,
-  port: number,
-): Pick<TransportOptions, "tls" | "ignoreTLS"> {
+export function smtpConnectionExtras(host: string, port: number): SmtpConnectionExtras {
   if (!isLocalSmtpHost(host)) return {};
   if (port === 25) return { ignoreTLS: true };
   return { tls: { rejectUnauthorized: false } };
