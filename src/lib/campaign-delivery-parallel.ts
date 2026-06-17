@@ -26,6 +26,7 @@ import { resolveMailEncoding } from "@/lib/mail-encoding";
 import { buildSmtpUserTransport } from "@/lib/smtp/transport";
 import { rotateOutboundIp, prepareLightsailEgressForCampaign } from "@/lib/outbound-ip";
 import { isAwsLightsailPoolRotationEnabled } from "@/lib/aws-outbound-ip";
+import { resolveSmtpFromAddress } from "@/lib/smtp/from-address";
 import {
   appendUnsubscribeFooter,
   buildDeliverabilityHeaders,
@@ -438,7 +439,7 @@ export async function deliverCampaignInParallel(
       const safeHtml = sourceHtml ? sanitizeEmailHtml(sourceHtml) : "";
       const html = applyMergeTags(safeHtml, recipient, { missingFormat: "html" });
       const text = htmlToPlainText(html);
-      const from = `${senderName} <${smtp.username}>`;
+      const from = `${senderName} <${resolveSmtpFromAddress(smtp.username, smtp.host)}>`;
 
       const dynamicAttachments: Attachment[] = [];
       if (renderBrowser && htmlAttSpec) {

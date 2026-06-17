@@ -15,7 +15,8 @@ import {
   isUniqueViolation,
   smtpIdentityKey,
 } from "@/lib/smtp-identity";
-import { smtpAuthOptions, smtpConnectionExtras, resolveSmtpImplicitTls } from "@/lib/smtp/transport";
+import { smtpAuthOptions, smtpConnectionExtras, resolveSmtpImplicitTls, isLocalSmtpHost } from "@/lib/smtp/transport";
+import { resolveSmtpFromAddress } from "@/lib/smtp/from-address";
 
 export type ActionResult<T = undefined> =
   | { ok: true; data?: T }
@@ -101,11 +102,15 @@ function validateSmtpInput(input: SmtpFormInput): ValidatedSmtpInput | string {
 
 function buildTransportOptions(v: ValidatedSmtpInput): TransportOptions {
   const usesImplicitTls = resolveSmtpImplicitTls(v.host, v.port, v.secure);
+  const authUser = v.username;
+  const authPass = v.password;
   return {
     host: v.host,
     port: v.port,
     secure: usesImplicitTls,
-    ...smtpAuthOptions(v.host, v.username, v.password),
+    ...(isLocalSmtpHost(v.host)
+      ? smtpAuthOptions(v.host, authUser, authPass)
+      : { auth: { user: authUser, pass: authPass } }),
     // Fail fast — no point waiting 60s on a bad host/port combo.
     connectionTimeout: 15_000,
     greetingTimeout: 10_000,
@@ -156,6 +161,15 @@ function friendlySmtpError(err: unknown, hostHint?: string): string {
   }
   if (/wrong version number/i.test(msg)) {
     return `TLS mismatch on ${host}: turn Secure (TLS) OFF for port 25 / local Postfix (127.0.0.1). Port 25 does not use implicit TLS.`;
+  }
+  if (/mail command failed/i.test(msg) && /email-smtp\..*amazonaws\.com/i.test(host)) {
+    if (/not verified|554|553|501|invalid.*from|sender.*reject/i.test(`${resp} ${msg}`)) {
+      return (
+        `Amazon SES rejected the sender or recipient. For SES SMTP the login is AKIA… but the From address must be ` +
+        `noreply@your-verified-domain (set DKIM_DOMAIN=bulkfirepro.com in server .env.local and redeploy). ` +
+        `In sandbox mode you can only send to verified addresses. Server said: ${resp || msg}`
+      );
+    }
   }
   return msg;
 }
@@ -244,8 +258,9 @@ export async function sendSmtpTestEmail(
 
   try {
     const transporter = nodemailer.createTransport(buildTransportOptions(v));
+    const fromAddr = resolveSmtpFromAddress(v.username, v.host);
     const info = await transporter.sendMail({
-      from: `"MyMail Test" <${v.username}>`,
+      from: `"MyMail Test" <${fromAddr}>`,
       to,
       subject: "MyMail SMTP test",
       text:

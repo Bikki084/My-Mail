@@ -36,6 +36,7 @@ import {
   DUPLICATE_SMTP_MESSAGE,
   smtpIdentityKey,
 } from "@/lib/smtp-identity";
+import { isSesSmtpHost } from "@/lib/smtp/from-address";
 import { cn } from "@/lib/utils";
 import { ServerIpPanel } from "./server-ip-panel";
 import {
@@ -453,7 +454,19 @@ export function SmtpForm({
     if (!smtpLabel.trim()) setSmtpLabel(p.label);
   }
 
-  /** VPS Postfix on the same server as the app (bulkfirepro.com). */
+  function applySesDefaults() {
+    setPreset(null);
+    setSmtpLabel("BulkFire Pro SES");
+    setSmtpHost("email-smtp.ap-south-1.amazonaws.com");
+    setSmtpPort("587");
+    setSmtpUsername("");
+    setSmtpPassword("");
+    setSecure(true);
+    toast.message("SES fields filled", {
+      description: "Paste SMTP username (AKIA…) and password from AWS SES → SMTP settings.",
+    });
+  }
+
   function applyLocalPostfixDefaults() {
     setPreset(null);
     setSmtpLabel("BulkFire Pro");
@@ -861,15 +874,26 @@ export function SmtpForm({
             verify — nothing is persisted until you press <span className="text-zinc-300">Save</span>.
           </CardDescription>
           {!activePreset ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="mt-2 border-emerald-700/50 text-emerald-200"
-              onClick={applyLocalPostfixDefaults}
-            >
-              Use VPS Postfix (noreply@bulkfirepro.com)
-            </Button>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="border-emerald-700/50 text-emerald-200"
+                onClick={applySesDefaults}
+              >
+                Use Amazon SES (bulkfirepro.com)
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="border-zinc-600 text-zinc-300"
+                onClick={applyLocalPostfixDefaults}
+              >
+                Use VPS Postfix (127.0.0.1)
+              </Button>
+            </div>
           ) : null}
         </CardHeader>
         <CardContent className="space-y-4">
@@ -915,16 +939,34 @@ export function SmtpForm({
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="smtp-user">Username (email)</Label>
+              <Label htmlFor="smtp-user">
+                {isSesSmtpHost(smtpHost)
+                  ? "SMTP username (from AWS SES)"
+                  : "Username (email)"}
+              </Label>
               <Input
                 id="smtp-user"
-                type="email"
+                type={isSesSmtpHost(smtpHost) ? "text" : "email"}
                 autoComplete="username"
-                placeholder={activePreset?.id === "gmail" ? "you@gmail.com" : "you@example.com"}
-                className="bg-zinc-950/50"
+                placeholder={
+                  isSesSmtpHost(smtpHost)
+                    ? "AKIA… (SES SMTP credentials)"
+                    : activePreset?.id === "gmail"
+                      ? "you@gmail.com"
+                      : "you@example.com"
+                }
+                className="bg-zinc-950/50 font-mono"
                 value={smtpUsername}
                 onChange={(e) => setSmtpUsername(e.target.value)}
               />
+              {isSesSmtpHost(smtpHost) ? (
+                <p className="text-xs text-zinc-500">
+                  Paste the <strong>SMTP username</strong> from AWS (starts with AKIA). Campaigns
+                  send From <strong>noreply@bulkfirepro.com</strong> automatically when{" "}
+                  <code className="text-emerald-400">DKIM_DOMAIN=bulkfirepro.com</code> is set on the
+                  server.
+                </p>
+              ) : null}
             </div>
             <div className="space-y-2">
               <Label htmlFor="smtp-pass">
