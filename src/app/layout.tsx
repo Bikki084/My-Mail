@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist_Mono, Inter } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/components/providers";
+import { APP_BRAND_NAME } from "@/lib/brand";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -16,7 +17,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "MyMail — Bulk Email SaaS",
+  title: `${APP_BRAND_NAME} — Bulk Email SaaS`,
   description:
     "Multi-tenant bulk email platform with SMTP rotation, merge tags, and credit-based usage.",
 };

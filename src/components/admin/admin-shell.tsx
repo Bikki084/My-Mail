@@ -40,6 +40,7 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
+import { APP_BRAND_NAME } from "@/lib/brand";
 
 const nav: { href: string; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { href: "/admin", label: "Dashboard", icon: LayoutDashboard },
@@ -95,7 +96,7 @@ export function AdminShell({
               <Mail className="size-5 text-white" />
             </div>
             <div className="group-data-[collapsible=icon]:hidden">
-              <p className="text-sm font-semibold tracking-tight text-white">MyMail</p>
+              <p className="text-sm font-semibold tracking-tight text-white">{APP_BRAND_NAME}</p>
               <p className="text-xs text-gray-500">Admin Console</p>
             </div>
           </div>

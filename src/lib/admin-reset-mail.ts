@@ -1,5 +1,6 @@
 import nodemailer, { type Transporter, type TransportOptions } from "nodemailer";
 import { buildSmtpUserTransport } from "@/lib/smtp/transport";
+import { APP_BRAND_NAME } from "@/lib/brand";
 
 function envTrim(key: string): string | undefined {
   const raw = process.env[key];
@@ -81,7 +82,7 @@ export async function sendAdminPasswordResetEmail(
   }
 
   const from =
-    envTrim("ADMIN_RESET_MAIL_FROM") || `MyMail Admin <${args.to}>`;
+    envTrim("ADMIN_RESET_MAIL_FROM") || `${APP_BRAND_NAME} Admin <${args.to}>`;
 
   try {
     await transporter.sendMail({

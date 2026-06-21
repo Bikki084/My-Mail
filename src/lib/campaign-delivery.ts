@@ -21,6 +21,7 @@ import {
   createCampaignAbortChecker,
   isCampaignCancelled,
 } from "@/lib/campaign-cancel";
+import { APP_DEFAULT_SENDER_NAME } from "@/lib/brand";
 
 type SmtpRow = {
   id: string;
@@ -459,7 +460,7 @@ export async function runSendCampaign(
     );
   }
 
-  const senderName = (campaign.sender_name as string | null)?.trim() || "My Mail";
+  const senderName = (campaign.sender_name as string | null)?.trim() || APP_DEFAULT_SENDER_NAME;
   const mailAttachments = nodemailerAttachmentsFromCampaignField(
     campaign.attachment_paths,
   );

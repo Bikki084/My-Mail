@@ -17,6 +17,7 @@ import { EmailCampaignProvider } from "./email-campaign-context";
 import { WalletStateProvider } from "./wallet-state-context";
 import { PlanCountdownHeader } from "./plan-countdown-header";
 import { CampaignProgressMonitor } from "./campaign-progress-monitor";
+import { APP_BRAND_NAME } from "@/lib/brand";
 
 const TAB_VALUES = [
   { value: "wallet", label: "Wallet & Plan" },
@@ -56,7 +57,7 @@ export function EmailCampaignConsole({
             <Link
               href="/client"
               className="group flex shrink-0 items-center gap-0 rounded-xl outline-none ring-zinc-600 focus-visible:ring-2"
-              aria-label="My Mail — Email Campaign home"
+              aria-label={`${APP_BRAND_NAME} — Email Campaign home`}
             >
               <span className="flex size-10 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-violet-600 shadow-md shadow-violet-950/40 ring-1 ring-white/10 transition group-hover:brightness-110">
                 <Mail className="size-[1.125rem] text-white" strokeWidth={2} />

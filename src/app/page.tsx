@@ -2,6 +2,7 @@ import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
 import { HomeAnimatedBackground } from "@/components/marketing/home-animated-background";
 import { cn } from "@/lib/utils";
+import { APP_BRAND_NAME } from "@/lib/brand";
 import {
   ArrowRight,
   BarChart3,
@@ -53,7 +54,7 @@ export default function HomePage() {
             <span className="flex size-9 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 shadow-lg shadow-emerald-950/50 ring-1 ring-white/10 transition group-hover:brightness-110">
               <Mail className="size-[1.125rem] text-white" strokeWidth={2} />
             </span>
-            <span className="font-semibold tracking-tight text-zinc-50">MyMail</span>
+            <span className="font-semibold tracking-tight text-zinc-50">{APP_BRAND_NAME}</span>
           </Link>
           <Link
             href="/login"
@@ -169,7 +170,7 @@ export default function HomePage() {
       </main>
 
       <footer className="relative z-10 border-t border-zinc-800/80 py-6 text-center text-xs text-zinc-500">
-        <p>MyMail — bulk email for teams that need control, rotation, and visibility.</p>
+        <p>{APP_BRAND_NAME} — bulk email for teams that need control, rotation, and visibility.</p>
       </footer>
     </div>
   );

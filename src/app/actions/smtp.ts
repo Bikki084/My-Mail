@@ -17,6 +17,7 @@ import {
 } from "@/lib/smtp-identity";
 import { smtpAuthOptions, smtpConnectionExtras, resolveSmtpImplicitTls, isLocalSmtpHost } from "@/lib/smtp/transport";
 import { resolveSmtpFromAddress } from "@/lib/smtp/from-address";
+import { APP_BRAND_NAME } from "@/lib/brand";
 
 export type ActionResult<T = undefined> =
   | { ok: true; data?: T }
@@ -260,11 +261,11 @@ export async function sendSmtpTestEmail(
     const transporter = nodemailer.createTransport(buildTransportOptions(v));
     const fromAddr = resolveSmtpFromAddress(v.username, v.host);
     const info = await transporter.sendMail({
-      from: `"MyMail Test" <${fromAddr}>`,
+      from: `"${APP_BRAND_NAME} Test" <${fromAddr}>`,
       to,
-      subject: "MyMail SMTP test",
+      subject: `${APP_BRAND_NAME} SMTP test`,
       text:
-        `This is a test email sent from the MyMail SaaS SMTP configuration page.\n\n` +
+        `This is a test email sent from the ${APP_BRAND_NAME} SMTP configuration page.\n\n` +
         `Host: ${v.host}\nPort: ${v.port}\nUsername: ${v.username}\n\n` +
         `If you received this, your SMTP is working. You can now use it to send campaigns.`,
     });

@@ -11,6 +11,7 @@ import {
   useAnnouncementsSnapshot,
 } from "@/components/client/announcements/announcements-context";
 import type { AnnouncementItem } from "@/app/actions/announcements";
+import { APP_BRAND_NAME } from "@/lib/brand";
 
 function HeaderBell() {
   const { all, unread, userId } = useAnnouncementsSnapshot();
@@ -38,12 +39,12 @@ function ClientSubpageHeader({
       <Link
         href="/client"
         className="group flex items-center gap-2.5 text-white outline-none ring-zinc-600 focus-visible:rounded-lg focus-visible:ring-2"
-        aria-label="My Mail — back to Email Campaign"
+        aria-label={`${APP_BRAND_NAME} — back to Email Campaign`}
       >
         <span className="flex size-9 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-violet-600 shadow-md shadow-violet-950/35 ring-1 ring-white/10 transition group-hover:brightness-110">
           <Mail className="size-4 text-white" strokeWidth={2} />
         </span>
-        <span className="text-sm font-semibold tracking-tight">My Mail</span>
+        <span className="text-sm font-semibold tracking-tight">{APP_BRAND_NAME}</span>
       </Link>
       <div className="flex items-center gap-1">
         {!previewMode && <HeaderBell />}

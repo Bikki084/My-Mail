@@ -9,6 +9,7 @@ import {
 import { parsedCsvToRecipientRows } from "@/lib/csv-recipients";
 import type { ParsedCsv } from "@/lib/csv-types";
 import type { RecipientRow } from "@/lib/merge-tags";
+import { APP_BRAND_NAME, APP_DEFAULT_SENDER_NAME } from "@/lib/brand";
 
 const STORAGE_V = 4 as const;
 const csvStorageKey = (userId: string) => `mymail.campaign.csv.${STORAGE_V}.${userId}`;
@@ -34,9 +35,9 @@ const defaultCompose: ComposeDraft = {
   subject: "Welcome, {{{name}}}",
   text: `Hi {{{name}}},
 
-This is a test from My Mail.`,
+This is a test from ${APP_BRAND_NAME}.`,
   html: `<p>Hi {{{name}}},</p><p><strong>HTML</strong> body.</p>`,
-  senderName: "MyMail Campaigns",
+  senderName: APP_DEFAULT_SENDER_NAME,
   streamName: "",
   encoding: "auto",
 };

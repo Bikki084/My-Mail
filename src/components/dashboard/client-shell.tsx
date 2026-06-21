@@ -36,6 +36,7 @@ import {
   LoginEventBootstrap,
   LOGIN_EVENT_BOOTSTRAP_KEY,
 } from "@/components/auth/login-event-bootstrap";
+import { APP_BRAND_NAME } from "@/lib/brand";
 
 const nav = [
   { href: "/client", label: "Dashboard", icon: LayoutDashboard },
@@ -82,7 +83,7 @@ export function ClientShell({
               <Mail className="size-5" />
             </div>
             <div className="group-data-[collapsible=icon]:hidden">
-              <p className="text-sm font-semibold tracking-tight">MyMail</p>
+              <p className="text-sm font-semibold tracking-tight">{APP_BRAND_NAME}</p>
               <p className="text-xs text-muted-foreground">Client</p>
             </div>
           </div>

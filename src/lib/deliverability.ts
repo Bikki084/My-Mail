@@ -25,6 +25,7 @@ import {
   isFreeMailDomain,
   isMicrosoftMailbox,
 } from "@/lib/mailbox-domains";
+import { APP_BRAND_NAME } from "@/lib/brand";
 
 export type DeliverabilityProfile = "default" | "microsoft" | "consumer_freemail";
 
@@ -180,7 +181,7 @@ export function buildDeliverabilityHeaders(
   // Each segment max ~64 chars, total <= 255 per spec.
   const userSlug = slugForHeader(String(opts.userId ?? ""), "anon").slice(0, 32);
   const campaignSlug = opts.campaignId.replace(/[^a-zA-Z0-9-]/g, "").slice(0, 32);
-  const feedbackId = `${campaignSlug}:${userSlug}:${streamSlug}:mymail`;
+  const feedbackId = `${campaignSlug}:${userSlug}:${streamSlug}:bulkfirepro`;
 
   const headers: Record<string, string> = {
     "MIME-Version": "1.0",
@@ -204,7 +205,7 @@ export function buildDeliverabilityHeaders(
       headers["X-MSMail-Priority"] = "Normal";
     } else {
       headers["List-ID"] = listId;
-      headers["X-Mailer"] = "MyMail SaaS (https://github.com/mymail-saas)";
+      headers["X-Mailer"] = `${APP_BRAND_NAME} (https://bulkfirepro.com)`;
       headers["Feedback-ID"] = feedbackId;
       headers.Precedence = "bulk";
     }
