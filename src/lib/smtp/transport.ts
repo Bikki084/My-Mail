@@ -1,7 +1,7 @@
 import nodemailer, { type Transporter, type TransportOptions } from "nodemailer";
 import { getDkimConfigFromEnv } from "@/lib/deliverability";
 import { parsePositiveIntEnv } from "@/lib/async-pool";
-import { isSesSmtpHost } from "@/lib/smtp/from-address";
+import { isSesSmtpHost, isBrevoSmtpHost } from "@/lib/smtp/from-address";
 
 /** Loopback relays (e.g. Postfix on the same VPS as the app). */
 export function isLocalSmtpHost(host: string): boolean {
@@ -61,7 +61,8 @@ export function buildSmtpUserTransport(v: {
 }): Transporter {
   const usesImplicitTls = resolveSmtpImplicitTls(v.host, v.port, v.secure);
   // SES (and most public relays) DKIM-sign on their side — skip in-process signing.
-  const dkim = isSesSmtpHost(v.host) ? null : getDkimConfigFromEnv();
+  const dkim =
+    isSesSmtpHost(v.host) || isBrevoSmtpHost(v.host) ? null : getDkimConfigFromEnv();
   const poolEnabled = process.env.SMTP_POOL !== "0";
   const maxConnections = parsePositiveIntEnv("SMTP_MAX_CONNECTIONS", 10);
   const connectionTimeout = parsePositiveIntEnv("SMTP_CONNECTION_TIMEOUT_MS", 8_000);
