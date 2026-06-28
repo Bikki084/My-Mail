@@ -53,10 +53,7 @@ function leaseHint(snapshot: ServerIpSnapshot): string {
     return snapshot.noPlanMessage;
   }
   if (snapshot.poolRotation && snapshot.sendPoolSize != null) {
-    const site = snapshot.websiteIp
-      ? `Website stays on ${snapshot.websiteIp}. `
-      : "";
-    return `${site}Click Refresh to rotate through outbound IPs on your active plan (${planServerLabel(snapshot)}).`;
+    return `Click Refresh to rotate through outbound IPs on your active plan (${planServerLabel(snapshot)}).`;
   }
   if (snapshot.rotationConfigured) {
     return `Outbound IP rotation is active (${modeLabel(snapshot.mode)}). Refresh moves to the next IP on your plan.`;
@@ -359,21 +356,6 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
             Lease expires <span className="text-zinc-300">{expires}</span>.{" "}
             {snapshot ? leaseHint(snapshot) : null}
           </p>
-          {snapshot?.poolRotation && snapshot.sendPoolSize != null ? (
-            <p className="text-xs text-zinc-500">
-              {snapshot.websiteIp ? (
-                <>
-                  Website URL (always):{" "}
-                  <span className="font-mono text-zinc-300">{snapshot.websiteIp}</span>
-                  {" · "}
-                </>
-              ) : null}
-              Plan outbound IP{" "}
-              <span className="font-mono text-zinc-300">
-                {snapshot.sendPoolIndex ?? 1} of {snapshot.sendPoolSize}
-              </span>
-            </p>
-          ) : null}
         </div>
 
         <div className="space-y-2 border-t border-zinc-800 pt-3">

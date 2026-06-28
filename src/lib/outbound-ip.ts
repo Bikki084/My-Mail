@@ -35,8 +35,10 @@ import {
 import { usesLightsailEgressAttach } from "@/lib/egress-mode";
 import {
   fetchExpandedOutboundIpPool,
+  isDocumentationPlaceholderIp,
   isExpandedVirtualPoolEnabled,
   resolveInitialOutboundIpForUser,
+  resolveOperationalEgressIp,
   rotateExpandedPoolIp,
   shouldAttachLightsailForSendIp,
   shouldSkipLightsailAttach,
@@ -322,14 +324,21 @@ async function alignLightsailPoolToPrimaryIp(
  * Before sending: attach the pool IP used for SMTP egress. When it matches the
  * website primary, only confirm primary is attached.
  */
-export async function prepareLightsailEgressForCampaign(sendIp: string): Promise<void> {
+export async function prepareLightsailEgressForCampaign(
+  sendIp: string,
+  slotIndex?: number,
+): Promise<void> {
   if (!usesLightsailEgressAttach() || !isAwsLightsailPoolRotationEnabled()) return;
-  const wanted = sendIp.trim();
+  let wanted = sendIp.trim();
   if (!wanted) return;
 
   if (!(await shouldAttachLightsailForSendIp(wanted))) {
+    wanted = await resolveOperationalEgressIp(wanted, slotIndex);
+  }
+
+  if (!(await shouldAttachLightsailForSendIp(wanted))) {
     console.log(
-      `[outbound-ip] virtual pool send IP=${wanted} — skipping Lightsail attach (relay / expanded pool mode).`,
+      `[outbound-ip] send IP=${sendIp.trim()} has no attachable Lightsail mapping — skipping attach.`,
     );
     return;
   }
@@ -595,6 +604,19 @@ export async function rotateOutboundIp(
     { onConflict: "user_id" },
   );
   if (error) throw new Error(error.message);
+
+  if (usesLightsailEgressAttach()) {
+    try {
+      await prepareLightsailEgressForCampaign(ip, nextIndex);
+    } catch (e) {
+      console.warn(
+        `[outbound-ip] Lightsail attach after rotate failed: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
+
   return {
     ip,
     expiresAt,

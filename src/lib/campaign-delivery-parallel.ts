@@ -308,7 +308,14 @@ export async function deliverCampaignInParallel(
       };
       const newIpRec = await rotateOutboundIp(supabase, userId);
       if (usesLightsailEgressAttach()) {
-        await prepareLightsailEgressForCampaign(newIpRec.ip);
+        await prepareLightsailEgressForCampaign(
+          newIpRec.ip,
+          (await supabase
+            .from("user_outbound_ip")
+            .select("plan_rotation_index")
+            .eq("user_id", userId)
+            .maybeSingle()).data?.plan_rotation_index ?? 0,
+        );
       }
       const startedAt = new Date().toISOString();
       shared.ipHistory.unshift({

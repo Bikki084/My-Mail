@@ -65,6 +65,34 @@ function dedupeIpv4List(ips: string[]): string[] {
   return out;
 }
 
+/** RFC5737 / docs.example IPs and common .env.example copies — never use in rotation UI. */
+const DOCUMENTATION_PLACEHOLDER_IPS = new Set([
+  "0.0.0.0",
+  "1.2.3.4",
+  "5.6.7.8",
+  "10.0.0.1",
+  "127.0.0.1",
+  "192.0.2.1",
+  "198.51.100.1",
+  "203.0.113.1",
+]);
+
+export function isDocumentationPlaceholderIp(ip: string): boolean {
+  const t = ip.trim();
+  if (!IP_V4.test(t)) return true;
+  if (DOCUMENTATION_PLACEHOLDER_IPS.has(t)) return true;
+  const p = t.split(".").map((x) => Number(x));
+  if (p.length !== 4 || p.some((n) => !Number.isFinite(n))) return true;
+  if (p[0] === 127) return true;
+  if (p[0] === 1 && p[1] === 2 && p[2] === 3) return true;
+  if (p[0] === 5 && p[1] === 6 && p[2] === 7) return true;
+  return false;
+}
+
+function filterProductionIpv4List(ips: string[]): string[] {
+  return dedupeIpv4List(ips.filter((ip) => !isDocumentationPlaceholderIp(ip)));
+}
+
 function readVirtualPoolMinSize(): number {
   const n = Number(process.env.OUTBOUND_IP_VIRTUAL_POOL_MIN);
   if (Number.isFinite(n) && n > 0) return Math.min(10_000, Math.floor(n));
@@ -82,8 +110,8 @@ export function shouldSkipLightsailAttach(): boolean {
   return false;
 }
 
-/** Real IPs only (Lightsail static + OUTBOUND_IP_POOL) — no synthetic fill. */
-export async function fetchRealAttachableIpPool(): Promise<string[]> {
+/** Real IPs for plan rotation: Lightsail static pool + OUTBOUND_IP_POOL (placeholders stripped). */
+export async function fetchPlanIpMaster(): Promise<string[]> {
   const merged: string[] = [];
   if (isAwsLightsailRotationConfigured()) {
     try {
@@ -93,7 +121,12 @@ export async function fetchRealAttachableIpPool(): Promise<string[]> {
     }
   }
   merged.push(...parseCsvIpv4Env("OUTBOUND_IP_POOL"));
-  return dedupeIpv4List(merged);
+  return filterProductionIpv4List(merged);
+}
+
+/** Real IPs only (Lightsail static + OUTBOUND_IP_POOL) — no synthetic fill. */
+export async function fetchRealAttachableIpPool(): Promise<string[]> {
+  return await fetchPlanIpMaster();
 }
 
 /**
@@ -114,7 +147,7 @@ export async function fetchExpandedOutboundIpPool(): Promise<string[]> {
   merged.push(...parseCsvIpv4Env("OUTBOUND_IP_POOL"));
 
   if (!isExpandedVirtualPoolEnabled()) {
-    return dedupeIpv4List(merged);
+    return filterProductionIpv4List(merged);
   }
 
   const minSize = readVirtualPoolMinSize();
@@ -148,7 +181,26 @@ export async function isAttachableLightsailIpv4(ip: string): Promise<boolean> {
 
 export async function shouldAttachLightsailForSendIp(ip: string): Promise<boolean> {
   if (shouldSkipLightsailAttach()) return false;
+  if (isDocumentationPlaceholderIp(ip)) return false;
   return await isAttachableLightsailIpv4(ip);
+}
+
+/**
+ * Map a panel/display IP to an attachable Lightsail IP when the slot uses an extended pool entry.
+ */
+export async function resolveOperationalEgressIp(
+  displayIp: string,
+  slotIndex?: number,
+): Promise<string> {
+  const trimmed = displayIp.trim();
+  const realPool = await fetchPlanIpMaster();
+  if (realPool.length === 0) return trimmed;
+  if (realPool.includes(trimmed)) return trimmed;
+  const idx =
+    slotIndex != null && Number.isFinite(slotIndex)
+      ? Math.max(0, Math.floor(slotIndex)) % realPool.length
+      : 0;
+  return realPool[idx]!;
 }
 
 /**

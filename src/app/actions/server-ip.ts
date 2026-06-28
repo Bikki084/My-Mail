@@ -3,9 +3,7 @@
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import {
   ensureLightsailPrimaryStaticIpAttached,
-  fetchLightsailWebsiteIpv4,
   isAwsLightsailPoolRotationEnabled,
-  resolveLightsailWebsitePrimaryIpv4,
   type AwsOutboundIpMode,
 } from "@/lib/aws-outbound-ip";
 import {
@@ -74,19 +72,6 @@ async function buildServerIpSnapshot(
     .eq("user_id", userId)
     .maybeSingle();
 
-  let websiteIp: string | null = null;
-  if (isAwsLightsailPoolRotationEnabled()) {
-    try {
-      websiteIp = await resolveLightsailWebsitePrimaryIpv4();
-    } catch {
-      try {
-        websiteIp = await fetchLightsailWebsiteIpv4();
-      } catch {
-        websiteIp = null;
-      }
-    }
-  }
-
   const sendPoolSize = planScoped
     ? planPool.unlimited
       ? planPool.ips.length
@@ -107,7 +92,7 @@ async function buildServerIpSnapshot(
 
   return {
     ip: rec.ip,
-    websiteIp,
+    websiteIp: null,
     expiresAt: rec.expiresAt,
     rotationThreshold: rec.rotationThreshold,
     defaultThreshold: DEFAULT_ROTATION_THRESHOLD,

@@ -4,26 +4,18 @@ import { createHash } from "crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { allowSendWithoutActivePlan } from "@/lib/active-plan-guard";
 import { getActivePlanServerLimit } from "@/lib/smtp-plan-limit";
-import { fetchExpandedOutboundIpPool, fetchRealAttachableIpPool } from "@/lib/outbound-ip-pool";
+import {
+  fetchExpandedOutboundIpPool,
+  fetchPlanIpMaster,
+  isDocumentationPlaceholderIp,
+} from "@/lib/outbound-ip-pool";
 import { resolveEgressMode } from "@/lib/egress-mode";
-import { parseProxyPool } from "@/lib/smtp-egress-proxy";
 
 const IP_V4 =
   /^(?:(?:25[0-5]|2[0-4]\d|[01]?\d{1,2})\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d{1,2})$/;
 
 /** Rotation pool size when plan allows unlimited SMTP servers. */
 const UNLIMITED_PLAN_ROTATION_SLOTS = 50;
-
-function parseCsvIpv4Env(name: string): string[] {
-  const raw = process.env[name]?.trim();
-  if (!raw) return [];
-  const out: string[] = [];
-  for (const part of raw.split(",")) {
-    const ip = part.trim();
-    if (IP_V4.test(ip)) out.push(ip);
-  }
-  return out;
-}
 
 export type UserPlanIpPool = {
   /** Outbound IPs this user may rotate through (= plan server count). */
@@ -43,25 +35,6 @@ function countUniqueIpv4(ips: string[]): number {
     if (IP_V4.test(t)) seen.add(t);
   }
   return seen.size;
-}
-
-/** Fill `count` plan slots from `master`, repeating when fewer real IPs than plan servers. */
-function buildPlanSlotIpPool(
-  userId: string,
-  count: number,
-  master: string[],
-  allowSynthetic = false,
-): string[] {
-  const target = Math.max(1, Math.floor(count));
-  if (master.length === 0) {
-    if (!allowSynthetic) return [];
-    return buildUniquePlanIpPool(userId, target, master, true);
-  }
-  const ips: string[] = [];
-  for (let i = 0; i < target; i += 1) {
-    ips.push(master[i % master.length]!);
-  }
-  return ips;
 }
 
 /** Stable IPv4 for plan slot N — unique per user and slot index. */
@@ -152,12 +125,16 @@ export async function resolveUserPlanIpPool(
   const mode = resolveEgressMode();
   const count = limit === null ? UNLIMITED_PLAN_ROTATION_SLOTS : limit;
 
+  async function buildPlanRotationIpList(): Promise<string[]> {
+    const master = await fetchPlanIpMaster();
+    return buildUniquePlanIpPool(userId, count, master, true);
+  }
+
   if (mode === "proxy") {
-    const proxies = parseProxyPool();
-    const displayIps = parseCsvIpv4Env("OUTBOUND_IP_POOL");
-    if (proxies.length === 0 && displayIps.length === 0) {
+    const ips = await buildPlanRotationIpList();
+    if (ips.length === 0) {
       console.warn(
-        "[plan-ip-pool] OUTBOUND_IP_EGRESS_MODE=proxy but OUTBOUND_IP_PROXY_POOL is empty.",
+        "[plan-ip-pool] No production IPs in pool. Configure AWS Lightsail static IPs or remove placeholder OUTBOUND_IP_POOL values (1.2.3.4).",
       );
       return {
         ips: [],
@@ -166,11 +143,6 @@ export async function resolveUserPlanIpPool(
         hasActivePlan: true,
         uniqueIpCount: 0,
       };
-    }
-    const ips: string[] = [];
-    for (let i = 0; i < count; i += 1) {
-      const fromEnv = displayIps[i % Math.max(1, displayIps.length)]?.trim();
-      ips.push(IP_V4.test(fromEnv ?? "") ? fromEnv! : deterministicPlanSlotIp(userId, i));
     }
     return {
       ips,
@@ -182,9 +154,7 @@ export async function resolveUserPlanIpPool(
   }
 
   if (mode === "lightsail") {
-    const master = await fetchRealAttachableIpPool();
-    const want = limit === null ? UNLIMITED_PLAN_ROTATION_SLOTS : limit;
-    const ips = buildPlanSlotIpPool(userId, want, master, false);
+    const ips = await buildPlanRotationIpList();
     if (ips.length === 0) {
       console.warn(
         "[plan-ip-pool] OUTBOUND_IP_EGRESS_MODE=lightsail but no attachable IPs in AWS pool.",
@@ -237,7 +207,17 @@ export function resolvePlanRotationIndex(
     return stored;
   }
   const trimmed = currentIp?.trim() ?? "";
-  if (trimmed) {
+  if (trimmed && isDocumentationPlaceholderIp(trimmed)) {
+    if (
+      Number.isFinite(stored) &&
+      stored >= 0 &&
+      stored < pool.length
+    ) {
+      return stored;
+    }
+    return 0;
+  }
+  if (trimmed && !isDocumentationPlaceholderIp(trimmed)) {
     const found = pool.indexOf(trimmed);
     if (found >= 0) return found;
   }
