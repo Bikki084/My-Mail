@@ -41,8 +41,10 @@ import {
   shouldSkipLightsailAttach,
 } from "@/lib/outbound-ip-pool";
 import {
-  firstIpInPlanPool,
-  nextIpInPlanPool,
+  ipAtPlanRotationIndex,
+  nextPlanRotationIndex,
+  planPoolDisplayIndex,
+  resolvePlanRotationIndex,
   resolveUserPlanIpPool,
   syncUserPlanPoolIp,
 } from "@/lib/plan-ip-pool";
@@ -477,20 +479,20 @@ export async function getOrCreateOutboundIp(
 
   const existing = await supabase
     .from("user_outbound_ip")
-    .select("current_ip, expires_at, rotation_threshold")
+    .select("current_ip, expires_at, rotation_threshold, plan_rotation_index")
     .eq("user_id", userId)
     .maybeSingle();
 
   if (planPool.ips.length > 0) {
     if (existing.data?.current_ip) {
-      const ip = await syncUserPlanPoolIp(
+      const synced = await syncUserPlanPoolIp(
         supabase,
         userId,
         existing.data,
         LEASE_DURATION_MS,
       );
       return {
-        ip,
+        ip: synced.ip,
         expiresAt:
           existing.data.expires_at ??
           new Date(Date.now() + LEASE_DURATION_MS).toISOString(),
@@ -503,7 +505,7 @@ export async function getOrCreateOutboundIp(
         ...recordMeta(),
       };
     }
-    const ip = firstIpInPlanPool(planPool.ips);
+    const ip = ipAtPlanRotationIndex(planPool.ips, 0);
     const expiresAt = new Date(Date.now() + LEASE_DURATION_MS).toISOString();
     const rotationThreshold =
       existing.data?.rotation_threshold && existing.data.rotation_threshold > 0
@@ -513,6 +515,7 @@ export async function getOrCreateOutboundIp(
       {
         user_id: userId,
         current_ip: ip,
+        plan_rotation_index: 0,
         expires_at: expiresAt,
         rotation_threshold: rotationThreshold,
         updated_at: new Date().toISOString(),
@@ -563,21 +566,27 @@ export async function rotateOutboundIp(
 
   const before = await supabase
     .from("user_outbound_ip")
-    .select("current_ip, rotation_threshold")
+    .select("current_ip, rotation_threshold, plan_rotation_index")
     .eq("user_id", userId)
     .maybeSingle();
   const rotationThreshold =
     before.data?.rotation_threshold && before.data.rotation_threshold > 0
       ? Number(before.data.rotation_threshold)
       : DEFAULT_ROTATION_THRESHOLD;
-  const previousIp = before.data?.current_ip?.trim() || null;
-  const ip = nextIpInPlanPool(planPool.ips, previousIp);
+  const currentIndex = resolvePlanRotationIndex(
+    planPool.ips,
+    before.data?.current_ip ?? null,
+    before.data?.plan_rotation_index,
+  );
+  const nextIndex = nextPlanRotationIndex(planPool.ips.length, currentIndex);
+  const ip = ipAtPlanRotationIndex(planPool.ips, nextIndex);
 
   const expiresAt = new Date(Date.now() + LEASE_DURATION_MS).toISOString();
   const { error } = await supabase.from("user_outbound_ip").upsert(
     {
       user_id: userId,
       current_ip: ip,
+      plan_rotation_index: nextIndex,
       expires_at: expiresAt,
       rotation_threshold: rotationThreshold,
       updated_at: new Date().toISOString(),

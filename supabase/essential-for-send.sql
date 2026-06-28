@@ -28,6 +28,10 @@ create table if not exists public.user_outbound_ip (
   updated_at timestamptz not null default now()
 );
 
+alter table public.user_outbound_ip
+  add column if not exists plan_rotation_index integer not null default 0
+    check (plan_rotation_index >= 0);
+
 alter table public.user_outbound_ip enable row level security;
 
 drop policy if exists "user_outbound_ip_select" on public.user_outbound_ip;

@@ -18,7 +18,7 @@ import {
   shouldManualPauseForIpRotation,
 } from "@/lib/outbound-ip";
 import {
-  indexInPlanPool,
+  planPoolDisplayIndex,
   resolveUserPlanIpPool,
 } from "@/lib/plan-ip-pool";
 
@@ -59,6 +59,12 @@ async function buildServerIpSnapshot(
   const planPool = await resolveUserPlanIpPool(supabase, userId);
   const planScoped = planPool.ips.length > 0;
 
+  const { data: ipRow } = await supabase
+    .from("user_outbound_ip")
+    .select("plan_rotation_index")
+    .eq("user_id", userId)
+    .maybeSingle();
+
   let websiteIp: string | null = null;
   if (isAwsLightsailPoolRotationEnabled()) {
     try {
@@ -77,7 +83,10 @@ async function buildServerIpSnapshot(
       ? planPool.ips.length
       : planPool.limit ?? planPool.ips.length
     : null;
-  const sendPoolIndex = planScoped ? indexInPlanPool(planPool.ips, rec.ip) : null;
+  const rotationIndex = ipRow?.plan_rotation_index ?? 0;
+  const sendPoolIndex = planScoped
+    ? planPoolDisplayIndex(planPool.ips.length, Number(rotationIndex))
+    : null;
   const planServersLabel = planPool.unlimited
     ? "Unlimited"
     : planPool.limit != null

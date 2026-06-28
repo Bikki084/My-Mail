@@ -18,16 +18,7 @@ export type UserPlanIpPool = {
   hasActivePlan: boolean;
 };
 
-function stableUserOffset(userId: string, span: number): number {
-  if (span <= 0) return 0;
-  let h = 0;
-  for (let i = 0; i < userId.length; i += 1) {
-    h = (Math.imul(31, h) + userId.charCodeAt(i)) >>> 0;
-  }
-  return h % span;
-}
-
-/** Stable IPv4 for plan slot N when the master pool is smaller than the plan size. */
+/** Stable IPv4 for plan slot N — unique per user and slot index. */
 export function deterministicPlanSlotIp(userId: string, slot: number): string {
   const digest = createHash("sha256").update(`${userId}:plan-ip:${slot}`).digest();
   const octets = [digest[0]!, digest[1]!, digest[2]!, digest[3]!];
@@ -35,6 +26,44 @@ export function deterministicPlanSlotIp(userId: string, slot: number): string {
   if (first === 127) first = 128;
   if (first === 171) first = 172;
   return `${first}.${octets[1]}.${octets[2]}.${octets[3]}`;
+}
+
+/**
+ * Build exactly `count` unique IPs: real pool IPs first, then deterministic slots.
+ * Each plan server slot maps to one distinct IP (no duplicates — duplicates broke rotation).
+ */
+export function buildUniquePlanIpPool(
+  userId: string,
+  count: number,
+  master: string[],
+): string[] {
+  const target = Math.max(1, Math.floor(count));
+  const ips: string[] = [];
+  const seen = new Set<string>();
+
+  for (const raw of master) {
+    if (ips.length >= target) break;
+    const ip = raw.trim();
+    if (!IP_V4.test(ip) || seen.has(ip)) continue;
+    ips.push(ip);
+    seen.add(ip);
+  }
+
+  let slot = 0;
+  while (ips.length < target) {
+    let ip = deterministicPlanSlotIp(userId, slot);
+    let guard = 0;
+    while (seen.has(ip) && guard < 1024) {
+      slot += 1;
+      ip = deterministicPlanSlotIp(userId, slot);
+      guard += 1;
+    }
+    ips.push(ip);
+    seen.add(ip);
+    slot += 1;
+  }
+
+  return ips;
 }
 
 /**
@@ -47,8 +76,10 @@ export async function resolveUserPlanIpPool(
 ): Promise<UserPlanIpPool> {
   if (allowSendWithoutActivePlan()) {
     const master = await fetchExpandedOutboundIpPool();
+    const ips =
+      master.length > 0 ? master : [deterministicPlanSlotIp(userId, 0)];
     return {
-      ips: master.length > 0 ? master : [deterministicPlanSlotIp(userId, 0)],
+      ips,
       limit: null,
       unlimited: true,
       hasActivePlan: true,
@@ -62,26 +93,7 @@ export async function resolveUserPlanIpPool(
 
   const master = await fetchExpandedOutboundIpPool();
   const count = limit === null ? Math.max(1, master.length) : limit;
-  const start = master.length > 0 ? stableUserOffset(userId, master.length) : 0;
-
-  const ips: string[] = [];
-  for (let i = 0; i < count; i += 1) {
-    if (master.length > 0) {
-      ips.push(master[(start + i) % master.length]!);
-    } else {
-      ips.push(deterministicPlanSlotIp(userId, i));
-    }
-  }
-
-  const seen = new Set<string>();
-  for (let i = 0; i < ips.length; i += 1) {
-    let ip = ips[i]!;
-    if (seen.has(ip)) {
-      ip = deterministicPlanSlotIp(userId, i);
-      ips[i] = ip;
-    }
-    seen.add(ip);
-  }
+  const ips = buildUniquePlanIpPool(userId, count, master);
 
   return {
     ips,
@@ -91,34 +103,63 @@ export async function resolveUserPlanIpPool(
   };
 }
 
-/** 1-based position of `ip` in the user's plan pool. */
-export function indexInPlanPool(pool: string[], ip: string): number | null {
-  const trimmed = ip.trim();
-  if (!IP_V4.test(trimmed)) return null;
-  const idx = pool.indexOf(trimmed);
-  return idx >= 0 ? idx + 1 : null;
+/** 1-based display index for UI (e.g. 3 of 10). */
+export function planPoolDisplayIndex(poolLength: number, rotationIndex: number): number {
+  if (poolLength <= 0) return 1;
+  const idx = Math.floor(rotationIndex);
+  if (!Number.isFinite(idx) || idx < 0) return 1;
+  return (idx % poolLength) + 1;
 }
 
-/** Next IP when the user clicks Refresh (wraps at the plan limit). */
-export function nextIpInPlanPool(pool: string[], currentIp: string | null): string {
+/** Resolve stored rotation index from current IP (fallback when column missing). */
+export function resolvePlanRotationIndex(
+  pool: string[],
+  currentIp: string | null,
+  storedIndex: number | null | undefined,
+): number {
+  if (pool.length === 0) return 0;
+  const stored = Math.floor(Number(storedIndex));
+  if (
+    Number.isFinite(stored) &&
+    stored >= 0 &&
+    stored < pool.length &&
+    pool[stored] === currentIp?.trim()
+  ) {
+    return stored;
+  }
+  const trimmed = currentIp?.trim() ?? "";
+  if (trimmed) {
+    const found = pool.indexOf(trimmed);
+    if (found >= 0) return found;
+  }
+  return 0;
+}
+
+/** Next slot index after Refresh (wraps at plan size). */
+export function nextPlanRotationIndex(
+  poolLength: number,
+  currentIndex: number,
+): number {
+  if (poolLength <= 0) {
+    throw new Error("No outbound IPs on your plan. Activate a server plan under Wallet & Plan.");
+  }
+  if (poolLength === 1) return 0;
+  const idx = Math.floor(currentIndex);
+  const safe = Number.isFinite(idx) && idx >= 0 ? idx : 0;
+  return (safe + 1) % poolLength;
+}
+
+export function ipAtPlanRotationIndex(pool: string[], index: number): string {
   if (pool.length === 0) {
     throw new Error("No outbound IPs on your plan. Activate a server plan under Wallet & Plan.");
   }
-  if (pool.length === 1) return pool[0]!;
-  const prev = currentIp?.trim() || null;
-  if (!prev) return pool[0]!;
-  const idx = pool.indexOf(prev);
-  return pool[(idx >= 0 ? idx + 1 : 0) % pool.length]!;
+  const idx = Math.floor(index);
+  const safe =
+    Number.isFinite(idx) && idx >= 0 && idx < pool.length ? idx : 0;
+  return pool[safe]!;
 }
 
-export function firstIpInPlanPool(pool: string[]): string {
-  if (pool.length === 0) {
-    throw new Error("No outbound IPs on your plan. Activate a server plan under Wallet & Plan.");
-  }
-  return pool[0]!;
-}
-
-/** Keep `current_ip` inside the user's plan pool (reset to IP 1 if stale). */
+/** Keep `current_ip` and rotation index aligned with the user's plan pool. */
 export async function syncUserPlanPoolIp(
   supabase: SupabaseClient,
   userId: string,
@@ -126,14 +167,21 @@ export async function syncUserPlanPoolIp(
     current_ip: string;
     expires_at: string | null;
     rotation_threshold: number | null;
+    plan_rotation_index?: number | null;
   },
   leaseDurationMs: number,
-): Promise<string> {
+): Promise<{ ip: string; rotationIndex: number }> {
   const { ips } = await resolveUserPlanIpPool(supabase, userId);
-  if (ips.length === 0) return row.current_ip;
-  if (ips.includes(row.current_ip.trim())) return row.current_ip;
+  if (ips.length === 0) {
+    return { ip: row.current_ip, rotationIndex: 0 };
+  }
 
-  const ip = firstIpInPlanPool(ips);
+  const rotationIndex = resolvePlanRotationIndex(
+    ips,
+    row.current_ip,
+    row.plan_rotation_index,
+  );
+  const ip = ipAtPlanRotationIndex(ips, rotationIndex);
   const expiresAt =
     row.expires_at ?? new Date(Date.now() + leaseDurationMs).toISOString();
   const rotationThreshold =
@@ -145,11 +193,12 @@ export async function syncUserPlanPoolIp(
     {
       user_id: userId,
       current_ip: ip,
+      plan_rotation_index: rotationIndex,
       expires_at: expiresAt,
       rotation_threshold: rotationThreshold,
       updated_at: new Date().toISOString(),
     },
     { onConflict: "user_id" },
   );
-  return ip;
+  return { ip, rotationIndex };
 }
