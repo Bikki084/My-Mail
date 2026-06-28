@@ -1,5 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isValidEncryptionKeyConfigured } from "@/lib/crypto/smtp-secret";
+import { evaluateMailServicePlan } from "@/lib/active-plan-guard";
+import { getSmtpPlanCapacity } from "@/lib/smtp-plan-limit";
 
 /** Returns how many SMTP rows exist for this user (service or user client). */
 export async function countUserSmtpServers(
@@ -17,7 +19,7 @@ export async function countUserSmtpServers(
 }
 
 export type SendPreflightResult =
-  | { ok: true; smtpCount: number }
+  | { ok: true; smtpCount: number; serversAllowed: number | null }
   | { ok: false; error: string; status: number };
 
 /**
@@ -37,9 +39,21 @@ export async function runSendPreflight(
     };
   }
 
+  const planCheck = await evaluateMailServicePlan(supabase, userId);
+  if (!planCheck.ok) {
+    return {
+      ok: false,
+      status: planCheck.status,
+      error: planCheck.error,
+    };
+  }
+
   let smtpCount = 0;
+  let serversAllowed: number | null = null;
   try {
-    smtpCount = await countUserSmtpServers(supabase, userId);
+    const cap = await getSmtpPlanCapacity(supabase, userId);
+    smtpCount = cap.current;
+    serversAllowed = cap.limit;
   } catch (e) {
     return {
       ok: false,
@@ -57,5 +71,5 @@ export async function runSendPreflight(
     };
   }
 
-  return { ok: true, smtpCount };
+  return { ok: true, smtpCount, serversAllowed };
 }

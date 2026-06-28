@@ -22,6 +22,7 @@ import {
   setRotationThresholdAction,
   type ServerIpSnapshot,
 } from "@/app/actions/server-ip";
+import { useWalletState } from "./wallet-state-context";
 
 function modeLabel(mode: AwsOutboundIpMode): string {
   switch (mode) {
@@ -40,19 +41,27 @@ function modeLabel(mode: AwsOutboundIpMode): string {
 }
 
 function leaseHint(snapshot: ServerIpSnapshot): string {
-  if (snapshot.poolRotation) {
+  if (!snapshot.hasActivePlan) {
+    return snapshot.noPlanMessage;
+  }
+  if (snapshot.poolRotation && snapshot.sendPoolSize != null) {
+    const n = snapshot.sendPoolSize;
     const site = snapshot.websiteIp
-      ? `Website stays on ${snapshot.websiteIp}. `
+      ? `Your website stays on ${snapshot.websiteIp}. `
       : "";
-    return `${site}Click Refresh to pick the next pool IP for outgoing mail. During a campaign, SMTP uses the active send IP above, then the website IP is restored when sending finishes.`;
+    const label =
+      snapshot.planServersLabel === "Unlimited"
+        ? "unlimited plan servers"
+        : `${n} plan server${n === 1 ? "" : "s"}`;
+    return `${site}Click Refresh to cycle through your ${label} (outbound IP 1 of ${n}). Each IP matches one SMTP server slot on your active plan.`;
   }
   if (snapshot.rotationConfigured) {
     return `Full AWS attach-swap is active (${modeLabel(snapshot.mode)}). Refresh moves the whole server to the next IP (website URL changes).`;
   }
   if (snapshot.mode === "instance") {
-    return `Displaying this server's public IP (${snapshot.ip}). For real rotation between 2+ IPs, set AWS_LIGHTSAIL_STATIC_IP_NAMES and AWS_LIGHTSAIL_INSTANCE_NAME in .env.local on the VPS, then restart PM2.`;
+    return `Displaying this server's public IP (${snapshot.ip}). Activate a Wallet & Plan tier to unlock plan-scoped IP rotation.`;
   }
-  return "Development stub: the panel stores a random IP for testing. SMTP still uses the server's real network route until AWS rotation is configured.";
+  return "Activate a server plan under Wallet & Plan, then click Refresh to cycle through your plan's outbound IPs.";
 }
 
 function formatExpire(iso: string | null): string {
@@ -66,6 +75,7 @@ function formatExpire(iso: string | null): string {
 }
 
 export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }) {
+  const { state: walletState } = useWalletState();
   const [snapshot, setSnapshot] = React.useState<ServerIpSnapshot | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [rotating, setRotating] = React.useState(false);
@@ -77,18 +87,23 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
     if (previewMode) {
       setSnapshot({
         ip: "32.192.186.36",
-        websiteIp: null,
+        websiteIp: "13.203.176.51",
         expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
         rotationThreshold: 1000,
         defaultThreshold: 1000,
         maxThreshold: 100_000,
         mode: "dev_stub",
-        rotationConfigured: false,
-        poolRotation: false,
+        rotationConfigured: true,
+        poolRotation: true,
         autoRotateOnThreshold: false,
-        poolSize: null,
-        sendPoolSize: null,
-        sendPoolIndex: null,
+        poolSize: 10,
+        sendPoolSize: 10,
+        sendPoolIndex: 1,
+        planServersLabel: "10",
+        hasActivePlan: true,
+        canRotate: true,
+        noPlanMessage:
+          "Activate a server plan under Wallet & Plan first. Outbound IP rotation unlocks after you activate a plan.",
       });
       setThresholdDraft("1000");
       setLoading(false);
@@ -112,11 +127,15 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
   React.useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void refresh();
-  }, [refresh]);
+  }, [refresh, walletState.activePlan]);
 
   async function handleRotate() {
     if (previewMode) {
       toast.message("Sign in with Supabase to rotate the outbound IP.");
+      return;
+    }
+    if (snapshot && !snapshot.canRotate) {
+      toast.error("Active plan required", { description: snapshot.noPlanMessage });
       return;
     }
     setRotating(true);
@@ -143,11 +162,9 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
       setThresholdDraft(String(res.data.rotationThreshold));
       toast.success("Active send IP updated", {
         description:
-          res.data.poolRotation && res.data.websiteIp && res.data.ip !== res.data.websiteIp
-            ? `Website stays on ${res.data.websiteIp}. The next campaign sends mail from ${res.data.ip}, then ${res.data.websiteIp} is restored automatically.`
-            : res.data.poolRotation && res.data.websiteIp
-              ? `Active IP is ${res.data.ip} (website primary). Click Refresh to pick a send IP from your pool.`
-              : `Now sending from ${res.data.ip}.`,
+          res.data.sendPoolSize != null && res.data.sendPoolIndex != null
+            ? `Outbound IP ${res.data.sendPoolIndex} of ${res.data.sendPoolSize} on your active plan.`
+            : `Now sending from ${res.data.ip}.`,
       });
     } finally {
       setRotating(false);
@@ -157,6 +174,10 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
   async function handleSaveThreshold() {
     if (previewMode) {
       toast.message("Sign in with Supabase to save the rotation threshold.");
+      return;
+    }
+    if (snapshot && !snapshot.hasActivePlan) {
+      toast.error("Active plan required", { description: snapshot.noPlanMessage });
       return;
     }
     const n = Math.floor(Number(thresholdDraft));
@@ -189,9 +210,20 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
     thresholdNum <= (snapshot?.maxThreshold ?? 100_000);
   const thresholdDirty =
     snapshot != null && thresholdValid && thresholdNum !== snapshot.rotationThreshold;
+  const canRotate = snapshot?.canRotate ?? false;
 
   return (
     <Card className="border-zinc-800 bg-zinc-900/40 ring-zinc-800">
+      {snapshot && !loading && !snapshot.hasActivePlan && (
+        <div className="border-b border-amber-800/50 bg-amber-950/40 px-4 py-3 text-sm text-amber-100">
+          <p className="font-medium text-amber-50">Outbound IP rotation is locked</p>
+          <p className="mt-1 text-xs leading-relaxed text-amber-200/90">
+            {snapshot.noPlanMessage} Open the{" "}
+            <span className="text-amber-100">Wallet &amp; Plan</span> tab and click{" "}
+            <span className="text-amber-100">Activate plan</span>.
+          </p>
+        </div>
+      )}
       <CardHeader className="space-y-0.5 pb-3">
         <CardTitle className="flex flex-wrap items-center gap-2 text-base text-zinc-100">
           Server &amp; outbound IP
@@ -205,24 +237,49 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
                   : "border-amber-700/80 bg-amber-950/40 text-amber-200",
               )}
             >
-              {snapshot.poolRotation
-                ? `${modeLabel(snapshot.mode)} · ${snapshot.sendPoolSize ?? "?"} send IPs`
-                : snapshot.rotationConfigured
-                  ? `${modeLabel(snapshot.mode)} · live rotation`
-                  : `${modeLabel(snapshot.mode)} · read-only`}
+              {snapshot.poolRotation && snapshot.sendPoolSize != null
+                ? snapshot.planServersLabel === "Unlimited"
+                  ? "Active plan · unlimited servers"
+                  : `Active plan · ${snapshot.sendPoolSize} servers`
+                : !snapshot.hasActivePlan
+                  ? "No active plan"
+                  : snapshot.rotationConfigured
+                    ? `${modeLabel(snapshot.mode)} · live rotation`
+                    : "No active plan"}
             </Badge>
           ) : null}
         </CardTitle>
         <CardDescription>
-          {snapshot?.poolRotation ? (
+          {!snapshot?.hasActivePlan ? (
             <>
-              Your website always stays on the primary static IP (IP-1). Click Refresh to cycle
-              through your send IP pool (IP-2, IP-3, …) — each selected IP is attached for SMTP
-              during campaigns, then IP-1 is restored when sending finishes. After every{" "}
+              IP rotation is available only with an active server plan. Activate a plan under{" "}
+              <span className="text-zinc-300">Wallet &amp; Plan</span>, then return here to rotate
+              through your plan&apos;s outbound IPs (e.g. 10 servers on the 500-credit plan).
+            </>
+          ) : snapshot?.poolRotation && snapshot.sendPoolSize != null ? (
+            <>
+              Your active plan includes{" "}
+              <span className="text-zinc-300">
+                {snapshot.planServersLabel === "Unlimited"
+                  ? "unlimited"
+                  : snapshot.sendPoolSize}{" "}
+                outbound server{snapshot.sendPoolSize === 1 ? "" : "s"}
+              </span>
+              . Click Refresh to cycle IP{" "}
+              {snapshot.sendPoolIndex != null ? (
+                <>
+                  <span className="text-zinc-300">
+                    {snapshot.sendPoolIndex} of {snapshot.sendPoolSize}
+                  </span>
+                </>
+              ) : (
+                <>1 of {snapshot.sendPoolSize}</>
+              )}
+              . The same count applies to SMTP server slots you can import. After every{" "}
               <span className="text-zinc-300">{snapshot?.rotationThreshold ?? 1000}</span>{" "}
               sends,{" "}
               {snapshot?.autoRotateOnThreshold ? (
-                <>the send IP switches to the next pool address automatically.</>
+                <>the send IP advances to the next plan server automatically.</>
               ) : (
                 <>
                   the campaign pauses — click Refresh IP, then resume on Sending &amp; Logs.
@@ -275,10 +332,15 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
               size="icon"
               className={cn(
                 "h-11 w-11 shrink-0 border-[#374151] bg-[#0B0F19] text-zinc-300 hover:border-[#4B5563] hover:bg-[#1F2937] hover:text-white",
+                !canRotate && "opacity-50",
               )}
               aria-label="Refresh IP"
-              title="Rotate outbound IP"
-              disabled={rotating || loading || previewMode}
+              title={
+                canRotate
+                  ? "Rotate outbound IP"
+                  : "Activate a server plan to unlock IP rotation"
+              }
+              disabled={rotating || loading || previewMode || !canRotate}
               onClick={() => void handleRotate()}
             >
               {rotating ? (
@@ -293,25 +355,19 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
             Lease expires <span className="text-zinc-300">{expires}</span>.{" "}
             {snapshot ? leaseHint(snapshot) : null}
           </p>
-          {snapshot?.poolRotation && snapshot.websiteIp ? (
+          {snapshot?.poolRotation && snapshot.sendPoolSize != null ? (
             <p className="text-xs text-zinc-500">
-              Website URL (always):{" "}
-              <span className="font-mono text-zinc-300">{snapshot.websiteIp}</span>
-              {snapshot.sendPoolSize != null && snapshot.sendPoolSize > 0 ? (
+              {snapshot.websiteIp ? (
                 <>
+                  Website URL (always):{" "}
+                  <span className="font-mono text-zinc-300">{snapshot.websiteIp}</span>
                   {" · "}
-                  {snapshot.ip === snapshot.websiteIp ? (
-                    <>Primary — click Refresh to use send IP 1 of {snapshot.sendPoolSize}</>
-                  ) : snapshot.sendPoolIndex != null ? (
-                    <>
-                      Send IP{" "}
-                      <span className="font-mono text-zinc-300">
-                        {snapshot.sendPoolIndex} of {snapshot.sendPoolSize}
-                      </span>
-                    </>
-                  ) : null}
                 </>
               ) : null}
+              Plan outbound IP{" "}
+              <span className="font-mono text-zinc-300">
+                {snapshot.sendPoolIndex ?? 1} of {snapshot.sendPoolSize}
+              </span>
             </p>
           ) : null}
         </div>
@@ -329,7 +385,7 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
               step={50}
               inputMode="numeric"
               value={thresholdDraft}
-              disabled={loading || savingThreshold || previewMode}
+              disabled={loading || savingThreshold || previewMode || !snapshot?.hasActivePlan}
               onChange={(e) => setThresholdDraft(e.target.value)}
               className="h-11 max-w-[10rem] bg-zinc-950/60 font-mono"
             />
@@ -338,7 +394,7 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
               size="lg"
               variant="outline"
               className="h-11 border-zinc-700"
-              disabled={!thresholdDirty || savingThreshold || previewMode}
+              disabled={!thresholdDirty || savingThreshold || previewMode || !snapshot?.hasActivePlan}
               onClick={() => void handleSaveThreshold()}
             >
               {savingThreshold ? (

@@ -58,6 +58,18 @@ let lightsailClientPromise: Promise<import("@aws-sdk/client-lightsail").Lightsai
   null;
 let lastLightsailApiAt = 0;
 let lightsailApiChain: Promise<unknown> = Promise.resolve();
+let lightsailEgressChain: Promise<unknown> = Promise.resolve();
+
+/** Serialize attach/detach across concurrent campaigns (multi-user safe). */
+export async function withLightsailEgressLock<T>(fn: () => Promise<T>): Promise<T> {
+  const task = () => fn();
+  const chained = lightsailEgressChain.then(task, task);
+  lightsailEgressChain = chained.then(
+    () => undefined,
+    () => undefined,
+  );
+  return chained;
+}
 
 function invalidateLightsailCaches(): void {
   poolEntriesCache = null;

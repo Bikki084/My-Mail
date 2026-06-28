@@ -3,8 +3,6 @@
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import {
   ensureLightsailPrimaryStaticIpAttached,
-  fetchLightsailPoolIpv4List,
-  fetchLightsailSendPoolIpv4List,
   fetchLightsailWebsiteIpv4,
   isAwsLightsailPoolRotationEnabled,
   resolveLightsailWebsitePrimaryIpv4,
@@ -13,11 +11,16 @@ import {
 import {
   DEFAULT_ROTATION_THRESHOLD,
   MAX_ROTATION_THRESHOLD,
+  NO_ACTIVE_PLAN_IP_MESSAGE,
   getOrCreateOutboundIp,
   rotateOutboundIp,
   setRotationThreshold,
   shouldManualPauseForIpRotation,
 } from "@/lib/outbound-ip";
+import {
+  indexInPlanPool,
+  resolveUserPlanIpPool,
+} from "@/lib/plan-ip-pool";
 
 export type ActionResult<T = undefined> =
   | { ok: true; data: T }
@@ -33,26 +36,31 @@ export type ServerIpSnapshot = {
   maxThreshold: number;
   mode: AwsOutboundIpMode;
   rotationConfigured: boolean;
-  /** Pool rotation: toggle send IP without moving the website. */
+  /** Plan-scoped send IP rotation (Refresh cycles 1…N from the active plan). */
   poolRotation: boolean;
   autoRotateOnThreshold: boolean;
-  /** Total static IPs in AWS_LIGHTSAIL_STATIC_IP_NAMES. */
   poolSize: number | null;
-  /** Send IPs available for rotation (pool minus website primary). */
+  /** Send IPs on the user's active plan (same number as SMTP server slots). */
   sendPoolSize: number | null;
-  /** 1-based index in the send pool when active IP is not the website primary. */
+  /** 1-based index in the plan send pool (e.g. 3 of 10). */
   sendPoolIndex: number | null;
+  /** Human label for unlimited plans. */
+  planServersLabel: string | null;
+  hasActivePlan: boolean;
+  canRotate: boolean;
+  noPlanMessage: string;
 };
 
 async function buildServerIpSnapshot(
+  supabase: Awaited<ReturnType<typeof createServerSupabase>>,
+  userId: string,
   rec: Awaited<ReturnType<typeof getOrCreateOutboundIp>>,
 ): Promise<ServerIpSnapshot> {
-  const poolRotation = isAwsLightsailPoolRotationEnabled();
+  const planPool = await resolveUserPlanIpPool(supabase, userId);
+  const planScoped = planPool.ips.length > 0;
+
   let websiteIp: string | null = null;
-  let poolSize: number | null = null;
-  let sendPoolSize: number | null = null;
-  let sendPoolIndex: number | null = null;
-  if (poolRotation) {
+  if (isAwsLightsailPoolRotationEnabled()) {
     try {
       websiteIp = await resolveLightsailWebsitePrimaryIpv4();
     } catch {
@@ -62,21 +70,20 @@ async function buildServerIpSnapshot(
         websiteIp = null;
       }
     }
-    try {
-      const pool = await fetchLightsailPoolIpv4List();
-      const sendPool = await fetchLightsailSendPoolIpv4List();
-      poolSize = pool.length;
-      sendPoolSize = sendPool.length;
-      if (websiteIp && rec.ip !== websiteIp) {
-        const idx = sendPool.indexOf(rec.ip);
-        sendPoolIndex = idx >= 0 ? idx + 1 : null;
-      }
-    } catch {
-      poolSize = null;
-      sendPoolSize = null;
-      sendPoolIndex = null;
-    }
   }
+
+  const sendPoolSize = planScoped
+    ? planPool.unlimited
+      ? planPool.ips.length
+      : planPool.limit ?? planPool.ips.length
+    : null;
+  const sendPoolIndex = planScoped ? indexInPlanPool(planPool.ips, rec.ip) : null;
+  const planServersLabel = planPool.unlimited
+    ? "Unlimited"
+    : planPool.limit != null
+      ? String(planPool.limit)
+      : null;
+
   return {
     ip: rec.ip,
     websiteIp,
@@ -85,12 +92,16 @@ async function buildServerIpSnapshot(
     defaultThreshold: DEFAULT_ROTATION_THRESHOLD,
     maxThreshold: MAX_ROTATION_THRESHOLD,
     mode: rec.mode,
-    rotationConfigured: rec.rotationConfigured,
-    poolRotation,
-    autoRotateOnThreshold: !shouldManualPauseForIpRotation(),
-    poolSize,
+    rotationConfigured: planScoped,
+    poolRotation: planScoped,
+    autoRotateOnThreshold: planScoped && !shouldManualPauseForIpRotation(),
+    poolSize: sendPoolSize,
     sendPoolSize,
     sendPoolIndex,
+    planServersLabel,
+    hasActivePlan: planPool.hasActivePlan,
+    canRotate: planPool.hasActivePlan && planPool.ips.length > 0,
+    noPlanMessage: NO_ACTIVE_PLAN_IP_MESSAGE,
   };
 }
 
@@ -113,10 +124,11 @@ export async function getServerIpAction(): Promise<ActionResult<ServerIpSnapshot
     if (isAwsLightsailPoolRotationEnabled()) {
       await ensureLightsailPrimaryStaticIpAttached();
     }
-    const rec = await getOrCreateOutboundIp(auth.supabase, auth.userId, {
-      alignPoolToPrimaryOnRead: isAwsLightsailPoolRotationEnabled(),
-    });
-    return { ok: true, data: await buildServerIpSnapshot(rec) };
+    const rec = await getOrCreateOutboundIp(auth.supabase, auth.userId);
+    return {
+      ok: true,
+      data: await buildServerIpSnapshot(auth.supabase, auth.userId, rec),
+    };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
@@ -125,9 +137,18 @@ export async function getServerIpAction(): Promise<ActionResult<ServerIpSnapshot
 export async function rotateServerIpAction(): Promise<ActionResult<ServerIpSnapshot>> {
   const auth = await requireUserId();
   if (!auth.ok) return auth;
+
+  const planPool = await resolveUserPlanIpPool(auth.supabase, auth.userId);
+  if (!planPool.hasActivePlan || planPool.ips.length === 0) {
+    return { ok: false, error: NO_ACTIVE_PLAN_IP_MESSAGE };
+  }
+
   try {
     const rec = await rotateOutboundIp(auth.supabase, auth.userId);
-    return { ok: true, data: await buildServerIpSnapshot(rec) };
+    return {
+      ok: true,
+      data: await buildServerIpSnapshot(auth.supabase, auth.userId, rec),
+    };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
@@ -138,6 +159,12 @@ export async function setRotationThresholdAction(
 ): Promise<ActionResult<{ rotationThreshold: number }>> {
   const auth = await requireUserId();
   if (!auth.ok) return auth;
+
+  const planPool = await resolveUserPlanIpPool(auth.supabase, auth.userId);
+  if (!planPool.hasActivePlan) {
+    return { ok: false, error: NO_ACTIVE_PLAN_IP_MESSAGE };
+  }
+
   try {
     const n = await setRotationThreshold(auth.supabase, auth.userId, threshold);
     return { ok: true, data: { rotationThreshold: n } };

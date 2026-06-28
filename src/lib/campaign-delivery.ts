@@ -8,6 +8,10 @@ import { type RecipientRow } from "@/lib/merge-tags";
 import { nodemailerAttachmentsFromCampaignField } from "@/lib/campaign-attachments";
 import { launchRenderBrowser } from "@/lib/html-attachment-render";
 import { hasNonExpiredActivePlan } from "@/lib/active-plan-guard";
+import {
+  clampSmtpRowsToPlanLimit,
+  getActivePlanServerLimit,
+} from "@/lib/smtp-plan-limit";
 import { isAwsLightsailPoolRotationEnabled } from "@/lib/aws-outbound-ip";
 import {
   DEFAULT_ROTATION_THRESHOLD,
@@ -389,6 +393,21 @@ export async function runSendCampaign(
       "No SMTP server configured. Open SMTP Configuration, import or save at least one server, then send again.";
     await markCampaignFailed(supabase, campaignId, msg);
     throw new Error(msg);
+  }
+
+  const planServerLimit = await getActivePlanServerLimit(supabase, userId);
+  if (planServerLimit === 0) {
+    const msg =
+      "No active server plan. Open Wallet & Plan, activate a plan, then send again.";
+    await markCampaignFailed(supabase, campaignId, msg);
+    throw new Error(msg);
+  }
+  const smtpBeforeClamp = smtpList.length;
+  smtpList = clampSmtpRowsToPlanLimit(smtpList, planServerLimit);
+  if (smtpBeforeClamp > smtpList.length) {
+    console.warn(
+      `[campaign-delivery] campaign=${campaignId} clamped SMTP accounts from ${smtpBeforeClamp} to ${smtpList.length} (plan limit=${planServerLimit}).`,
+    );
   }
 
   const rotationStrategy = (campaign as { rotation_strategy?: string | null })

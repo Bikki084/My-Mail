@@ -18,6 +18,12 @@ import {
 import { smtpAuthOptions, smtpConnectionExtras, resolveSmtpImplicitTls, isLocalSmtpHost } from "@/lib/smtp/transport";
 import { resolveSmtpFromAddress } from "@/lib/smtp/from-address";
 import { APP_BRAND_NAME } from "@/lib/brand";
+import { evaluateMailServicePlan } from "@/lib/active-plan-guard";
+import {
+  evaluateSmtpInsertCapacity,
+  getSmtpPlanCapacity,
+  type SmtpPlanCapacity,
+} from "@/lib/smtp-plan-limit";
 
 export type ActionResult<T = undefined> =
   | { ok: true; data?: T }
@@ -198,6 +204,34 @@ async function requireClientUser(): Promise<
   return { ok: true, userId: user.id, email: user.email ?? null };
 }
 
+async function requireActivePlanForSmtp(
+  userId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const supabase = await createServerSupabase();
+  const plan = await evaluateMailServicePlan(supabase, userId);
+  if (!plan.ok) return { ok: false, error: plan.error };
+  return { ok: true };
+}
+
+/** Plan slot usage for the SMTP Configuration tab. */
+export async function fetchSmtpPlanCapacity(): Promise<
+  ActionResult<SmtpPlanCapacity>
+> {
+  const guard = await requireClientUser();
+  if (!guard.ok) return guard;
+
+  const supabase = await createServerSupabase();
+  try {
+    const cap = await getSmtpPlanCapacity(supabase, guard.userId);
+    return { ok: true, data: cap };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 /* ---------------------------------- API ---------------------------------- */
 
 export type SmtpTestResult = {
@@ -317,6 +351,9 @@ export async function saveSmtpServer(
   const guard = await requireClientUser();
   if (!guard.ok) return guard;
 
+  const planGuard = await requireActivePlanForSmtp(guard.userId);
+  if (!planGuard.ok) return planGuard;
+
   if (!isValidEncryptionKeyConfigured()) {
     return {
       ok: false,
@@ -378,6 +415,9 @@ export async function saveSmtpServer(
       return { ok: false, error: DUPLICATE_SMTP_MESSAGE };
     }
 
+    const capacityErr = await evaluateSmtpInsertCapacity(supabase, guard.userId, 1);
+    if (capacityErr) return { ok: false, error: capacityErr };
+
     const { data, error } = await supabase
       .from("smtp_servers")
       .insert(payload)
@@ -432,6 +472,9 @@ export async function importBulkSmtpServers(
   const guard = await requireClientUser();
   if (!guard.ok) return guard;
 
+  const planGuard = await requireActivePlanForSmtp(guard.userId);
+  if (!planGuard.ok) return planGuard;
+
   if (!isValidEncryptionKeyConfigured()) {
     return {
       ok: false,
@@ -452,6 +495,9 @@ export async function importBulkSmtpServers(
   }
 
   const supabase = await createServerSupabase();
+
+  const planCap = await getSmtpPlanCapacity(supabase, guard.userId);
+  let slotCount = planCap.current;
 
   const { data: existingRows } = await supabase
     .from("smtp_servers")
@@ -512,6 +558,14 @@ export async function importBulkSmtpServers(
       continue;
     }
 
+    if (planCap.limit !== null && slotCount >= planCap.limit) {
+      failed.push({
+        index: i,
+        error: `Plan allows ${planCap.limit} SMTP server(s). Remove saved servers or upgrade your plan.`,
+      });
+      continue;
+    }
+
     let password_enc: string;
     try {
       password_enc = encryptSmtpPassword(v.password);
@@ -554,6 +608,7 @@ export async function importBulkSmtpServers(
     }
     existingKeys.add(identityKey);
     imported += 1;
+    slotCount += 1;
   }
 
   revalidatePath("/client");

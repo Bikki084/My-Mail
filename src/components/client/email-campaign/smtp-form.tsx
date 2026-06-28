@@ -41,6 +41,7 @@ import { cn } from "@/lib/utils";
 import { ServerIpPanel } from "./server-ip-panel";
 import {
   deleteSmtpServer,
+  fetchSmtpPlanCapacity,
   importBulkSmtpServers,
   listSmtpServers,
   saveSmtpServer,
@@ -51,6 +52,8 @@ import {
   type SmtpFormInput,
   type SmtpProvider,
 } from "@/app/actions/smtp";
+import type { SmtpPlanCapacity } from "@/lib/smtp-plan-limit";
+import { useWalletState } from "./wallet-state-context";
 
 type PresetId = "gmail" | "yahoo" | "outlook";
 
@@ -361,6 +364,15 @@ export function SmtpForm({
   previewMode?: boolean;
   onGoToComposer?: () => void;
 }) {
+  const { state: walletState } = useWalletState();
+  const [planCapacity, setPlanCapacity] = React.useState<SmtpPlanCapacity | null>(null);
+
+  const refreshPlanCapacity = React.useCallback(async () => {
+    if (previewMode) return;
+    const res = await fetchSmtpPlanCapacity();
+    if (res.ok && res.data) setPlanCapacity(res.data);
+  }, [previewMode]);
+
   const [nexting, setNexting] = React.useState(false);
   const [preset, setPreset] = React.useState<PresetId | null>(null);
   const [smtpHost, setSmtpHost] = React.useState("");
@@ -390,10 +402,11 @@ export function SmtpForm({
       } else {
         setSavedError(res.error);
       }
+      await refreshPlanCapacity();
     } finally {
       setSavedLoading(false);
     }
-  }, []);
+  }, [refreshPlanCapacity]);
 
   // Initial async fetch of saved SMTP servers — setState happens after await.
   React.useEffect(() => {
@@ -812,8 +825,51 @@ export function SmtpForm({
     }
   }
 
+  React.useEffect(() => {
+    void refreshPlanCapacity();
+  }, [refreshPlanCapacity, walletState.activePlan]);
+
+  const planSlotsLabel =
+    planCapacity == null
+      ? null
+      : planCapacity.limit === null
+        ? `${planCapacity.current} saved · unlimited plan slots`
+        : `${planCapacity.current} / ${planCapacity.limit} plan slots used`;
+
+  const atPlanSlotLimit =
+    planCapacity != null &&
+    planCapacity.limit !== null &&
+    planCapacity.remaining === 0;
+
   return (
     <div className="space-y-6">
+      {planCapacity && !previewMode && (
+        <div
+          className={cn(
+            "rounded-lg border px-4 py-3 text-sm",
+            !planCapacity.hasActivePlan
+              ? "border-amber-700/50 bg-amber-950/30 text-amber-100"
+              : atPlanSlotLimit
+                ? "border-amber-700/50 bg-amber-950/30 text-amber-100"
+                : "border-zinc-800 bg-zinc-900/50 text-zinc-300",
+          )}
+        >
+          <p className="font-medium text-zinc-100">Server plan slots</p>
+          <p className="mt-1 text-xs leading-relaxed">
+            {!planCapacity.hasActivePlan
+              ? "Activate a server plan under Wallet & Plan before adding SMTP servers."
+              : planCapacity.limit === null
+                ? "Unlimited SMTP servers on your active plan."
+                : `${planCapacity.current} of ${planCapacity.limit} SMTP server slots used on your active plan.`}
+            {planSlotsLabel ? ` · ${planSlotsLabel}` : ""}
+          </p>
+          {!planCapacity.hasActivePlan && (
+            <p className="mt-1 text-xs text-amber-200/90">
+              Activate a plan under Wallet & Plan before importing SMTP servers.
+            </p>
+          )}
+        </div>
+      )}
       <ServerIpPanel previewMode={previewMode} />
 
       <Card className="border-zinc-800 bg-zinc-900/40 ring-zinc-800">
@@ -1049,6 +1105,9 @@ export function SmtpForm({
           <CardDescription>
             Passwords are encrypted with AES-256-GCM and stored in{" "}
             <span className="font-mono text-zinc-400">smtp_servers.password_enc</span>.
+            {planSlotsLabel ? (
+              <span className="mt-1 block text-zinc-500">{planSlotsLabel}</span>
+            ) : null}
           </CardDescription>
         </CardHeader>
         <CardContent>

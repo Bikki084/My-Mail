@@ -29,8 +29,23 @@ import {
   resolveOutboundIpMode,
   rotateAwsOutboundIp,
   useInstancePublicIpMode,
+  withLightsailEgressLock,
   type AwsOutboundIpMode,
 } from "@/lib/aws-outbound-ip";
+import {
+  fetchExpandedOutboundIpPool,
+  isExpandedVirtualPoolEnabled,
+  resolveInitialOutboundIpForUser,
+  rotateExpandedPoolIp,
+  shouldAttachLightsailForSendIp,
+  shouldSkipLightsailAttach,
+} from "@/lib/outbound-ip-pool";
+import {
+  firstIpInPlanPool,
+  nextIpInPlanPool,
+  resolveUserPlanIpPool,
+  syncUserPlanPoolIp,
+} from "@/lib/plan-ip-pool";
 
 /** Default burst size if the user has never tuned the panel. Matches the spec. */
 export const DEFAULT_ROTATION_THRESHOLD = 1000;
@@ -55,7 +70,8 @@ export function isOutboundIpRotationConfigured(): boolean {
   return (
     isRotationUrlConfigured() ||
     isAwsLightsailRotationConfigured() ||
-    isAwsEc2RotationConfigured()
+    isAwsEc2RotationConfigured() ||
+    isExpandedVirtualPoolEnabled()
   );
 }
 
@@ -162,6 +178,10 @@ export async function resolveOutboundIpForRotation(
       );
     }
     return ip;
+  }
+
+  if (isExpandedVirtualPoolEnabled()) {
+    return rotateExpandedPoolIp(prev);
   }
 
   if (isAwsLightsailRotationConfigured() || isAwsEc2RotationConfigured()) {
@@ -303,20 +323,30 @@ export async function prepareLightsailEgressForCampaign(sendIp: string): Promise
   if (!isAwsLightsailPoolRotationEnabled()) return;
   const wanted = sendIp.trim();
   if (!wanted) return;
-  const websiteIp = (await resolveLightsailWebsitePrimaryIpv4())?.trim() ?? null;
-  if (websiteIp && wanted === websiteIp) {
-    await ensureLightsailPrimaryStaticIpAttached();
-  } else {
-    await ensureLightsailEgressIpForSend(wanted);
-  }
-  const live = await fetchLightsailAttachedStaticIpv4();
-  if (live !== wanted) {
-    throw new Error(
-      `SMTP egress IP mismatch: expected ${wanted} but the server public IP is ${live}. ` +
-        "Check AWS_LIGHTSAIL_STATIC_IP_NAMES and IAM permissions for AttachStaticIp.",
+
+  if (!(await shouldAttachLightsailForSendIp(wanted))) {
+    console.log(
+      `[outbound-ip] virtual pool send IP=${wanted} — skipping Lightsail attach (relay / expanded pool mode).`,
     );
+    return;
   }
-  console.log(`[outbound-ip] SMTP egress confirmed on ${live}`);
+
+  await withLightsailEgressLock(async () => {
+    const websiteIp = (await resolveLightsailWebsitePrimaryIpv4())?.trim() ?? null;
+    if (websiteIp && wanted === websiteIp) {
+      await ensureLightsailPrimaryStaticIpAttached();
+    } else {
+      await ensureLightsailEgressIpForSend(wanted);
+    }
+    const live = await fetchLightsailAttachedStaticIpv4();
+    if (live !== wanted) {
+      throw new Error(
+        `SMTP egress IP mismatch: expected ${wanted} but the server public IP is ${live}. ` +
+          "Check AWS_LIGHTSAIL_STATIC_IP_NAMES and IAM permissions for AttachStaticIp.",
+      );
+    }
+    console.log(`[outbound-ip] SMTP egress confirmed on ${live}`);
+  });
 }
 
 /** After sending: restore website primary on AWS and reset the panel row to IP-1. */
@@ -324,7 +354,9 @@ export async function restoreLightsailWebsiteEgress(
   supabase?: SupabaseClient,
   userId?: string,
 ): Promise<void> {
-  await releaseLightsailEgressToPrimary();
+  if (!shouldSkipLightsailAttach()) {
+    await withLightsailEgressLock(() => releaseLightsailEgressToPrimary());
+  }
   if (!supabase || !userId || !isAwsLightsailPoolRotationEnabled()) return;
   try {
     const primary = await resolveLightsailWebsitePrimaryIpv4();
@@ -357,7 +389,9 @@ async function syncLightsailPoolOutboundIp(
   },
 ): Promise<string> {
   try {
-    const poolIps = await fetchLightsailPoolIpv4List();
+    const poolIps = isExpandedVirtualPoolEnabled()
+      ? await fetchExpandedOutboundIpPool()
+      : await fetchLightsailPoolIpv4List();
     if (poolIps.includes(row.current_ip)) return row.current_ip;
     const fallback =
       (await fetchLightsailWebsiteIpv4()) ?? poolIps[0] ?? row.current_ip;
@@ -395,10 +429,34 @@ function pickFromRanges(ranges: ReadonlyArray<readonly [number, number]>): numbe
 }
 
 function recordMeta(): Pick<OutboundIpRecord, "mode" | "rotationConfigured"> {
+  const mode: AwsOutboundIpMode = isExpandedVirtualPoolEnabled()
+    ? "rotation_url"
+    : resolveOutboundIpMode();
   return {
-    mode: resolveOutboundIpMode(),
+    mode,
     rotationConfigured: isOutboundIpRotationConfigured(),
   };
+}
+
+export const NO_ACTIVE_PLAN_IP_MESSAGE =
+  "Activate a server plan under Wallet & Plan first. Outbound IP rotation unlocks after you activate a plan.";
+
+async function resolveReadOnlyWebsiteDisplayIp(): Promise<string> {
+  if (isAwsLightsailPoolRotationEnabled()) {
+    await ensureLightsailPrimaryStaticIpAttached();
+    return (
+      (await resolveLightsailWebsitePrimaryIpv4()) ??
+      (await fetchLightsailWebsiteIpv4()) ??
+      (await fetchLivePublicIpv4())
+    );
+  }
+  if (useInstancePublicIpMode() || isOutboundIpRotationConfigured()) {
+    return await fetchLivePublicIpv4();
+  }
+  if (process.env.NODE_ENV === "production") {
+    return await fetchLivePublicIpv4();
+  }
+  return generateOutboundIp();
 }
 
 /**
@@ -415,55 +473,77 @@ export async function getOrCreateOutboundIp(
   userId: string,
   opts?: GetOutboundIpOptions,
 ): Promise<OutboundIpRecord> {
+  const planPool = await resolveUserPlanIpPool(supabase, userId);
+
   const existing = await supabase
     .from("user_outbound_ip")
     .select("current_ip, expires_at, rotation_threshold")
     .eq("user_id", userId)
     .maybeSingle();
-  if (existing.data && existing.data.current_ip) {
-    const ip = isAwsLightsailRotationConfigured()
-      ? opts?.alignPoolToPrimaryOnRead
-        ? await alignLightsailPoolToPrimaryIp(supabase, userId, existing.data)
-        : await syncLightsailPoolOutboundIp(supabase, userId, existing.data)
-      : useInstancePublicIpMode() || isOutboundIpRotationConfigured()
-        ? await syncLiveOutboundIp(supabase, userId, existing.data)
-        : existing.data.current_ip;
+
+  if (planPool.ips.length > 0) {
+    if (existing.data?.current_ip) {
+      const ip = await syncUserPlanPoolIp(
+        supabase,
+        userId,
+        existing.data,
+        LEASE_DURATION_MS,
+      );
+      return {
+        ip,
+        expiresAt:
+          existing.data.expires_at ??
+          new Date(Date.now() + LEASE_DURATION_MS).toISOString(),
+        rotationThreshold:
+          Number.isFinite(existing.data.rotation_threshold) &&
+          existing.data.rotation_threshold > 0
+            ? Number(existing.data.rotation_threshold)
+            : DEFAULT_ROTATION_THRESHOLD,
+        bootstrapped: false,
+        ...recordMeta(),
+      };
+    }
+    const ip = firstIpInPlanPool(planPool.ips);
+    const expiresAt = new Date(Date.now() + LEASE_DURATION_MS).toISOString();
+    const rotationThreshold =
+      existing.data?.rotation_threshold && existing.data.rotation_threshold > 0
+        ? Number(existing.data.rotation_threshold)
+        : DEFAULT_ROTATION_THRESHOLD;
+    await supabase.from("user_outbound_ip").upsert(
+      {
+        user_id: userId,
+        current_ip: ip,
+        expires_at: expiresAt,
+        rotation_threshold: rotationThreshold,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id" },
+    );
     return {
       ip,
-      expiresAt:
-        existing.data.expires_at ??
-        new Date(Date.now() + LEASE_DURATION_MS).toISOString(),
-      rotationThreshold:
-        Number.isFinite(existing.data.rotation_threshold) &&
-        existing.data.rotation_threshold > 0
-          ? Number(existing.data.rotation_threshold)
-          : DEFAULT_ROTATION_THRESHOLD,
-      bootstrapped: false,
+      expiresAt,
+      rotationThreshold,
+      bootstrapped: true,
       ...recordMeta(),
     };
   }
-  const ip = await resolveInitialOutboundIp();
-  const expiresAt = new Date(Date.now() + LEASE_DURATION_MS).toISOString();
+
+  // No active plan — show website IP only; rotation is blocked until plan activation.
+  const displayIp = await resolveReadOnlyWebsiteDisplayIp();
   const rotationThreshold =
     existing.data?.rotation_threshold && existing.data.rotation_threshold > 0
       ? Number(existing.data.rotation_threshold)
       : DEFAULT_ROTATION_THRESHOLD;
-  await supabase.from("user_outbound_ip").upsert(
-    {
-      user_id: userId,
-      current_ip: ip,
-      expires_at: expiresAt,
-      rotation_threshold: rotationThreshold,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "user_id" },
-  );
+  const expiresAt =
+    existing.data?.expires_at ??
+    new Date(Date.now() + LEASE_DURATION_MS).toISOString();
   return {
-    ip,
+    ip: displayIp,
     expiresAt,
     rotationThreshold,
-    bootstrapped: true,
-    ...recordMeta(),
+    bootstrapped: false,
+    mode: resolveOutboundIpMode(),
+    rotationConfigured: false,
   };
 }
 
@@ -474,6 +554,13 @@ export async function rotateOutboundIp(
   supabase: SupabaseClient,
   userId: string,
 ): Promise<OutboundIpRecord> {
+  const planPool = await resolveUserPlanIpPool(supabase, userId);
+  if (planPool.ips.length === 0) {
+    throw new Error(
+      "Activate a server plan under Wallet & Plan before rotating outbound IPs.",
+    );
+  }
+
   const before = await supabase
     .from("user_outbound_ip")
     .select("current_ip, rotation_threshold")
@@ -484,24 +571,8 @@ export async function rotateOutboundIp(
       ? Number(before.data.rotation_threshold)
       : DEFAULT_ROTATION_THRESHOLD;
   const previousIp = before.data?.current_ip?.trim() || null;
-  let ip = await resolveOutboundIpForRotation(previousIp);
-  // Full AWS attach-swap: confirm live egress matches. Pool rotation keeps DB IP.
-  if (
-    !isAwsLightsailPoolRotationEnabled() &&
-    (isOutboundIpRotationConfigured() || useInstancePublicIpMode())
-  ) {
-    try {
-      const live = await fetchLivePublicIpv4();
-      if (live && live !== ip) {
-        console.warn(
-          `[outbound-ip] rotation returned ${ip} but live public IP is ${live}; using live.`,
-        );
-        ip = live;
-      }
-    } catch {
-      /* keep resolved ip */
-    }
-  }
+  const ip = nextIpInPlanPool(planPool.ips, previousIp);
+
   const expiresAt = new Date(Date.now() + LEASE_DURATION_MS).toISOString();
   const { error } = await supabase.from("user_outbound_ip").upsert(
     {
