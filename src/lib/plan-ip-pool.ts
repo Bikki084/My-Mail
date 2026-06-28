@@ -11,6 +11,9 @@ import { parseProxyPool } from "@/lib/smtp-egress-proxy";
 const IP_V4 =
   /^(?:(?:25[0-5]|2[0-4]\d|[01]?\d{1,2})\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d{1,2})$/;
 
+/** Rotation pool size when plan allows unlimited SMTP servers. */
+const UNLIMITED_PLAN_ROTATION_SLOTS = 50;
+
 function parseCsvIpv4Env(name: string): string[] {
   const raw = process.env[name]?.trim();
   if (!raw) return [];
@@ -147,7 +150,7 @@ export async function resolveUserPlanIpPool(
   }
 
   const mode = resolveEgressMode();
-  const count = limit === null ? 50 : limit;
+  const count = limit === null ? UNLIMITED_PLAN_ROTATION_SLOTS : limit;
 
   if (mode === "proxy") {
     const proxies = parseProxyPool();
@@ -180,7 +183,7 @@ export async function resolveUserPlanIpPool(
 
   if (mode === "lightsail") {
     const master = await fetchRealAttachableIpPool();
-    const want = limit === null ? master.length : limit;
+    const want = limit === null ? UNLIMITED_PLAN_ROTATION_SLOTS : limit;
     const ips = buildPlanSlotIpPool(userId, want, master, false);
     if (ips.length === 0) {
       console.warn(

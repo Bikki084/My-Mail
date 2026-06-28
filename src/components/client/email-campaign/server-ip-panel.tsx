@@ -40,38 +40,26 @@ function modeLabel(mode: AwsOutboundIpMode): string {
   }
 }
 
+function planServerLabel(snapshot: ServerIpSnapshot): string {
+  if (snapshot.planServersLabel === "Unlimited") return "unlimited servers";
+  if (snapshot.sendPoolSize != null) {
+    return `${snapshot.sendPoolSize} server${snapshot.sendPoolSize === 1 ? "" : "s"}`;
+  }
+  return "your plan servers";
+}
+
 function leaseHint(snapshot: ServerIpSnapshot): string {
   if (!snapshot.hasActivePlan) {
     return snapshot.noPlanMessage;
   }
-  if (snapshot.egressMode === "lightsail") {
+  if (snapshot.poolRotation && snapshot.sendPoolSize != null) {
     const site = snapshot.websiteIp
       ? `Website stays on ${snapshot.websiteIp}. `
       : "";
-    const unique =
-      snapshot.uniqueEgressIpCount != null &&
-      snapshot.sendPoolSize != null &&
-      snapshot.uniqueEgressIpCount < snapshot.sendPoolSize
-        ? `${snapshot.uniqueEgressIpCount} unique AWS IPs across ${snapshot.sendPoolSize} plan slots. `
-        : "";
-    return `${site}${unique}Real AWS attach: Refresh cycles plan server slots; each slot attaches its Lightsail IP before SMTP. Add more static IPs or use proxy mode for more unique egress.`;
-  }
-  if (snapshot.egressMode === "proxy") {
-    return "Real SOCKS5 egress: each SMTP server slot sends through its own proxy from OUTBOUND_IP_PROXY_POOL. Refresh cycles the active slot IP shown above.";
-  }
-  if (snapshot.poolRotation && snapshot.sendPoolSize != null) {
-    const n = snapshot.sendPoolSize;
-    const site = snapshot.websiteIp
-      ? `Your website stays on ${snapshot.websiteIp}. `
-      : "";
-    const label =
-      snapshot.planServersLabel === "Unlimited"
-        ? "unlimited plan servers"
-        : `${n} plan server${n === 1 ? "" : "s"}`;
-    return `${site}Click Refresh to cycle through your ${label} (outbound IP 1 of ${n}). Each IP matches one SMTP server slot on your active plan.`;
+    return `${site}Click Refresh to rotate through outbound IPs on your active plan (${planServerLabel(snapshot)}).`;
   }
   if (snapshot.rotationConfigured) {
-    return `Full AWS attach-swap is active (${modeLabel(snapshot.mode)}). Refresh moves the whole server to the next IP (website URL changes).`;
+    return `Outbound IP rotation is active (${modeLabel(snapshot.mode)}). Refresh moves to the next IP on your plan.`;
   }
   if (snapshot.mode === "instance") {
     return `Displaying this server's public IP (${snapshot.ip}). Activate a Wallet & Plan tier to unlock plan-scoped IP rotation.`;
@@ -114,7 +102,7 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
         poolSize: 10,
         sendPoolSize: 10,
         sendPoolIndex: 1,
-        uniqueEgressIpCount: 5,
+        uniqueEgressIpCount: 10,
         planServersLabel: "10",
         hasActivePlan: true,
         canRotate: true,
@@ -140,8 +128,6 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
     setLoading(false);
   }, [previewMode]);
 
-  // External-system sync (Supabase row read). The setState calls run after
-  // an `await`, so the cascading-render rule doesn't actually apply.
   React.useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void refresh();
@@ -166,7 +152,7 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
               resolve({
                 ok: false,
                 error:
-                  "Rotation is taking longer than expected. Check AWS credentials and static IP names on the server, then try again.",
+                  "Rotation is taking longer than expected. Check server configuration, then try again.",
               }),
             20_000,
           );
@@ -255,17 +241,14 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
                   : "border-amber-700/80 bg-amber-950/40 text-amber-200",
               )}
             >
-              {snapshot.poolRotation && snapshot.sendPoolSize != null
-                ? `${snapshot.egressModeLabel} · ${snapshot.sendPoolSize} slots${
-                    snapshot.uniqueEgressIpCount != null &&
-                    snapshot.uniqueEgressIpCount < snapshot.sendPoolSize
-                      ? ` · ${snapshot.uniqueEgressIpCount} unique IPs`
-                      : ""
-                  }`
+              {snapshot.poolRotation && snapshot.hasActivePlan
+                ? snapshot.planServersLabel === "Unlimited"
+                  ? "Active plan · unlimited servers"
+                  : `Active plan · ${snapshot.sendPoolSize ?? snapshot.planServersLabel} servers`
                 : !snapshot.hasActivePlan
                   ? "No active plan"
                   : snapshot.rotationConfigured
-                    ? `${modeLabel(snapshot.mode)} · live rotation`
+                    ? "Active plan"
                     : "No active plan"}
             </Badge>
           ) : null}
@@ -286,18 +269,6 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
                   : snapshot.sendPoolSize}{" "}
                 outbound server{snapshot.sendPoolSize === 1 ? "" : "s"}
               </span>
-              {snapshot.uniqueEgressIpCount != null &&
-              snapshot.sendPoolSize != null &&
-              snapshot.uniqueEgressIpCount < snapshot.sendPoolSize ? (
-                <>
-                  {" "}
-                  (
-                  <span className="text-zinc-300">
-                    {snapshot.uniqueEgressIpCount} unique egress IPs
-                  </span>{' '}
-                  on AWS Lightsail)
-                </>
-              ) : null}
               . Click Refresh to cycle IP{" "}
               {snapshot.sendPoolIndex != null ? (
                 <>
@@ -401,16 +372,6 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
               <span className="font-mono text-zinc-300">
                 {snapshot.sendPoolIndex ?? 1} of {snapshot.sendPoolSize}
               </span>
-              {snapshot.uniqueEgressIpCount != null &&
-              snapshot.sendPoolSize != null &&
-              snapshot.uniqueEgressIpCount < snapshot.sendPoolSize ? (
-                <>
-                  {" "}
-                  <span className="text-zinc-500">
-                    ({snapshot.uniqueEgressIpCount} unique IPs)
-                  </span>
-                </>
-              ) : null}
             </p>
           ) : null}
         </div>
