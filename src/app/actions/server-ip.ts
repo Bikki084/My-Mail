@@ -49,6 +49,8 @@ export type ServerIpSnapshot = {
   sendPoolSize: number | null;
   /** 1-based index in the plan send pool (e.g. 3 of 10). */
   sendPoolIndex: number | null;
+  /** Distinct egress IPv4s (may be less than sendPoolSize when slots share IPs). */
+  uniqueEgressIpCount: number | null;
   /** Human label for unlimited plans. */
   planServersLabel: string | null;
   hasActivePlan: boolean;
@@ -88,12 +90,13 @@ async function buildServerIpSnapshot(
   const sendPoolSize = planScoped
     ? planPool.unlimited
       ? planPool.ips.length
-      : planPool.limit ?? planPool.ips.length
+      : (planPool.limit ?? planPool.ips.length)
     : null;
   const rotationIndex = ipRow?.plan_rotation_index ?? 0;
   const sendPoolIndex = planScoped
     ? planPoolDisplayIndex(planPool.ips.length, Number(rotationIndex))
     : null;
+  const uniqueEgressIpCount = planScoped ? planPool.uniqueIpCount : null;
   const planServersLabel = planPool.unlimited
     ? "Unlimited"
     : planPool.limit != null
@@ -116,6 +119,7 @@ async function buildServerIpSnapshot(
     poolSize: sendPoolSize,
     sendPoolSize: planScoped ? planPool.ips.length : sendPoolSize,
     sendPoolIndex,
+    uniqueEgressIpCount,
     planServersLabel,
     hasActivePlan: planPool.hasActivePlan,
     canRotate: planPool.hasActivePlan && planPool.ips.length > 0,

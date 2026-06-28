@@ -29,7 +29,37 @@ export type UserPlanIpPool = {
   limit: number | null;
   unlimited: boolean;
   hasActivePlan: boolean;
+  /** Distinct IPv4s in `ips` (may be fewer when slots share the same egress IP). */
+  uniqueIpCount: number;
 };
+
+function countUniqueIpv4(ips: string[]): number {
+  const seen = new Set<string>();
+  for (const ip of ips) {
+    const t = ip.trim();
+    if (IP_V4.test(t)) seen.add(t);
+  }
+  return seen.size;
+}
+
+/** Fill `count` plan slots from `master`, repeating when fewer real IPs than plan servers. */
+function buildPlanSlotIpPool(
+  userId: string,
+  count: number,
+  master: string[],
+  allowSynthetic = false,
+): string[] {
+  const target = Math.max(1, Math.floor(count));
+  if (master.length === 0) {
+    if (!allowSynthetic) return [];
+    return buildUniquePlanIpPool(userId, target, master, true);
+  }
+  const ips: string[] = [];
+  for (let i = 0; i < target; i += 1) {
+    ips.push(master[i % master.length]!);
+  }
+  return ips;
+}
 
 /** Stable IPv4 for plan slot N — unique per user and slot index. */
 export function deterministicPlanSlotIp(userId: string, slot: number): string {
@@ -101,12 +131,19 @@ export async function resolveUserPlanIpPool(
       limit: null,
       unlimited: true,
       hasActivePlan: true,
+      uniqueIpCount: countUniqueIpv4(ips),
     };
   }
 
   const limit = await getActivePlanServerLimit(supabase, userId);
   if (limit === 0) {
-    return { ips: [], limit: 0, unlimited: false, hasActivePlan: false };
+    return {
+      ips: [],
+      limit: 0,
+      unlimited: false,
+      hasActivePlan: false,
+      uniqueIpCount: 0,
+    };
   }
 
   const mode = resolveEgressMode();
@@ -115,40 +152,47 @@ export async function resolveUserPlanIpPool(
   if (mode === "proxy") {
     const proxies = parseProxyPool();
     const displayIps = parseCsvIpv4Env("OUTBOUND_IP_POOL");
-    const poolSize =
-      proxies.length > 0
-        ? Math.min(count, proxies.length)
-        : displayIps.length > 0
-          ? Math.min(count, displayIps.length)
-          : 0;
-    if (poolSize === 0) {
+    if (proxies.length === 0 && displayIps.length === 0) {
       console.warn(
         "[plan-ip-pool] OUTBOUND_IP_EGRESS_MODE=proxy but OUTBOUND_IP_PROXY_POOL is empty.",
       );
-      return { ips: [], limit, unlimited: false, hasActivePlan: true };
+      return {
+        ips: [],
+        limit,
+        unlimited: false,
+        hasActivePlan: true,
+        uniqueIpCount: 0,
+      };
     }
     const ips: string[] = [];
-    for (let i = 0; i < poolSize; i += 1) {
-      const ip = displayIps[i]?.trim();
-      ips.push(IP_V4.test(ip ?? "") ? ip! : deterministicPlanSlotIp(userId, i));
+    for (let i = 0; i < count; i += 1) {
+      const fromEnv = displayIps[i % Math.max(1, displayIps.length)]?.trim();
+      ips.push(IP_V4.test(fromEnv ?? "") ? fromEnv! : deterministicPlanSlotIp(userId, i));
     }
     return {
       ips,
       limit,
       unlimited: limit === null,
       hasActivePlan: true,
+      uniqueIpCount: countUniqueIpv4(ips),
     };
   }
 
   if (mode === "lightsail") {
     const master = await fetchRealAttachableIpPool();
     const want = limit === null ? master.length : limit;
-    const ips = buildUniquePlanIpPool(userId, want, master, false);
+    const ips = buildPlanSlotIpPool(userId, want, master, false);
+    if (ips.length === 0) {
+      console.warn(
+        "[plan-ip-pool] OUTBOUND_IP_EGRESS_MODE=lightsail but no attachable IPs in AWS pool.",
+      );
+    }
     return {
       ips,
       limit,
       unlimited: limit === null,
       hasActivePlan: true,
+      uniqueIpCount: countUniqueIpv4(ips),
     };
   }
 
@@ -161,6 +205,7 @@ export async function resolveUserPlanIpPool(
     limit,
     unlimited: limit === null,
     hasActivePlan: true,
+    uniqueIpCount: countUniqueIpv4(ips),
   };
 }
 

@@ -48,7 +48,13 @@ function leaseHint(snapshot: ServerIpSnapshot): string {
     const site = snapshot.websiteIp
       ? `Website stays on ${snapshot.websiteIp}. `
       : "";
-    return `${site}Real AWS attach: Refresh picks the next Lightsail static IP and campaigns attach it before SMTP (max IPs = your AWS static pool, usually 5 per server). Best with local Postfix (127.0.0.1:25).`;
+    const unique =
+      snapshot.uniqueEgressIpCount != null &&
+      snapshot.sendPoolSize != null &&
+      snapshot.uniqueEgressIpCount < snapshot.sendPoolSize
+        ? `${snapshot.uniqueEgressIpCount} unique AWS IPs across ${snapshot.sendPoolSize} plan slots. `
+        : "";
+    return `${site}${unique}Real AWS attach: Refresh cycles plan server slots; each slot attaches its Lightsail IP before SMTP. Add more static IPs or use proxy mode for more unique egress.`;
   }
   if (snapshot.egressMode === "proxy") {
     return "Real SOCKS5 egress: each SMTP server slot sends through its own proxy from OUTBOUND_IP_PROXY_POOL. Refresh cycles the active slot IP shown above.";
@@ -108,6 +114,7 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
         poolSize: 10,
         sendPoolSize: 10,
         sendPoolIndex: 1,
+        uniqueEgressIpCount: 5,
         planServersLabel: "10",
         hasActivePlan: true,
         canRotate: true,
@@ -249,7 +256,12 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
               )}
             >
               {snapshot.poolRotation && snapshot.sendPoolSize != null
-                ? `${snapshot.egressModeLabel} · ${snapshot.sendPoolSize} servers`
+                ? `${snapshot.egressModeLabel} · ${snapshot.sendPoolSize} slots${
+                    snapshot.uniqueEgressIpCount != null &&
+                    snapshot.uniqueEgressIpCount < snapshot.sendPoolSize
+                      ? ` · ${snapshot.uniqueEgressIpCount} unique IPs`
+                      : ""
+                  }`
                 : !snapshot.hasActivePlan
                   ? "No active plan"
                   : snapshot.rotationConfigured
@@ -274,6 +286,18 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
                   : snapshot.sendPoolSize}{" "}
                 outbound server{snapshot.sendPoolSize === 1 ? "" : "s"}
               </span>
+              {snapshot.uniqueEgressIpCount != null &&
+              snapshot.sendPoolSize != null &&
+              snapshot.uniqueEgressIpCount < snapshot.sendPoolSize ? (
+                <>
+                  {" "}
+                  (
+                  <span className="text-zinc-300">
+                    {snapshot.uniqueEgressIpCount} unique egress IPs
+                  </span>{' '}
+                  on AWS Lightsail)
+                </>
+              ) : null}
               . Click Refresh to cycle IP{" "}
               {snapshot.sendPoolIndex != null ? (
                 <>
@@ -377,6 +401,16 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
               <span className="font-mono text-zinc-300">
                 {snapshot.sendPoolIndex ?? 1} of {snapshot.sendPoolSize}
               </span>
+              {snapshot.uniqueEgressIpCount != null &&
+              snapshot.sendPoolSize != null &&
+              snapshot.uniqueEgressIpCount < snapshot.sendPoolSize ? (
+                <>
+                  {" "}
+                  <span className="text-zinc-500">
+                    ({snapshot.uniqueEgressIpCount} unique IPs)
+                  </span>
+                </>
+              ) : null}
             </p>
           ) : null}
         </div>
