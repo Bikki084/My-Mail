@@ -4,6 +4,7 @@ import {
   fetchLightsailPoolIpv4List,
   isAwsLightsailRotationConfigured,
 } from "@/lib/aws-outbound-ip";
+import { usesLogicalIpPoolOnly, usesProxyEgress } from "@/lib/egress-mode";
 
 const IP_V4 =
   /^(?:(?:25[0-5]|2[0-4]\d|[01]?\d{1,2})\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d{1,2})$/;
@@ -71,24 +72,33 @@ function readVirtualPoolMinSize(): number {
 }
 
 export function isExpandedVirtualPoolEnabled(): boolean {
-  if (process.env.OUTBOUND_IP_VIRTUAL_POOL === "0") return false;
-  if (process.env.OUTBOUND_IP_VIRTUAL_POOL === "1") return true;
-  if (parseCsvIpv4Env("OUTBOUND_IP_POOL").length > 0) return true;
-  if (process.env.OUTBOUND_IP_VIRTUAL_POOL_MIN?.trim()) return true;
-  // Production default: logical IP pool for plan slots (5 users × N servers) without
-  // requiring one Lightsail static IP per SMTP row.
-  if (process.env.NODE_ENV === "production") return true;
-  return false;
+  return usesLogicalIpPoolOnly();
 }
 
 export function shouldSkipLightsailAttach(): boolean {
   if (process.env.OUTBOUND_IP_SKIP_LIGHTSAIL_ATTACH === "1") return true;
   if (isExpandedVirtualPoolEnabled()) return true;
+  if (usesProxyEgress()) return true;
   return false;
+}
+
+/** Real IPs only (Lightsail static + OUTBOUND_IP_POOL) — no synthetic fill. */
+export async function fetchRealAttachableIpPool(): Promise<string[]> {
+  const merged: string[] = [];
+  if (isAwsLightsailRotationConfigured()) {
+    try {
+      merged.push(...(await fetchLightsailPoolIpv4List()));
+    } catch {
+      /* ignore */
+    }
+  }
+  merged.push(...parseCsvIpv4Env("OUTBOUND_IP_POOL"));
+  return dedupeIpv4List(merged);
 }
 
 /**
  * Expanded egress IP pool: Lightsail static IPs + OUTBOUND_IP_POOL + synthetic fill.
+ * Used only in logical (UI-only) egress mode.
  */
 export async function fetchExpandedOutboundIpPool(): Promise<string[]> {
   const merged: string[] = [];

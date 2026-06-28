@@ -25,7 +25,9 @@ import { parsePositiveIntEnv, runAsyncPool } from "@/lib/async-pool";
 import { resolveMailEncoding } from "@/lib/mail-encoding";
 import { buildSmtpUserTransport } from "@/lib/smtp/transport";
 import { rotateOutboundIp, prepareLightsailEgressForCampaign } from "@/lib/outbound-ip";
-import { isAwsLightsailPoolRotationEnabled } from "@/lib/aws-outbound-ip";
+import { usesLightsailEgressAttach } from "@/lib/egress-mode";
+import { usesProxyEgress } from "@/lib/egress-mode";
+import { getProxyUrlForSlot } from "@/lib/smtp-egress-proxy";
 import { resolveSmtpFromAddress } from "@/lib/smtp/from-address";
 import {
   appendUnsubscribeFooter,
@@ -305,7 +307,7 @@ export async function deliverCampaignInParallel(
         ended_at: endedAt,
       };
       const newIpRec = await rotateOutboundIp(supabase, userId);
-      if (isAwsLightsailPoolRotationEnabled()) {
+      if (usesLightsailEgressAttach()) {
         await prepareLightsailEgressForCampaign(newIpRec.ip);
       }
       const startedAt = new Date().toISOString();
@@ -402,6 +404,7 @@ export async function deliverCampaignInParallel(
         secure: smtp.secure,
         username: smtp.username,
         password: pass,
+        proxyUrl: usesProxyEgress() ? getProxyUrlForSlot(smtpIndex) : null,
       });
       transportState.generation = shared.smtpReconnectGeneration;
       return transportState.transporter;

@@ -44,6 +44,15 @@ function leaseHint(snapshot: ServerIpSnapshot): string {
   if (!snapshot.hasActivePlan) {
     return snapshot.noPlanMessage;
   }
+  if (snapshot.egressMode === "lightsail") {
+    const site = snapshot.websiteIp
+      ? `Website stays on ${snapshot.websiteIp}. `
+      : "";
+    return `${site}Real AWS attach: Refresh picks the next Lightsail static IP and campaigns attach it before SMTP (max IPs = your AWS static pool, usually 5 per server). Best with local Postfix (127.0.0.1:25).`;
+  }
+  if (snapshot.egressMode === "proxy") {
+    return "Real SOCKS5 egress: each SMTP server slot sends through its own proxy from OUTBOUND_IP_PROXY_POOL. Refresh cycles the active slot IP shown above.";
+  }
   if (snapshot.poolRotation && snapshot.sendPoolSize != null) {
     const n = snapshot.sendPoolSize;
     const site = snapshot.websiteIp
@@ -104,6 +113,8 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
         canRotate: true,
         noPlanMessage:
           "Activate a server plan under Wallet & Plan first. Outbound IP rotation unlocks after you activate a plan.",
+        egressMode: "lightsail",
+        egressModeLabel: "AWS Lightsail (real attach)",
       });
       setThresholdDraft("1000");
       setLoading(false);
@@ -238,9 +249,7 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
               )}
             >
               {snapshot.poolRotation && snapshot.sendPoolSize != null
-                ? snapshot.planServersLabel === "Unlimited"
-                  ? "Active plan · unlimited servers"
-                  : `Active plan · ${snapshot.sendPoolSize} servers`
+                ? `${snapshot.egressModeLabel} · ${snapshot.sendPoolSize} servers`
                 : !snapshot.hasActivePlan
                   ? "No active plan"
                   : snapshot.rotationConfigured

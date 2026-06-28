@@ -18,6 +18,11 @@ import {
   shouldManualPauseForIpRotation,
 } from "@/lib/outbound-ip";
 import {
+  egressModeLabel,
+  resolveEgressMode,
+  type EgressMode,
+} from "@/lib/egress-mode";
+import {
   planPoolDisplayIndex,
   resolveUserPlanIpPool,
 } from "@/lib/plan-ip-pool";
@@ -49,6 +54,8 @@ export type ServerIpSnapshot = {
   hasActivePlan: boolean;
   canRotate: boolean;
   noPlanMessage: string;
+  egressMode: EgressMode;
+  egressModeLabel: string;
 };
 
 async function buildServerIpSnapshot(
@@ -93,6 +100,8 @@ async function buildServerIpSnapshot(
       ? String(planPool.limit)
       : null;
 
+  const egressMode = resolveEgressMode();
+
   return {
     ip: rec.ip,
     websiteIp,
@@ -105,12 +114,14 @@ async function buildServerIpSnapshot(
     poolRotation: planScoped,
     autoRotateOnThreshold: planScoped && !shouldManualPauseForIpRotation(),
     poolSize: sendPoolSize,
-    sendPoolSize,
+    sendPoolSize: planScoped ? planPool.ips.length : sendPoolSize,
     sendPoolIndex,
     planServersLabel,
     hasActivePlan: planPool.hasActivePlan,
     canRotate: planPool.hasActivePlan && planPool.ips.length > 0,
     noPlanMessage: NO_ACTIVE_PLAN_IP_MESSAGE,
+    egressMode,
+    egressModeLabel: egressModeLabel(egressMode),
   };
 }
 

@@ -4,10 +4,23 @@ import { createHash } from "crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { allowSendWithoutActivePlan } from "@/lib/active-plan-guard";
 import { getActivePlanServerLimit } from "@/lib/smtp-plan-limit";
-import { fetchExpandedOutboundIpPool } from "@/lib/outbound-ip-pool";
+import { fetchExpandedOutboundIpPool, fetchRealAttachableIpPool } from "@/lib/outbound-ip-pool";
+import { resolveEgressMode } from "@/lib/egress-mode";
+import { parseProxyPool } from "@/lib/smtp-egress-proxy";
 
 const IP_V4 =
   /^(?:(?:25[0-5]|2[0-4]\d|[01]?\d{1,2})\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d{1,2})$/;
+
+function parseCsvIpv4Env(name: string): string[] {
+  const raw = process.env[name]?.trim();
+  if (!raw) return [];
+  const out: string[] = [];
+  for (const part of raw.split(",")) {
+    const ip = part.trim();
+    if (IP_V4.test(ip)) out.push(ip);
+  }
+  return out;
+}
 
 export type UserPlanIpPool = {
   /** Outbound IPs this user may rotate through (= plan server count). */
@@ -36,6 +49,7 @@ export function buildUniquePlanIpPool(
   userId: string,
   count: number,
   master: string[],
+  allowSynthetic = true,
 ): string[] {
   const target = Math.max(1, Math.floor(count));
   const ips: string[] = [];
@@ -47,6 +61,10 @@ export function buildUniquePlanIpPool(
     if (!IP_V4.test(ip) || seen.has(ip)) continue;
     ips.push(ip);
     seen.add(ip);
+  }
+
+  if (!allowSynthetic) {
+    return ips;
   }
 
   let slot = 0;
@@ -91,9 +109,52 @@ export async function resolveUserPlanIpPool(
     return { ips: [], limit: 0, unlimited: false, hasActivePlan: false };
   }
 
+  const mode = resolveEgressMode();
+  const count = limit === null ? 50 : limit;
+
+  if (mode === "proxy") {
+    const proxies = parseProxyPool();
+    const displayIps = parseCsvIpv4Env("OUTBOUND_IP_POOL");
+    const poolSize =
+      proxies.length > 0
+        ? Math.min(count, proxies.length)
+        : displayIps.length > 0
+          ? Math.min(count, displayIps.length)
+          : 0;
+    if (poolSize === 0) {
+      console.warn(
+        "[plan-ip-pool] OUTBOUND_IP_EGRESS_MODE=proxy but OUTBOUND_IP_PROXY_POOL is empty.",
+      );
+      return { ips: [], limit, unlimited: false, hasActivePlan: true };
+    }
+    const ips: string[] = [];
+    for (let i = 0; i < poolSize; i += 1) {
+      const ip = displayIps[i]?.trim();
+      ips.push(IP_V4.test(ip ?? "") ? ip! : deterministicPlanSlotIp(userId, i));
+    }
+    return {
+      ips,
+      limit,
+      unlimited: limit === null,
+      hasActivePlan: true,
+    };
+  }
+
+  if (mode === "lightsail") {
+    const master = await fetchRealAttachableIpPool();
+    const want = limit === null ? master.length : limit;
+    const ips = buildUniquePlanIpPool(userId, want, master, false);
+    return {
+      ips,
+      limit,
+      unlimited: limit === null,
+      hasActivePlan: true,
+    };
+  }
+
   const master = await fetchExpandedOutboundIpPool();
-  const count = limit === null ? Math.max(1, master.length) : limit;
-  const ips = buildUniquePlanIpPool(userId, count, master);
+  const planCount = limit === null ? Math.max(1, master.length) : limit;
+  const ips = buildUniquePlanIpPool(userId, planCount, master, true);
 
   return {
     ips,

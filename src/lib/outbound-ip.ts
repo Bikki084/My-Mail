@@ -32,6 +32,7 @@ import {
   withLightsailEgressLock,
   type AwsOutboundIpMode,
 } from "@/lib/aws-outbound-ip";
+import { usesLightsailEgressAttach } from "@/lib/egress-mode";
 import {
   fetchExpandedOutboundIpPool,
   isExpandedVirtualPoolEnabled,
@@ -322,7 +323,7 @@ async function alignLightsailPoolToPrimaryIp(
  * website primary, only confirm primary is attached.
  */
 export async function prepareLightsailEgressForCampaign(sendIp: string): Promise<void> {
-  if (!isAwsLightsailPoolRotationEnabled()) return;
+  if (!usesLightsailEgressAttach() || !isAwsLightsailPoolRotationEnabled()) return;
   const wanted = sendIp.trim();
   if (!wanted) return;
 
