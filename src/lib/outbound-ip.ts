@@ -54,6 +54,8 @@ import {
 import {
   resolveExitIpv4ForSlot,
   verifyEgressProxyPool,
+  getEgressProxyUrlForSlot,
+  isBindEgressUrl,
 } from "@/lib/smtp-egress-proxy";
 
 /** Default burst size if the user has never tuned the panel. Matches the spec. */
@@ -609,11 +611,34 @@ export async function rotateOutboundIp(
     before.data?.plan_rotation_index,
   );
   const nextIndex = nextPlanRotationIndex(planPool.ips.length, currentIndex);
-  let ip = ipAtPlanRotationIndex(planPool.ips, nextIndex);
+  const ip = ipAtPlanRotationIndex(planPool.ips, nextIndex);
 
+  // External SOCKS: align display IP with probed exit. Bind routes keep plan pool IP (unique per slot).
   if (usesProxyEgress()) {
-    const probed = await resolveExitIpv4ForSlot(nextIndex, true);
-    if (probed) ip = probed;
+    const egressUrl = await getEgressProxyUrlForSlot(nextIndex);
+    if (egressUrl && !isBindEgressUrl(egressUrl)) {
+      const probed = await resolveExitIpv4ForSlot(nextIndex, true);
+      if (probed) {
+        await supabase.from("user_outbound_ip").upsert(
+          {
+            user_id: userId,
+            current_ip: probed,
+            plan_rotation_index: nextIndex,
+            expires_at: new Date(Date.now() + LEASE_DURATION_MS).toISOString(),
+            rotation_threshold: rotationThreshold,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "user_id" },
+        );
+        return {
+          ip: probed,
+          expiresAt: new Date(Date.now() + LEASE_DURATION_MS).toISOString(),
+          rotationThreshold,
+          bootstrapped: false,
+          ...recordMeta(),
+        };
+      }
+    }
   }
 
   const expiresAt = new Date(Date.now() + LEASE_DURATION_MS).toISOString();
