@@ -19,13 +19,34 @@ export type ParsedSocksProxy = {
 };
 
 /** Comma-separated socks5:// or bind:// URLs — one per plan server slot. */
+export function isDocumentationPlaceholderProxyUrl(url: string): boolean {
+  const t = url.trim().toLowerCase();
+  if (!t) return true;
+  if (isBindEgressUrl(t)) return false;
+  if (t.includes("real-proxy") || t.includes("proxy1.example") || t.includes("proxy2.example")) {
+    return true;
+  }
+  if (t.includes("example.com") || t.includes("@example")) return true;
+  if (t.includes("user:pass@") || t.includes("//user:pass")) return true;
+  try {
+    const u = new URL(url.trim());
+    const host = u.hostname.toLowerCase();
+    if (host === "localhost" || host === "127.0.0.1") return false;
+    if (host.startsWith("real-proxy") || host.includes("example")) return true;
+    if (u.username === "user" && u.password === "pass") return true;
+  } catch {
+    return true;
+  }
+  return false;
+}
+
 export function parseProxyPool(): string[] {
   const raw = process.env.OUTBOUND_IP_PROXY_POOL?.trim();
   if (!raw) return [];
   return raw
     .split(",")
     .map((s) => s.trim())
-    .filter(Boolean);
+    .filter((s) => Boolean(s) && !isDocumentationPlaceholderProxyUrl(s));
 }
 
 export function isBindEgressUrl(url: string): boolean {

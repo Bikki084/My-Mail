@@ -30,13 +30,30 @@ export function resolveEgressModeFromEnv(): string {
   return "unknown";
 }
 
+function isPlaceholderProxy(url: string): boolean {
+  const t = url.trim().toLowerCase();
+  if (t.startsWith("bind://") || t.startsWith("local://")) return false;
+  if (t.includes("real-proxy") || t.includes("proxy1.example")) return true;
+  if (t.includes("example.com") || t.includes("user:pass@")) return true;
+  try {
+    const u = new URL(url.trim());
+    if (u.username === "user" && u.password === "pass") return true;
+    const host = u.hostname.toLowerCase();
+    if (host.includes("example") || host.startsWith("real-proxy")) return true;
+  } catch {
+    return true;
+  }
+  return false;
+}
+
 export function resolveEgressRoutesFromEnv(): string[] {
   const explicit = process.env.OUTBOUND_IP_PROXY_POOL?.trim();
   if (explicit) {
-    return explicit
+    const routes = explicit
       .split(",")
       .map((s) => s.trim())
-      .filter(Boolean);
+      .filter((s) => Boolean(s) && !isPlaceholderProxy(s));
+    if (routes.length > 0) return routes;
   }
   if (process.env.OUTBOUND_IP_PROXY_AUTO_BIND !== "1") return [];
   const raw = process.env.OUTBOUND_IP_POOL?.trim();
