@@ -32,7 +32,9 @@ export function usesLightsailEgressAttach(): boolean {
 }
 
 export function usesProxyEgress(): boolean {
-  return resolveEgressMode() === "proxy" && parseProxyPool().length > 0;
+  if (resolveEgressMode() !== "proxy") return false;
+  if (parseProxyPool().length > 0) return true;
+  return process.env.OUTBOUND_IP_PROXY_AUTO_BIND === "1";
 }
 
 export function egressModeLabel(mode: EgressMode): string {

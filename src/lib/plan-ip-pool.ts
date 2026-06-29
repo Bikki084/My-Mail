@@ -10,6 +10,11 @@ import {
   isDocumentationPlaceholderIp,
 } from "@/lib/outbound-ip-pool";
 import { resolveEgressMode } from "@/lib/egress-mode";
+import {
+  resolveEgressProxyPool,
+  resolveExitIpv4ForEgressUrl,
+  resolveExitIpv4ForSlot,
+} from "@/lib/smtp-egress-proxy";
 
 const IP_V4 =
   /^(?:(?:25[0-5]|2[0-4]\d|[01]?\d{1,2})\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d{1,2})$/;
@@ -131,19 +136,35 @@ export async function resolveUserPlanIpPool(
   }
 
   if (mode === "proxy") {
-    const ips = await buildPlanRotationIpList();
-    if (ips.length === 0) {
-      console.warn(
-        "[plan-ip-pool] No production IPs in pool. Configure AWS Lightsail static IPs or remove placeholder OUTBOUND_IP_POOL values (1.2.3.4).",
-      );
+    const proxyPool = await resolveEgressProxyPool();
+    if (proxyPool.length === 0) {
+      const ips = await buildPlanRotationIpList();
+      if (ips.length === 0) {
+        console.warn(
+          "[plan-ip-pool] OUTBOUND_IP_EGRESS_MODE=proxy but no egress routes. Set OUTBOUND_IP_PROXY_POOL or OUTBOUND_IP_PROXY_AUTO_BIND=1.",
+        );
+        return {
+          ips: [],
+          limit,
+          unlimited: false,
+          hasActivePlan: true,
+          uniqueIpCount: 0,
+        };
+      }
       return {
-        ips: [],
+        ips,
         limit,
-        unlimited: false,
+        unlimited: limit === null,
         hasActivePlan: true,
-        uniqueIpCount: 0,
+        uniqueIpCount: countUniqueIpv4(ips),
       };
     }
+
+    const probed = await Promise.all(
+      proxyPool.map((url) => resolveExitIpv4ForEgressUrl(url)),
+    );
+    const master = probed.filter((ip): ip is string => ip != null && IP_V4.test(ip));
+    const ips = buildUniquePlanIpPool(userId, count, master, true);
     return {
       ips,
       limit,

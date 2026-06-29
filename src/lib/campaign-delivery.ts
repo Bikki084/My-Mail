@@ -13,11 +13,12 @@ import {
   getActivePlanServerLimit,
 } from "@/lib/smtp-plan-limit";
 import { isAwsLightsailPoolRotationEnabled } from "@/lib/aws-outbound-ip";
-import { usesLightsailEgressAttach } from "@/lib/egress-mode";
+import { usesLightsailEgressAttach, usesProxyEgress } from "@/lib/egress-mode";
 import {
   DEFAULT_ROTATION_THRESHOLD,
   getOrCreateOutboundIp,
   prepareLightsailEgressForCampaign,
+  prepareProxyEgressForCampaign,
   restoreLightsailWebsiteEgress,
   type OutboundIpRecord,
 } from "@/lib/outbound-ip";
@@ -553,6 +554,11 @@ export async function runSendCampaign(
       );
       console.log(
         `[campaign-delivery] campaign=${campaignId} SMTP egress prepared for send IP=${ipState.ip}.`,
+      );
+    } else if (usesProxyEgress()) {
+      await prepareProxyEgressForCampaign();
+      console.log(
+        `[campaign-delivery] campaign=${campaignId} proxy egress verified for parallel SMTP workers.`,
       );
     }
     const parallelResult = await deliverCampaignInParallel({

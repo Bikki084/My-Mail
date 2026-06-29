@@ -2,7 +2,7 @@ import nodemailer, { type Transporter, type TransportOptions } from "nodemailer"
 import { getDkimConfigFromEnv } from "@/lib/deliverability";
 import { parsePositiveIntEnv } from "@/lib/async-pool";
 import { isSesSmtpHost, isBrevoSmtpHost } from "@/lib/smtp/from-address";
-import { buildSmtpProxyGetSocket } from "@/lib/smtp-egress-proxy";
+import { buildSmtpEgressGetSocket } from "@/lib/smtp-egress-proxy";
 
 /** Loopback relays (e.g. Postfix on the same VPS as the app). */
 export function isLocalSmtpHost(host: string): boolean {
@@ -59,19 +59,19 @@ export function buildSmtpUserTransport(v: {
   secure: boolean;
   username: string;
   password: string;
-  /** SOCKS5 URL — routes this SMTP connection through a proxy (real egress IP). */
-  proxyUrl?: string | null;
+  /** SOCKS5 or bind:// URL — routes this SMTP connection through real egress. */
+  egressUrl?: string | null;
 }): Transporter {
   const usesImplicitTls = resolveSmtpImplicitTls(v.host, v.port, v.secure);
   // SES (and most public relays) DKIM-sign on their side — skip in-process signing.
   const dkim =
     isSesSmtpHost(v.host) || isBrevoSmtpHost(v.host) ? null : getDkimConfigFromEnv();
-  const poolEnabled = process.env.SMTP_POOL !== "0" && !v.proxyUrl;
+  const egressUrl = v.egressUrl?.trim() || null;
+  const poolEnabled = process.env.SMTP_POOL !== "0" && !egressUrl;
   const maxConnections = parsePositiveIntEnv("SMTP_MAX_CONNECTIONS", 10);
   const connectionTimeout = parsePositiveIntEnv("SMTP_CONNECTION_TIMEOUT_MS", 8_000);
   const greetingTimeout = parsePositiveIntEnv("SMTP_GREETING_TIMEOUT_MS", 8_000);
   const socketTimeout = parsePositiveIntEnv("SMTP_SOCKET_TIMEOUT_MS", 15_000);
-  const proxyUrl = v.proxyUrl?.trim() || null;
 
   return nodemailer.createTransport({
     host: v.host,
@@ -82,7 +82,7 @@ export function buildSmtpUserTransport(v: {
     greetingTimeout,
     socketTimeout,
     ...smtpConnectionExtras(v.host, v.port),
-    ...(proxyUrl ? { getSocket: buildSmtpProxyGetSocket(proxyUrl) } : {}),
+    ...(egressUrl ? { getSocket: buildSmtpEgressGetSocket(egressUrl) } : {}),
     ...(poolEnabled
       ? {
           pool: true,

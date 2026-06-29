@@ -25,9 +25,8 @@ import { parsePositiveIntEnv, runAsyncPool } from "@/lib/async-pool";
 import { resolveMailEncoding } from "@/lib/mail-encoding";
 import { buildSmtpUserTransport } from "@/lib/smtp/transport";
 import { rotateOutboundIp, prepareLightsailEgressForCampaign } from "@/lib/outbound-ip";
-import { usesLightsailEgressAttach } from "@/lib/egress-mode";
-import { usesProxyEgress } from "@/lib/egress-mode";
-import { getProxyUrlForSlot } from "@/lib/smtp-egress-proxy";
+import { usesLightsailEgressAttach, usesProxyEgress } from "@/lib/egress-mode";
+import { getEgressProxyUrlForSlot } from "@/lib/smtp-egress-proxy";
 import { resolveSmtpFromAddress } from "@/lib/smtp/from-address";
 import {
   appendUnsubscribeFooter,
@@ -393,12 +392,17 @@ export async function deliverCampaignInParallel(
     const transportState: {
       generation: number;
       transporter: ReturnType<typeof buildSmtpUserTransport> | null;
-    } = { generation: -1, transporter: null };
+      egressUrl: string | null;
+    } = { generation: -1, transporter: null, egressUrl: null };
 
-    function ensureTransporter(): ReturnType<typeof buildSmtpUserTransport> {
+    async function ensureTransporter(): Promise<ReturnType<typeof buildSmtpUserTransport>> {
+      const egressUrl = usesProxyEgress()
+        ? await getEgressProxyUrlForSlot(smtpIndex)
+        : null;
       if (
         transportState.transporter &&
-        transportState.generation === shared.smtpReconnectGeneration
+        transportState.generation === shared.smtpReconnectGeneration &&
+        transportState.egressUrl === egressUrl
       ) {
         return transportState.transporter;
       }
@@ -411,8 +415,9 @@ export async function deliverCampaignInParallel(
         secure: smtp.secure,
         username: smtp.username,
         password: pass,
-        proxyUrl: usesProxyEgress() ? getProxyUrlForSlot(smtpIndex) : null,
+        egressUrl,
       });
+      transportState.egressUrl = egressUrl;
       transportState.generation = shared.smtpReconnectGeneration;
       return transportState.transporter;
     }
@@ -539,7 +544,7 @@ export async function deliverCampaignInParallel(
           } as const);
 
         const fromAddr = extractAddress(from);
-        await ensureTransporter().sendMail({
+        await (await ensureTransporter()).sendMail({
           from,
           to: recipient.email,
           envelope: {

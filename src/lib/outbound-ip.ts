@@ -32,7 +32,7 @@ import {
   withLightsailEgressLock,
   type AwsOutboundIpMode,
 } from "@/lib/aws-outbound-ip";
-import { usesLightsailEgressAttach } from "@/lib/egress-mode";
+import { usesLightsailEgressAttach, usesProxyEgress } from "@/lib/egress-mode";
 import {
   fetchExpandedOutboundIpPool,
   isDocumentationPlaceholderIp,
@@ -51,6 +51,10 @@ import {
   resolveUserPlanIpPool,
   syncUserPlanPoolIp,
 } from "@/lib/plan-ip-pool";
+import {
+  resolveExitIpv4ForSlot,
+  verifyEgressProxyPool,
+} from "@/lib/smtp-egress-proxy";
 
 /** Default burst size if the user has never tuned the panel. Matches the spec. */
 export const DEFAULT_ROTATION_THRESHOLD = 1000;
@@ -361,6 +365,22 @@ export async function prepareLightsailEgressForCampaign(
   });
 }
 
+/** Before sending: verify SOCKS/bind egress routes and log probed exit IPs. */
+export async function prepareProxyEgressForCampaign(): Promise<void> {
+  if (!usesProxyEgress()) return;
+  const { ok, routes } = await verifyEgressProxyPool();
+  if (!ok) {
+    throw new Error(
+      "Proxy egress is enabled but no route returned a public IP. Set OUTBOUND_IP_PROXY_POOL (socks5://…) or OUTBOUND_IP_PROXY_AUTO_BIND=1 with AWS static IPs.",
+    );
+  }
+  console.log(
+    `[outbound-ip] proxy egress routes verified: ${routes
+      .map((r) => `${r.url}→${r.exitIp ?? "?"}`)
+      .join(", ")}`,
+  );
+}
+
 /** After sending: restore website primary on AWS and reset the panel row to IP-1. */
 export async function restoreLightsailWebsiteEgress(
   supabase?: SupabaseClient,
@@ -589,7 +609,12 @@ export async function rotateOutboundIp(
     before.data?.plan_rotation_index,
   );
   const nextIndex = nextPlanRotationIndex(planPool.ips.length, currentIndex);
-  const ip = ipAtPlanRotationIndex(planPool.ips, nextIndex);
+  let ip = ipAtPlanRotationIndex(planPool.ips, nextIndex);
+
+  if (usesProxyEgress()) {
+    const probed = await resolveExitIpv4ForSlot(nextIndex, true);
+    if (probed) ip = probed;
+  }
 
   const expiresAt = new Date(Date.now() + LEASE_DURATION_MS).toISOString();
   const { error } = await supabase.from("user_outbound_ip").upsert(
@@ -611,6 +636,16 @@ export async function rotateOutboundIp(
     } catch (e) {
       console.warn(
         `[outbound-ip] Lightsail attach after rotate failed: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  } else if (usesProxyEgress()) {
+    try {
+      await prepareProxyEgressForCampaign();
+    } catch (e) {
+      console.warn(
+        `[outbound-ip] Proxy egress verify after rotate failed: ${
           e instanceof Error ? e.message : String(e)
         }`,
       );
