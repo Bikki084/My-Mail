@@ -4,6 +4,11 @@
  */
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
+import {
+  probeEgressRoute,
+  resolveEgressModeFromEnv,
+  resolveEgressRoutesFromEnv,
+} from "./lib/egress-probe";
 
 function loadEnvLocal(): void {
   const p = resolve(process.cwd(), ".env.local");
@@ -27,27 +32,21 @@ function loadEnvLocal(): void {
 
 async function main() {
   loadEnvLocal();
-  const { resolveEgressMode } = await import("../src/lib/egress-mode");
-  const {
-    resolveEgressProxyPool,
-    resolveExitIpv4ForEgressUrl,
-    verifyEgressProxyPool,
-  } = await import("../src/lib/smtp-egress-proxy");
-
-  console.log(`Egress mode: ${resolveEgressMode()}`);
-  const pool = await resolveEgressProxyPool();
+  console.log(`Egress mode: ${resolveEgressModeFromEnv()}`);
+  const pool = resolveEgressRoutesFromEnv();
   console.log(`Routes configured: ${pool.length}`);
   if (pool.length === 0) {
     console.error(
-      "No routes. Set OUTBOUND_IP_PROXY_POOL or OUTBOUND_IP_PROXY_AUTO_BIND=1 with AWS Lightsail IPs.",
+      "No routes found. Set OUTBOUND_IP_PROXY_POOL or OUTBOUND_IP_PROXY_AUTO_BIND=1 with OUTBOUND_IP_POOL (real AWS IPs).",
     );
     process.exit(1);
   }
+  let ok = false;
   for (const url of pool) {
-    const exit = await resolveExitIpv4ForEgressUrl(url, true);
+    const exit = await probeEgressRoute(url);
     console.log(`  ${url} → ${exit ?? "FAILED"}`);
+    if (exit) ok = true;
   }
-  const { ok } = await verifyEgressProxyPool();
   process.exit(ok ? 0 : 1);
 }
 
