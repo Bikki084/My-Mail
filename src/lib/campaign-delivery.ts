@@ -12,8 +12,11 @@ import {
   clampSmtpRowsToPlanLimit,
   getActivePlanServerLimit,
 } from "@/lib/smtp-plan-limit";
-import { isAwsLightsailPoolRotationEnabled } from "@/lib/aws-outbound-ip";
-import { usesLightsailEgressAttach, usesProxyEgress } from "@/lib/egress-mode";
+import {
+  isAwsLightsailPoolRotationEnabled,
+  isAwsLightsailRotationConfigured,
+} from "@/lib/aws-outbound-ip";
+import { usesProxyEgress } from "@/lib/egress-mode";
 import {
   DEFAULT_ROTATION_THRESHOLD,
   getOrCreateOutboundIp,
@@ -542,7 +545,7 @@ export async function runSendCampaign(
   let pausedForRotation = false;
 
   try {
-    if (usesLightsailEgressAttach()) {
+    if (isAwsLightsailRotationConfigured()) {
       const { data: ipRow } = await supabase
         .from("user_outbound_ip")
         .select("plan_rotation_index")
@@ -553,7 +556,7 @@ export async function runSendCampaign(
         ipRow?.plan_rotation_index ?? 0,
       );
       console.log(
-        `[campaign-delivery] campaign=${campaignId} SMTP egress prepared for send IP=${ipState.ip}.`,
+        `[campaign-delivery] campaign=${campaignId} primary website IP confirmed before send.`,
       );
     } else if (usesProxyEgress()) {
       await prepareProxyEgressForCampaign();

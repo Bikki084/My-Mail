@@ -25,8 +25,9 @@ import { parsePositiveIntEnv, runAsyncPool } from "@/lib/async-pool";
 import { resolveMailEncoding } from "@/lib/mail-encoding";
 import { buildSmtpUserTransport } from "@/lib/smtp/transport";
 import { rotateOutboundIp, prepareLightsailEgressForCampaign } from "@/lib/outbound-ip";
-import { usesLightsailEgressAttach, usesProxyEgress } from "@/lib/egress-mode";
-import { getEgressProxyUrlForSlot } from "@/lib/smtp-egress-proxy";
+import { isAwsLightsailRotationConfigured } from "@/lib/aws-outbound-ip";
+import { usesProxyEgress } from "@/lib/egress-mode";
+import { resolveSmtpEgressUrl } from "@/lib/smtp-egress-proxy";
 import { resolveSmtpFromAddress } from "@/lib/smtp/from-address";
 import {
   appendUnsubscribeFooter,
@@ -306,7 +307,7 @@ export async function deliverCampaignInParallel(
         ended_at: endedAt,
       };
       const newIpRec = await rotateOutboundIp(supabase, userId);
-      if (usesLightsailEgressAttach()) {
+      if (isAwsLightsailRotationConfigured()) {
         await prepareLightsailEgressForCampaign(
           newIpRec.ip,
           (await supabase
@@ -397,7 +398,7 @@ export async function deliverCampaignInParallel(
 
     async function ensureTransporter(): Promise<ReturnType<typeof buildSmtpUserTransport>> {
       const egressUrl = usesProxyEgress()
-        ? await getEgressProxyUrlForSlot(smtpIndex)
+        ? await resolveSmtpEgressUrl(smtp.host, smtpIndex)
         : null;
       if (
         transportState.transporter &&

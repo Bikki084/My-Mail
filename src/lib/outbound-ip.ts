@@ -327,14 +327,25 @@ async function alignLightsailPoolToPrimaryIp(
 }
 
 /**
- * Before sending: attach the pool IP used for SMTP egress. When it matches the
- * website primary, only confirm primary is attached.
+ * Before sending: confirm the website primary static IP is attached.
+ * Default pool rotation never swaps AWS IPs during campaigns (that crashes the site).
+ * Full attach only when AWS_LIGHTSAIL_SWAP_ATTACH_ON_ROTATE=1 (opt-in).
  */
 export async function prepareLightsailEgressForCampaign(
   sendIp: string,
   slotIndex?: number,
 ): Promise<void> {
-  if (!usesLightsailEgressAttach() || !isAwsLightsailPoolRotationEnabled()) return;
+  if (!isAwsLightsailRotationConfigured()) return;
+
+  if (isAwsLightsailPoolRotationEnabled()) {
+    await withLightsailEgressLock(() => ensureLightsailPrimaryStaticIpAttached());
+    console.log(
+      "[outbound-ip] pool rotation — primary static IP confirmed (website stays up; send IP is UI tracking only).",
+    );
+    return;
+  }
+
+  if (!usesLightsailEgressAttach()) return;
   let wanted = sendIp.trim();
   if (!wanted) return;
 
@@ -372,9 +383,10 @@ export async function prepareProxyEgressForCampaign(): Promise<void> {
   if (!usesProxyEgress()) return;
   const { ok, routes } = await verifyEgressProxyPool();
   if (!ok) {
-    throw new Error(
-      "Proxy egress is enabled but no route returned a public IP. Set OUTBOUND_IP_PROXY_POOL (socks5://…) or OUTBOUND_IP_PROXY_AUTO_BIND=1 with AWS static IPs.",
+    console.warn(
+      "[outbound-ip] Proxy egress routes unavailable — sending via default OS routing (no bind/proxy override).",
     );
+    return;
   }
   console.log(
     `[outbound-ip] proxy egress routes verified: ${routes
@@ -684,6 +696,62 @@ export async function rotateOutboundIp(
     bootstrapped: false,
     ...recordMeta(),
   };
+}
+
+/**
+ * Reset send IP rotation to slot 1 when the user activates a new plan.
+ * Keeps their rotation threshold; starts fresh at index 0 in the new plan pool.
+ */
+export async function resetOutboundIpRotationForNewPlan(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<void> {
+  const planPool = await resolveUserPlanIpPool(supabase, userId);
+  if (planPool.ips.length === 0) return;
+
+  const { data: existing } = await supabase
+    .from("user_outbound_ip")
+    .select("rotation_threshold")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  const rotationThreshold =
+    Number.isFinite(existing?.rotation_threshold) &&
+    existing!.rotation_threshold! > 0
+      ? Number(existing!.rotation_threshold)
+      : DEFAULT_ROTATION_THRESHOLD;
+
+  const ip = ipAtPlanRotationIndex(planPool.ips, 0);
+  const expiresAt = new Date(Date.now() + LEASE_DURATION_MS).toISOString();
+
+  const { error } = await supabase.from("user_outbound_ip").upsert(
+    {
+      user_id: userId,
+      current_ip: ip,
+      plan_rotation_index: 0,
+      expires_at: expiresAt,
+      rotation_threshold: rotationThreshold,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "user_id" },
+  );
+  if (error) {
+    throw new Error(`Could not reset outbound IP for new plan: ${error.message}`);
+  }
+
+  if (isAwsLightsailPoolRotationEnabled()) {
+    await ensureLightsailPrimaryStaticIpAttached().catch((e) => {
+      console.warn(
+        `[outbound-ip] primary attach after new-plan reset failed: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    });
+  }
+
+  console.log(
+    `[outbound-ip] new plan activated — rotation reset to slot 1 (${ip}) for user=${userId}`,
+  );
 }
 
 /** Persist a new rotation threshold, clamped to the safe range. */

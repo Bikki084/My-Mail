@@ -6,6 +6,7 @@ import { createServiceClient } from "@/lib/supabase/admin";
 import { findPlan, PLANS, type Plan } from "@/lib/plans";
 import { cancelActivePlanForUser } from "@/lib/wallet-plan-cancel";
 import { countUnfinishedCampaigns } from "@/lib/campaign-cancel";
+import { resetOutboundIpRotationForNewPlan } from "@/lib/outbound-ip";
 
 export type ActionResult<T = undefined> =
   | { ok: true; data?: T }
@@ -227,6 +228,16 @@ export async function activatePlan(
     return { ok: false, error: planErr.message };
   }
 
+  try {
+    await resetOutboundIpRotationForNewPlan(admin, user.id);
+  } catch (resetErr) {
+    console.warn(
+      `[wallet] plan activated but outbound IP reset failed for user=${user.id}: ${
+        resetErr instanceof Error ? resetErr.message : String(resetErr)
+      }`,
+    );
+  }
+
   // Audit.
   const { error: txErr } = await admin.from("wallet_transactions").insert({
     user_id: user.id,
@@ -243,6 +254,7 @@ export async function activatePlan(
 
   revalidatePath("/client");
   revalidatePath("/client/overview");
+  revalidatePath("/client/smtp");
   revalidatePath("/admin/reports");
 
   const newState: WalletState = {

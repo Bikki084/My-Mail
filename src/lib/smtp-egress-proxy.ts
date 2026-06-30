@@ -2,6 +2,7 @@ import "server-only";
 
 import net from "node:net";
 import { SocksClient, type SocksClientOptions } from "socks";
+import { isAwsLightsailRotationConfigured } from "@/lib/aws-outbound-ip";
 import { resolveEgressMode } from "@/lib/egress-mode";
 import { fetchPlanIpMaster } from "@/lib/outbound-ip-pool";
 
@@ -54,6 +55,42 @@ export function isBindEgressUrl(url: string): boolean {
   return t.startsWith("bind://") || t.startsWith("local://");
 }
 
+function isLocalSmtpHostForEgress(host: string): boolean {
+  const h = host.trim().toLowerCase();
+  return h === "localhost" || h === "127.0.0.1" || h === "::1";
+}
+
+/**
+ * Lightsail static IPs are attached at the AWS layer — they are not local NIC
+ * addresses, so `net.connect({ localAddress })` fails with EINVAL.
+ */
+export function isBindEgressSupportedOnHost(): boolean {
+  return !isAwsLightsailRotationConfigured();
+}
+
+/** bind:// routes are invalid on Lightsail and for public SMTP relays (Gmail, etc.). */
+export function isUnsupportedBindEgressRoute(url: string): boolean {
+  if (!isBindEgressUrl(url)) return false;
+  return !isBindEgressSupportedOnHost();
+}
+
+/**
+ * Whether to apply an egress route for this SMTP host. Public relays (Gmail, Brevo,
+ * etc.) must use the OS default route — never bind:// localAddress.
+ */
+export function shouldApplySmtpEgress(
+  host: string,
+  egressUrl: string | null | undefined,
+): boolean {
+  const url = egressUrl?.trim();
+  if (!url) return false;
+  if (isBindEgressUrl(url)) {
+    if (!isBindEgressSupportedOnHost()) return false;
+    if (!isLocalSmtpHostForEgress(host)) return false;
+  }
+  return true;
+}
+
 export function parseBindEgressIp(url: string): string {
   const trimmed = url.trim();
   const lower = trimmed.toLowerCase();
@@ -98,9 +135,16 @@ export function parseSocksProxyUrl(proxyUrl: string): ParsedSocksProxy {
  * Resolved egress routes: explicit OUTBOUND_IP_PROXY_POOL, or auto bind:// for each AWS IP.
  */
 export async function resolveEgressProxyPool(): Promise<string[]> {
-  const fromEnv = parseProxyPool();
+  const fromEnv = parseProxyPool().filter((url) => !isUnsupportedBindEgressRoute(url));
   if (fromEnv.length > 0) return fromEnv;
   if (process.env.OUTBOUND_IP_PROXY_AUTO_BIND !== "1") return [];
+  if (!isBindEgressSupportedOnHost()) {
+    console.warn(
+      "[smtp-egress] OUTBOUND_IP_PROXY_AUTO_BIND is ignored on AWS Lightsail — static IPs cannot be bound as localAddress. " +
+        "Use real socks5:// proxies in OUTBOUND_IP_PROXY_POOL, or OUTBOUND_IP_EGRESS_MODE=logical for UI-only rotation.",
+    );
+    return [];
+  }
   const ips = await fetchPlanIpMaster();
   return ips.map((ip) => `bind://${ip}`);
 }
@@ -110,6 +154,15 @@ export async function getEgressProxyUrlForSlot(slotIndex: number): Promise<strin
   if (pool.length === 0) return null;
   const idx = Math.max(0, Math.floor(slotIndex)) % pool.length;
   return pool[idx] ?? null;
+}
+
+/** Egress URL for a campaign SMTP worker — null when bind/proxy must not be used. */
+export async function resolveSmtpEgressUrl(
+  host: string,
+  slotIndex: number,
+): Promise<string | null> {
+  const url = await getEgressProxyUrlForSlot(slotIndex);
+  return shouldApplySmtpEgress(host, url) ? url : null;
 }
 
 /** @deprecated Use getEgressProxyUrlForSlot — sync helper when pool is only in env. */
@@ -122,8 +175,13 @@ export function getProxyUrlForSlot(slotIndex: number): string | null {
 
 export function isProxyEgressConfigured(): boolean {
   if (resolveEgressMode() !== "proxy") return false;
-  if (parseProxyPool().length > 0) return true;
-  return process.env.OUTBOUND_IP_PROXY_AUTO_BIND === "1";
+  if (parseProxyPool().filter((url) => !isUnsupportedBindEgressRoute(url)).length > 0) {
+    return true;
+  }
+  if (process.env.OUTBOUND_IP_PROXY_AUTO_BIND === "1") {
+    return isBindEgressSupportedOnHost();
+  }
+  return false;
 }
 
 function readHttpResponseBody(socket: net.Socket, timeoutMs = 12_000): Promise<string> {

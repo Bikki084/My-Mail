@@ -74,7 +74,14 @@ function formatExpire(iso: string | null): string {
   });
 }
 
-export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }) {
+export function ServerIpPanel({
+  previewMode = false,
+  onSnapshotChange,
+}: {
+  previewMode?: boolean;
+  /** Called when IP snapshot updates (load, rotate) so parent can sync plan slot counters. */
+  onSnapshotChange?: (snapshot: ServerIpSnapshot) => void;
+}) {
   const { state: walletState } = useWalletState();
   const [snapshot, setSnapshot] = React.useState<ServerIpSnapshot | null>(null);
   const [loading, setLoading] = React.useState(true);
@@ -85,7 +92,7 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
 
   const refresh = React.useCallback(async () => {
     if (previewMode) {
-      setSnapshot({
+      const previewSnapshot: ServerIpSnapshot = {
         ip: "32.192.186.36",
         websiteIp: "13.203.176.51",
         expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
@@ -107,7 +114,9 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
           "Activate a server plan under Wallet & Plan first. Outbound IP rotation unlocks after you activate a plan.",
         egressMode: "lightsail",
         egressModeLabel: "AWS Lightsail (real attach)",
-      });
+      };
+      setSnapshot(previewSnapshot);
+      onSnapshotChange?.(previewSnapshot);
       setThresholdDraft("1000");
       setLoading(false);
       return;
@@ -121,9 +130,10 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
     }
     setError(null);
     setSnapshot(res.data);
+    onSnapshotChange?.(res.data);
     setThresholdDraft(String(res.data.rotationThreshold));
     setLoading(false);
-  }, [previewMode]);
+  }, [previewMode, onSnapshotChange]);
 
   React.useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -160,6 +170,7 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
         return;
       }
       setSnapshot(res.data);
+      onSnapshotChange?.(res.data);
       setThresholdDraft(String(res.data.rotationThreshold));
       toast.success("Active send IP updated", {
         description:
@@ -273,9 +284,9 @@ export function ServerIpPanel({ previewMode = false }: { previewMode?: boolean }
                     {snapshot.sendPoolIndex} of {snapshot.sendPoolSize}
                   </span>
                 </>
-              ) : (
-                <>1 of {snapshot.sendPoolSize}</>
-              )}
+              ) : snapshot.sendPoolSize != null ? (
+                <>slot 1 of {snapshot.sendPoolSize}</>
+              ) : null}
               . The same count applies to SMTP server slots you can import. After every{" "}
               <span className="text-zinc-300">{snapshot?.rotationThreshold ?? 1000}</span>{" "}
               sends,{" "}

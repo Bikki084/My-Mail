@@ -204,24 +204,30 @@ export function resolvePlanRotationIndex(
 ): number {
   if (pool.length === 0) return 0;
   const stored = Math.floor(Number(storedIndex));
-  // Trust stored slot index — egress attach IP may differ from plan pool display IP on bind routes.
+  const trimmed = currentIp?.trim() ?? "";
+
+  if (trimmed && !isDocumentationPlaceholderIp(trimmed)) {
+    const found = pool.indexOf(trimmed);
+    if (found >= 0) {
+      // Prefer the slot that owns this IP when it disagrees with a stale stored index.
+      if (
+        Number.isFinite(stored) &&
+        stored >= 0 &&
+        stored < pool.length &&
+        pool[stored] === trimmed
+      ) {
+        return stored;
+      }
+      return found;
+    }
+  }
+
   if (Number.isFinite(stored) && stored >= 0 && stored < pool.length) {
     return stored;
   }
-  const trimmed = currentIp?.trim() ?? "";
+
   if (trimmed && isDocumentationPlaceholderIp(trimmed)) {
-    if (
-      Number.isFinite(stored) &&
-      stored >= 0 &&
-      stored < pool.length
-    ) {
-      return stored;
-    }
     return 0;
-  }
-  if (trimmed && !isDocumentationPlaceholderIp(trimmed)) {
-    const found = pool.indexOf(trimmed);
-    if (found >= 0) return found;
   }
   return 0;
 }

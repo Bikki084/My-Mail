@@ -52,6 +52,7 @@ import {
   type SmtpFormInput,
   type SmtpProvider,
 } from "@/app/actions/smtp";
+import { getServerIpAction, type ServerIpSnapshot } from "@/app/actions/server-ip";
 import type { SmtpPlanCapacity } from "@/lib/smtp-plan-limit";
 import { useWalletState } from "./wallet-state-context";
 
@@ -366,12 +367,21 @@ export function SmtpForm({
 }) {
   const { state: walletState } = useWalletState();
   const [planCapacity, setPlanCapacity] = React.useState<SmtpPlanCapacity | null>(null);
+  const [ipSnapshot, setIpSnapshot] = React.useState<ServerIpSnapshot | null>(null);
 
   const refreshPlanCapacity = React.useCallback(async () => {
     if (previewMode) return;
-    const res = await fetchSmtpPlanCapacity();
-    if (res.ok && res.data) setPlanCapacity(res.data);
+    const [capRes, ipRes] = await Promise.all([
+      fetchSmtpPlanCapacity(),
+      getServerIpAction(),
+    ]);
+    if (capRes.ok && capRes.data) setPlanCapacity(capRes.data);
+    if (ipRes.ok && ipRes.data) setIpSnapshot(ipRes.data);
   }, [previewMode]);
+
+  const handleIpSnapshotChange = React.useCallback((snapshot: ServerIpSnapshot) => {
+    setIpSnapshot(snapshot);
+  }, []);
 
   const [nexting, setNexting] = React.useState(false);
   const [preset, setPreset] = React.useState<PresetId | null>(null);
@@ -587,7 +597,7 @@ export function SmtpForm({
     setRowBusyId(null);
     if (res.ok) {
       toast.success("SMTP deleted.");
-      setSavedRows((prev) => prev.filter((r) => r.id !== id));
+      await refreshSaved();
     } else {
       toast.error("Could not delete.", { description: res.error });
     }
@@ -829,17 +839,23 @@ export function SmtpForm({
     void refreshPlanCapacity();
   }, [refreshPlanCapacity, walletState.activePlan]);
 
+  const smtpSlotsUsed = Math.max(planCapacity?.current ?? 0, savedRows.length);
+  const smtpSlotsLimit = planCapacity?.limit ?? null;
+  const sendIpSlotIndex = ipSnapshot?.sendPoolIndex ?? null;
+  const sendIpPoolSize = ipSnapshot?.sendPoolSize ?? smtpSlotsLimit;
+
   const planSlotsLabel =
     planCapacity == null
       ? null
-      : planCapacity.limit === null
-        ? `${planCapacity.current} saved · unlimited plan slots`
-        : `${planCapacity.current} / ${planCapacity.limit} plan slots used`;
+      : smtpSlotsLimit === null
+        ? `${smtpSlotsUsed} saved · unlimited plan slots`
+        : `${smtpSlotsUsed} / ${smtpSlotsLimit} SMTP accounts saved`;
 
   const atPlanSlotLimit =
+    smtpSlotsLimit !== null &&
     planCapacity != null &&
-    planCapacity.limit !== null &&
-    planCapacity.remaining === 0;
+    planCapacity.hasActivePlan &&
+    smtpSlotsUsed >= smtpSlotsLimit;
 
   return (
     <div className="space-y-6">
@@ -858,11 +874,23 @@ export function SmtpForm({
           <p className="mt-1 text-xs leading-relaxed">
             {!planCapacity.hasActivePlan
               ? "Activate a server plan under Wallet & Plan before adding SMTP servers."
-              : planCapacity.limit === null
+              : smtpSlotsLimit === null
                 ? "Unlimited SMTP servers on your active plan."
-                : `${planCapacity.current} of ${planCapacity.limit} SMTP server slots used on your active plan.`}
+                : `${smtpSlotsUsed} of ${smtpSlotsLimit} SMTP accounts saved on your active plan.`}
             {planSlotsLabel ? ` · ${planSlotsLabel}` : ""}
           </p>
+          {planCapacity.hasActivePlan &&
+          sendIpPoolSize != null &&
+          sendIpSlotIndex != null ? (
+            <p className="mt-1 text-xs text-zinc-400">
+              Active send IP slot:{" "}
+              <span className="font-mono text-zinc-300">
+                {sendIpSlotIndex} of {sendIpPoolSize}
+              </span>
+              {" · "}
+              updates when you click Refresh below
+            </p>
+          ) : null}
           {!planCapacity.hasActivePlan && (
             <p className="mt-1 text-xs text-amber-200/90">
               Activate a plan under Wallet & Plan before importing SMTP servers.
@@ -870,7 +898,7 @@ export function SmtpForm({
           )}
         </div>
       )}
-      <ServerIpPanel previewMode={previewMode} />
+      <ServerIpPanel previewMode={previewMode} onSnapshotChange={handleIpSnapshotChange} />
 
       <Card className="border-zinc-800 bg-zinc-900/40 ring-zinc-800">
         <CardHeader>

@@ -22,6 +22,7 @@ import {
 } from "@/lib/egress-mode";
 import {
   planPoolDisplayIndex,
+  resolvePlanRotationIndex,
   resolveUserPlanIpPool,
 } from "@/lib/plan-ip-pool";
 
@@ -77,9 +78,13 @@ async function buildServerIpSnapshot(
       ? planPool.ips.length
       : (planPool.limit ?? planPool.ips.length)
     : null;
-  const rotationIndex = ipRow?.plan_rotation_index ?? 0;
+  const rotationIndex = resolvePlanRotationIndex(
+    planPool.ips,
+    rec.ip,
+    ipRow?.plan_rotation_index,
+  );
   const sendPoolIndex = planScoped
-    ? planPoolDisplayIndex(planPool.ips.length, Number(rotationIndex))
+    ? planPoolDisplayIndex(planPool.ips.length, rotationIndex)
     : null;
   const uniqueEgressIpCount = planScoped ? planPool.uniqueIpCount : null;
   const planServersLabel = planPool.unlimited
