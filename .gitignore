@@ -33,6 +33,7 @@ yarn-error.log*
 # env files (keep the example template committable)
 .env*
 !.env.example
+.gmail-oauth-token.json
 
 # vercel
 .vercel

@@ -22,6 +22,8 @@
     "lightsail:ensure-primary": "tsx scripts/ensure-lightsail-primary.ts",
     "site:recover": "bash scripts/recover-site.sh",
     "db:fix-outbound-ip": "tsx scripts/fix-outbound-ip.ts",
+    "gmail:auth": "tsx scripts/gmail-api-auth.ts",
+    "gmail:send-test": "tsx scripts/gmail-api-send-test.ts",
     "db:migrate:wallet": "tsx scripts/apply-migrations.ts --only=20260428120000_wallet_and_plans.sql"
   },
   "dependencies": {
@@ -35,6 +37,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
+    "googleapis": "^173.0.0",
     "html-to-text": "^9.0.5",
     "ioredis": "^5.10.1",
     "lucide-react": "^1.8.0",
