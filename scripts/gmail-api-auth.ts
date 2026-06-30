@@ -13,6 +13,8 @@ import http from "node:http";
 import { google } from "googleapis";
 import {
   GMAIL_SEND_SCOPE,
+  GMAIL_USERINFO_EMAIL_SCOPE,
+  assertGmailSendScope,
   readGoogleOAuthEnv,
   writeTokenFile,
   type GmailOAuthTokenFile,
@@ -25,7 +27,7 @@ async function main(): Promise<void> {
   const authUrl = oauth2.generateAuthUrl({
     access_type: "offline",
     prompt: "consent",
-    scope: [GMAIL_SEND_SCOPE, "https://www.googleapis.com/auth/userinfo.email"],
+    scope: [GMAIL_SEND_SCOPE, GMAIL_USERINFO_EMAIL_SCOPE],
   });
 
   console.log("\n=== Gmail API OAuth (test) ===\n");
@@ -36,6 +38,12 @@ async function main(): Promise<void> {
   const code = await waitForOAuthCode(redirectUri);
   const { tokens } = await oauth2.getToken(code);
   oauth2.setCredentials(tokens);
+
+  assertGmailSendScope(tokens.scope);
+  if (tokens.access_token) {
+    const info = await oauth2.getTokenInfo(tokens.access_token);
+    assertGmailSendScope(info.scopes?.join(" ") ?? tokens.scope);
+  }
 
   const oauth2Api = google.oauth2({ version: "v2", auth: oauth2 });
   const profile = await oauth2Api.userinfo.get();
@@ -63,6 +71,7 @@ async function main(): Promise<void> {
   }
 
   writeTokenFile(payload);
+  console.log(`Granted scopes: ${payload.scope ?? "(none)"}`);
   console.log(`Connected Gmail sender: ${email ?? "(unknown)"}`);
   console.log("Next: npm run gmail:send-test -- --csv your-recipients.csv --limit 40\n");
 }

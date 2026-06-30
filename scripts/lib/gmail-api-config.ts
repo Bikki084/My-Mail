@@ -2,6 +2,9 @@ import { existsSync, readFileSync, writeFileSync, appendFileSync } from "node:fs
 import { resolve } from "node:path";
 
 export const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
+export const GMAIL_USERINFO_EMAIL_SCOPE =
+  "https://www.googleapis.com/auth/userinfo.email";
+export const REQUIRED_GMAIL_SCOPES = [GMAIL_SEND_SCOPE, GMAIL_USERINFO_EMAIL_SCOPE];
 export const DEFAULT_OAUTH_REDIRECT = "http://localhost:3456/oauth2callback";
 export const TOKEN_FILE = resolve(process.cwd(), ".gmail-oauth-token.json");
 const ENV_LOCAL = resolve(process.cwd(), ".env.local");
@@ -43,13 +46,15 @@ export function readGoogleOAuthEnv(): {
   redirectUri: string;
 } {
   loadEnvLocal();
-  const clientId =
-    process.env.GOOGLE_OAUTH_CLIENT_ID?.trim() || DEFAULT_GOOGLE_OAUTH_CLIENT_ID;
-  const clientSecret =
-    process.env.GOOGLE_OAUTH_CLIENT_SECRET?.trim() ||
-    DEFAULT_GOOGLE_OAUTH_CLIENT_SECRET;
+  const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID?.trim();
+  const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET?.trim();
   const redirectUri =
     process.env.GOOGLE_OAUTH_REDIRECT_URI?.trim() || DEFAULT_OAUTH_REDIRECT;
+  if (!clientId || !clientSecret) {
+    throw new Error(
+      "Set GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET in .env.local on this server.",
+    );
+  }
   return { clientId, clientSecret, redirectUri };
 }
 
@@ -96,7 +101,25 @@ export function writeTokenFile(data: GmailOAuthTokenFile): void {
   if (data.access_token) {
     upsertEnvLocal("GOOGLE_OAUTH_ACCESS_TOKEN", data.access_token);
   }
+  if (data.scope) {
+    upsertEnvLocal("GOOGLE_OAUTH_SCOPE", data.scope);
+  }
   console.log(`\nGmail OAuth saved (.gmail-oauth-token.json + .env.local).\n`);
+}
+
+export function tokenHasGmailSendScope(scope: string | undefined | null): boolean {
+  if (!scope?.trim()) return false;
+  return scope.includes("gmail.send") || scope.includes(GMAIL_SEND_SCOPE);
+}
+
+export function assertGmailSendScope(scope: string | undefined | null): void {
+  if (tokenHasGmailSendScope(scope)) return;
+  throw new Error(
+    "Gmail token is missing the gmail.send scope.\n" +
+      "Fix in Google Cloud → Google Auth Platform → Data Access → Add scope → Gmail API → " +
+      "https://www.googleapis.com/auth/gmail.send\n" +
+      "Then revoke Bulkfirepro at https://myaccount.google.com/permissions and run: npm run gmail:auth",
+  );
 }
 
 export function sleep(ms: number): Promise<void> {

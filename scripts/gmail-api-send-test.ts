@@ -16,6 +16,7 @@ import { google } from "googleapis";
 import {
   buildSimpleMime,
   encodeGmailRaw,
+  assertGmailSendScope,
   readGoogleOAuthEnv,
   readTokenFile,
   sleep,
@@ -87,6 +88,8 @@ async function main(): Promise<void> {
     );
   }
 
+  assertGmailSendScope(tokenFile.scope ?? process.env.GOOGLE_OAUTH_SCOPE);
+
   const { clientId, clientSecret, redirectUri } = readGoogleOAuthEnv();
   const oauth2 = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
   oauth2.setCredentials({
@@ -96,15 +99,25 @@ async function main(): Promise<void> {
   });
 
   oauth2.on("tokens", (tokens) => {
+    if (tokens.scope) assertGmailSendScope(tokens.scope);
     writeTokenFile({
       ...tokenFile,
       refresh_token: tokens.refresh_token ?? tokenFile.refresh_token,
       access_token: tokens.access_token ?? tokenFile.access_token,
       expiry_date: tokens.expiry_date ?? tokenFile.expiry_date,
+      scope: tokens.scope ?? tokenFile.scope,
     });
   });
 
   const gmail = google.gmail({ version: "v1", auth: oauth2 });
+  if (tokenFile.access_token) {
+    try {
+      const info = await oauth2.getTokenInfo(tokenFile.access_token);
+      assertGmailSendScope(info.scopes?.join(" ") ?? tokenFile.scope);
+    } catch {
+      /* refresh below will re-issue access token */
+    }
+  }
   const profile = await gmail.users.getProfile({ userId: "me" });
   const senderEmail = profile.data.emailAddress;
   if (!senderEmail) throw new Error("Could not read sender Gmail address.");
