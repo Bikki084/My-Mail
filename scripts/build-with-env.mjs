@@ -1,14 +1,19 @@
 /**
- * Production build that loads .env.local (and .env.production.local if present)
- * before running `next build`, so NEXT_PUBLIC_* are embedded in the client bundle.
+ * Production build: load .env.local, enable low-memory mode on small VPS, then `next build`.
  *
- * Usage: node scripts/build-with-env.mjs
+ * Usage on Lightsail (512MB–2GB RAM):
+ *   npm run build:prod
+ *
+ * Forces low-memory mode:
+ *   LOW_MEMORY_BUILD=1 npm run build:prod
  */
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
+import os from "node:os";
 
 const root = process.cwd();
+const totalMemMb = Math.floor(os.totalmem() / (1024 * 1024));
 
 function loadFile(name) {
   const path = join(root, name);
@@ -41,13 +46,43 @@ if (!url.trim() || !key.trim() || key.length < 80) {
   process.exit(1);
 }
 
-console.log("[build-with-env] Building with Supabase URL:", url.slice(0, 40) + "…");
+const lowMemory =
+  process.env.LOW_MEMORY_BUILD === "1" ||
+  process.env.VPS_BUILD === "1" ||
+  totalMemMb <= 2048;
 
-const r = spawnSync("npm", ["run", "build"], {
+if (lowMemory) {
+  process.env.SKIP_NEXT_TYPECHECK = "1";
+  process.env.SKIP_NEXT_LINT = "1";
+  console.log(
+    `[build-with-env] Low-memory VPS mode (${totalMemMb} MB RAM): skipping typecheck + lint during build.`,
+  );
+  console.log(
+    "[build-with-env] Tip: run `bash scripts/ensure-swap.sh` once if build still OOMs.",
+  );
+}
+
+const heapMb = (() => {
+  const fromEnv = parseInt(process.env.NODE_BUILD_HEAP_MB ?? "", 10);
+  if (Number.isFinite(fromEnv) && fromEnv > 256) return fromEnv;
+  if (totalMemMb <= 1024) return 768;
+  if (totalMemMb <= 2048) return 1024;
+  return 1536;
+})();
+
+const buildEnv = {
+  ...process.env,
+  NODE_OPTIONS: `--max-old-space-size=${heapMb}`,
+};
+
+console.log("[build-with-env] Building with Supabase URL:", url.slice(0, 40) + "…");
+console.log(`[build-with-env] NODE_OPTIONS=${buildEnv.NODE_OPTIONS}`);
+
+const r = spawnSync("npx", ["next", "build"], {
   stdio: "inherit",
-  env: process.env,
+  env: buildEnv,
   cwd: root,
-  shell: true,
+  shell: process.platform === "win32",
 });
 
 process.exit(r.status ?? 1);

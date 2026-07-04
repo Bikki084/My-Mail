@@ -22,6 +22,7 @@
     "lightsail:ensure-primary": "tsx scripts/ensure-lightsail-primary.ts",
     "site:recover": "bash scripts/recover-site.sh",
     "pm2:fix-web": "bash scripts/pm2-fix-web.sh",
+    "vps:swap": "bash scripts/ensure-swap.sh",
     "db:fix-outbound-ip": "tsx scripts/fix-outbound-ip.ts",
     "gmail:auth": "tsx scripts/gmail-api-auth.ts",
     "gmail:exchange-code": "tsx scripts/gmail-api-exchange-code.ts",

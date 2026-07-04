@@ -13,6 +13,14 @@ const nextConfig: NextConfig = {
   output: process.env.DOCKER_STANDALONE === "1" ? "standalone" : undefined,
   // pdf-parse / pdfjs-dist must run from node_modules; bundling breaks workers and text extraction.
   serverExternalPackages: ["pdf-parse", "pdfjs-dist", "puppeteer"],
+  productionBrowserSourceMaps: false,
+  // On small Lightsail VPS, set SKIP_NEXT_TYPECHECK=1 during `npm run build:prod` to avoid OOM.
+  typescript: {
+    ignoreBuildErrors: process.env.SKIP_NEXT_TYPECHECK === "1",
+  },
+  eslint: {
+    ignoreDuringBuilds: process.env.SKIP_NEXT_LINT === "1",
+  },
   // Larger JSON bodies for /api/campaigns with small PDF attachments (base64)
   experimental: {
     serverActions: {
