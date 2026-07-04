@@ -35,16 +35,36 @@ fi
 
 echo ""
 echo "4) Local HTTP probe (127.0.0.1:3000)..."
-if curl -sf --connect-timeout 5 http://127.0.0.1:3000/ >/dev/null; then
-  echo "   OK — app responds locally"
+if curl -sf --connect-timeout 5 http://127.0.0.1:3000/api/health >/dev/null; then
+  echo "   OK — app responds locally (/api/health)"
 else
-  echo "   FAIL — app not responding. Run: pm2 logs --lines 50"
-  pm2 logs --lines 20 --nostream 2>/dev/null || true
-  exit 1
+  echo "   FAIL — app not responding. Restarting PM2..."
+  pm2 restart mymail-web 2>/dev/null || pm2 restart all 2>/dev/null || pm2 start ecosystem.config.cjs
+  sleep 4
+  if curl -sf --connect-timeout 5 http://127.0.0.1:3000/api/health >/dev/null; then
+    echo "   OK after restart"
+  else
+    echo "   Still failing. Run: pm2 logs mymail-web --lines 50"
+    pm2 logs mymail-web --lines 25 --nostream 2>/dev/null || true
+    exit 1
+  fi
 fi
 
 echo ""
-echo "5) OS firewall (ufw) — allow web ports..."
+echo "5) Nginx (if installed)..."
+if command -v nginx >/dev/null 2>&1; then
+  sudo nginx -t 2>&1 && sudo systemctl reload nginx 2>/dev/null || sudo service nginx reload 2>/dev/null || true
+  if curl -sf --connect-timeout 5 -H "Host: bulkfirepro.com" http://127.0.0.1/api/health >/dev/null 2>&1; then
+    echo "   OK — nginx → app proxy works"
+  else
+    echo "   WARN — nginx up but proxy may not reach :3000 (502 in browser). Check: sudo nginx -T | grep proxy_pass"
+  fi
+else
+  echo "   nginx not installed — skip"
+fi
+
+echo ""
+echo "6) OS firewall (ufw) — allow web ports..."
 if command -v ufw >/dev/null 2>&1; then
   sudo ufw allow 3000/tcp comment 'MyMail app' 2>/dev/null || true
   sudo ufw allow 80/tcp comment 'HTTP' 2>/dev/null || true
@@ -55,7 +75,7 @@ else
 fi
 
 echo ""
-echo "6) Public IP on this instance:"
+echo "7) Public IP on this instance:"
 curl -sf --connect-timeout 5 http://checkip.amazonaws.com 2>/dev/null || echo "   (could not probe — check Lightsail Networking tab)"
 
 echo ""

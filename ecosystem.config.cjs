@@ -18,17 +18,21 @@ module.exports = {
       args: "start",
       env: {
         NODE_ENV: "production",
+        // Never run bulk SMTP inside the web process — prevents 502 during sends.
+        FORCE_EMAIL_QUEUE: "1",
         // Queue unlimited users; 6 campaigns send in parallel on this VPS (tune up on larger instance).
         EMAIL_CAMPAIGN_CONCURRENCY: "6",
         EMAIL_WORKER_CONCURRENCY: "6",
         GLOBAL_SMTP_CONCURRENCY: "36",
         GLOBAL_EGRESS_ROTATION_BURST: "200",
         SMTP_WORKER_CONCURRENCY: "6",
-        AWS_LIGHTSAIL_SEND_EGRESS: "1",
+        // Keep primary static IP attached during sends (avoids site dropouts). Set 1 only if you accept brief DNS/IP churn.
+        AWS_LIGHTSAIL_SEND_EGRESS: "0",
         OUTBOUND_IP_EGRESS_MODE: "logical",
       },
       max_restarts: 20,
       restart_delay: 5_000,
+      max_memory_restart: "750M",
     },
     {
       name: "mymail-worker",
@@ -42,11 +46,12 @@ module.exports = {
         GLOBAL_SMTP_CONCURRENCY: "36",
         GLOBAL_EGRESS_ROTATION_BURST: "200",
         SMTP_WORKER_CONCURRENCY: "6",
-        AWS_LIGHTSAIL_SEND_EGRESS: "1",
+        AWS_LIGHTSAIL_SEND_EGRESS: "0",
         OUTBOUND_IP_EGRESS_MODE: "logical",
       },
       max_restarts: 20,
       restart_delay: 5_000,
+      max_memory_restart: "900M",
     },
   ],
 };
