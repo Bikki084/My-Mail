@@ -32,7 +32,7 @@ import {
   withLightsailEgressLock,
   type AwsOutboundIpMode,
 } from "@/lib/aws-outbound-ip";
-import { usesLightsailEgressAttach, usesProxyEgress } from "@/lib/egress-mode";
+import { usesLightsailEgressAttach, usesLightsailSendEgress, usesProxyEgress } from "@/lib/egress-mode";
 import {
   fetchExpandedOutboundIpPool,
   isDocumentationPlaceholderIp,
@@ -57,6 +57,7 @@ import {
   getEgressProxyUrlForSlot,
   isBindEgressUrl,
 } from "@/lib/smtp-egress-proxy";
+import { prepareSharedSendEgress } from "@/lib/send-governor";
 
 /** Default burst size if the user has never tuned the panel. Matches the spec. */
 export const DEFAULT_ROTATION_THRESHOLD = 1000;
@@ -337,6 +338,14 @@ export async function prepareLightsailEgressForCampaign(
 ): Promise<void> {
   if (!isAwsLightsailRotationConfigured()) return;
 
+  if (usesLightsailSendEgress()) {
+    await prepareSharedSendEgress(sendIp);
+    console.log(
+      `[outbound-ip] send egress attached for campaign (shared pool; primary restored when all campaigns idle).`,
+    );
+    return;
+  }
+
   if (isAwsLightsailPoolRotationEnabled()) {
     await withLightsailEgressLock(() => ensureLightsailPrimaryStaticIpAttached());
     console.log(
@@ -395,12 +404,14 @@ export async function prepareProxyEgressForCampaign(): Promise<void> {
   );
 }
 
-/** After sending: restore website primary on AWS and reset the panel row to IP-1. */
+/** After sending: restore website primary when send-egress mode is off or governor handles idle restore. */
 export async function restoreLightsailWebsiteEgress(
   supabase?: SupabaseClient,
   userId?: string,
 ): Promise<void> {
-  if (!shouldSkipLightsailAttach()) {
+  if (usesLightsailSendEgress()) {
+    // Primary is restored by send-governor when the last campaign slot is released.
+  } else if (!shouldSkipLightsailAttach()) {
     await withLightsailEgressLock(() => releaseLightsailEgressToPrimary());
   }
   if (!supabase || !userId || !isAwsLightsailPoolRotationEnabled()) return;

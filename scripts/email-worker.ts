@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { createRequire } from "node:module";
 import { Worker } from "bullmq";
 import IORedis from "ioredis";
+import { parsePositiveIntEnv } from "../src/lib/async-pool";
 import { createServiceClient } from "../src/lib/supabase/admin";
 import { markCampaignFailed, runSendCampaign } from "../src/lib/campaign-delivery";
 import type { EmailJobPayload } from "../src/lib/queue/email-queue";
@@ -97,6 +98,8 @@ async function main(): Promise<void> {
     connectTimeout: 15_000,
   });
 
+  const workerConcurrency = parsePositiveIntEnv("EMAIL_WORKER_CONCURRENCY", 6);
+
   const worker = new Worker<EmailJobPayload>(
     "email-campaign",
     async (job) => {
@@ -120,7 +123,11 @@ async function main(): Promise<void> {
         throw e;
       }
     },
-    { connection },
+    { connection, concurrency: workerConcurrency },
+  );
+
+  console.log(
+    `[email-worker] listening on email-campaign (concurrency=${workerConcurrency})`,
   );
 
   worker.on("failed", (job, err) => {

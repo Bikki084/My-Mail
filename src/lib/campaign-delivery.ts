@@ -27,6 +27,10 @@ import {
 } from "@/lib/outbound-ip";
 import { deliverCampaignInParallel } from "@/lib/campaign-delivery-parallel";
 import {
+  acquireCampaignDeliverySlot,
+  releaseCampaignDeliverySlot,
+} from "@/lib/send-governor";
+import {
   createCampaignAbortChecker,
   isCampaignCancelled,
 } from "@/lib/campaign-cancel";
@@ -328,6 +332,25 @@ export async function runSendCampaign(
     return;
   }
 
+  await acquireCampaignDeliverySlot(campaignId);
+  try {
+    return await runSendCampaignBody(
+      supabase,
+      campaignId,
+      userId,
+      campaign,
+    );
+  } finally {
+    await releaseCampaignDeliverySlot(campaignId);
+  }
+}
+
+async function runSendCampaignBody(
+  supabase: SupabaseClient,
+  campaignId: string,
+  userId: string,
+  campaign: Awaited<ReturnType<typeof loadCampaignForDelivery>>,
+): Promise<void> {
   const shouldAbort = createCampaignAbortChecker(supabase, campaignId);
 
   const recipients = parseCampaignRecipients(campaign.recipients);

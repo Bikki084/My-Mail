@@ -22,6 +22,11 @@ import {
   renderHtmlToPngBuffer,
 } from "@/lib/html-attachment-render";
 import { parsePositiveIntEnv, runAsyncPool } from "@/lib/async-pool";
+import { withSmtpSendRetry } from "@/lib/smtp-retry";
+import {
+  recordGlobalSuccessfulSend,
+  withGlobalSmtpSlot,
+} from "@/lib/send-governor";
 import { resolveMailEncoding } from "@/lib/mail-encoding";
 import { buildSmtpUserTransport } from "@/lib/smtp/transport";
 import { rotateOutboundIp, prepareLightsailEgressForCampaign } from "@/lib/outbound-ip";
@@ -348,6 +353,10 @@ export async function deliverCampaignInParallel(
         void maybeRotateIpAfterBurst();
       }
     });
+    const globalRotate = await recordGlobalSuccessfulSend();
+    if (globalRotate.rotated) {
+      shared.smtpReconnectGeneration += 1;
+    }
   }
 
   async function recordFailedSend(): Promise<void> {
@@ -545,21 +554,25 @@ export async function deliverCampaignInParallel(
           } as const);
 
         const fromAddr = extractAddress(from);
-        await (await ensureTransporter()).sendMail({
-          from,
-          to: recipient.email,
-          envelope: {
-            from: fromAddr,
-            to: recipient.email,
-          },
-          replyTo: delivery.replyTo,
-          messageId: delivery.messageId,
-          subject: subj,
-          headers: delivery.headers,
-          text: textPayload || undefined,
-          html: htmlPayload || undefined,
-          ...(allAttachments.length ? { attachments: allAttachments } : {}),
-        });
+        await withGlobalSmtpSlot(() =>
+          withSmtpSendRetry(async () => {
+            await (await ensureTransporter()).sendMail({
+              from,
+              to: recipient.email,
+              envelope: {
+                from: fromAddr,
+                to: recipient.email,
+              },
+              replyTo: delivery.replyTo,
+              messageId: delivery.messageId,
+              subject: subj,
+              headers: delivery.headers,
+              text: textPayload || undefined,
+              html: htmlPayload || undefined,
+              ...(allAttachments.length ? { attachments: allAttachments } : {}),
+            });
+          }),
+        );
 
         shared.alreadySent.add(emailKey);
         const sentAt = new Date().toISOString();

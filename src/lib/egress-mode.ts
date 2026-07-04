@@ -44,7 +44,16 @@ export function usesLogicalIpPoolOnly(): boolean {
   return resolveEgressMode() === "logical";
 }
 
+/** Real AWS attach during sends (cycles 5 static IPs; primary restored when idle). */
+export function usesLightsailSendEgress(): boolean {
+  return (
+    process.env.AWS_LIGHTSAIL_SEND_EGRESS === "1" &&
+    isAwsLightsailRotationConfigured()
+  );
+}
+
 export function usesLightsailEgressAttach(): boolean {
+  if (usesLightsailSendEgress()) return true;
   if (resolveEgressMode() !== "lightsail") return false;
   // Pool rotation keeps the website on the primary static IP — no AWS swap during sends.
   if (isAwsLightsailPoolRotationEnabled()) return false;

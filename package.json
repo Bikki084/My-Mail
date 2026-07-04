@@ -23,6 +23,7 @@
     "site:recover": "bash scripts/recover-site.sh",
     "db:fix-outbound-ip": "tsx scripts/fix-outbound-ip.ts",
     "gmail:auth": "tsx scripts/gmail-api-auth.ts",
+    "gmail:exchange-code": "tsx scripts/gmail-api-exchange-code.ts",
     "gmail:send-test": "tsx scripts/gmail-api-send-test.ts",
     "db:migrate:wallet": "tsx scripts/apply-migrations.ts --only=20260428120000_wallet_and_plans.sql"
   },

@@ -105,6 +105,7 @@ export function isExpandedVirtualPoolEnabled(): boolean {
 
 export function shouldSkipLightsailAttach(): boolean {
   if (process.env.OUTBOUND_IP_SKIP_LIGHTSAIL_ATTACH === "1") return true;
+  if (process.env.AWS_LIGHTSAIL_SEND_EGRESS === "1") return false;
   if (isExpandedVirtualPoolEnabled()) return true;
   if (usesProxyEgress()) return true;
   return false;
