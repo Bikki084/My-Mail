@@ -64,11 +64,15 @@ for i in $(seq 1 20); do
 done
 
 echo ""
-echo "4) Wait for email worker on Redis (up to 30s)..."
+echo "4) Wait for email worker heartbeat on Redis (up to 30s)..."
 for i in $(seq 1 15); do
+  if redis-cli GET mymail:email-worker:heartbeat 2>/dev/null | grep -qE '^[0-9]+$'; then
+    echo "   OK — worker heartbeat in Redis"
+    break
+  fi
   HEALTH=$(curl -sf --connect-timeout 3 http://127.0.0.1:3000/api/health 2>/dev/null || echo "")
   if echo "$HEALTH" | grep -q '"workerConnected":true'; then
-    echo "   OK — worker connected to Redis"
+    echo "   OK — worker connected (health API)"
     break
   fi
   echo "   waiting... ($i/15)"

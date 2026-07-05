@@ -73,34 +73,25 @@ export async function resolveCampaignSendMode(
     return { mode: "sync", queueConfigured: true, workerMissing: false };
   }
 
-  const forceQueue = process.env.FORCE_EMAIL_QUEUE === "1";
   const workerUp = await probeWorkerWithRetries(redisUrl);
 
   if (!workerUp) {
-    if (forceQueue && recipientCount <= maxSyncRecipients) {
+    // Small campaigns always send (governor throttles load) — never block 24–5000 recipients.
+    if (recipientCount <= maxSyncRecipients) {
       console.warn(
-        "[send-mode] FORCE_EMAIL_QUEUE=1 but worker missing — allowing in-process delivery " +
-          `for ${recipientCount} recipients (send governor active). Start mymail-worker when possible.`,
+        "[send-mode] Worker heartbeat not detected — using in-process delivery for " +
+          `${recipientCount} recipient(s). Run: bash scripts/ensure-email-stack.sh`,
       );
+      await disposeEmailQueue();
       return { mode: "sync", queueConfigured: true, workerMissing: true };
     }
-    if (forceQueue || recipientCount > maxSyncRecipients) {
-      return {
-        mode: "blocked",
-        queueConfigured: true,
-        message:
-          `Email worker is not running. On the server run: cd ~/mymail && bash scripts/ensure-email-stack.sh ` +
-          `(or pm2 restart mymail-worker). Redis is ${queueLive ? "up" : "down"}. ` +
-          `This campaign has ${recipientCount} recipient(s).`,
-      };
-    }
-    console.warn(
-      "[send-mode] Redis is up but no BullMQ email worker is connected; " +
-        `using in-process delivery (${recipientCount} recipients). ` +
-        "Run `npm run worker` (or PM2 mymail-worker) to use the queue.",
-    );
-    await disposeEmailQueue();
-    return { mode: "sync", queueConfigured: true, workerMissing: true };
+    return {
+      mode: "blocked",
+      queueConfigured: true,
+      message:
+        `This campaign has ${recipientCount} recipients and needs the email worker. ` +
+        `On the server run: cd ~/mymail && git pull && npm run build:prod && bash scripts/ensure-email-stack.sh`,
+    };
   }
 
   const queue = getEmailQueue();
