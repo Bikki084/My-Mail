@@ -1,11 +1,10 @@
 /**
  * PM2 production layout — run BOTH processes on the VPS:
- *   pm2 delete all
- *   pm2 start ecosystem.config.cjs
- *   pm2 save
+ *   bash scripts/ensure-email-stack.sh
  *
- * Requires .env.local in project root (Supabase, SMTP_ENCRYPTION_KEY, REDIS_URL).
- * After code pull: npm run build:prod && pm2 restart ecosystem.config.cjs
+ * Requires .env.local (Supabase, SMTP_ENCRYPTION_KEY, REDIS_URL).
+ * After git pull: bash scripts/pm2-fix-web.sh  (first time / after OOM)
+ * Daily recovery: bash scripts/ensure-email-stack.sh
  */
 module.exports = {
   apps: [
@@ -16,7 +15,6 @@ module.exports = {
       interpreter: "node",
       env: {
         NODE_ENV: "production",
-        FORCE_EMAIL_QUEUE: "1",
         EMAIL_CAMPAIGN_CONCURRENCY: "6",
         EMAIL_WORKER_CONCURRENCY: "6",
         GLOBAL_SMTP_CONCURRENCY: "36",
@@ -35,9 +33,8 @@ module.exports = {
     {
       name: "mymail-worker",
       cwd: __dirname,
-      script: "scripts/email-worker.ts",
+      script: "scripts/run-worker.cjs",
       interpreter: "node",
-      interpreter_args: "--import tsx",
       env: {
         NODE_ENV: "production",
         EMAIL_CAMPAIGN_CONCURRENCY: "6",
@@ -49,10 +46,10 @@ module.exports = {
         OUTBOUND_IP_EGRESS_MODE: "logical",
       },
       min_uptime: "5s",
-      max_restarts: 15,
-      restart_delay: 8_000,
+      max_restarts: 20,
+      restart_delay: 5_000,
       exp_backoff_restart_delay: 200,
-      kill_timeout: 10_000,
+      kill_timeout: 15_000,
       max_memory_restart: "1G",
     },
   ],

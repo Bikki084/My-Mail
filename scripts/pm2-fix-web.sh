@@ -52,7 +52,26 @@ pm2 start ecosystem.config.cjs
 pm2 save
 
 echo ""
-echo "6) Wait for /api/health..."
+echo "6) Ensure email worker registered on Redis..."
+for i in $(seq 1 20); do
+  HEALTH=$(curl -sf --connect-timeout 3 http://127.0.0.1:3000/api/health 2>/dev/null || echo "")
+  if echo "$HEALTH" | grep -q '"workerConnected":true'; then
+    echo "   OK — worker connected"
+    break
+  fi
+  echo "   waiting for worker... ($i/20)"
+  sleep 2
+  if [[ $i -eq 10 ]]; then
+    pm2 restart mymail-worker
+  fi
+  if [[ $i -eq 20 ]]; then
+    echo "   WARN: worker not visible yet — run: bash scripts/ensure-email-stack.sh"
+    pm2 logs mymail-worker --nostream --lines 30 2>/dev/null || true
+  fi
+done
+
+echo ""
+echo "7) Wait for /api/health..."
 for i in $(seq 1 15); do
   if curl -sf --connect-timeout 3 http://127.0.0.1:3000/api/health >/dev/null; then
     echo "   OK"

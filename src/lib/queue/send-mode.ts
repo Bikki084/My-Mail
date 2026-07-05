@@ -8,7 +8,23 @@ import type { EmailJobPayload } from "@/lib/queue/email-queue";
 import { hasRegisteredEmailWorker } from "@/lib/queue/worker-presence";
 import type { Queue } from "bullmq";
 
-const REDIS_PROBE_MS = 1_500;
+const REDIS_PROBE_MS = 2_500;
+const WORKER_PROBE_MS = 3_000;
+const WORKER_PROBE_RETRIES = 5;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function probeWorkerWithRetries(redisUrl: string): Promise<boolean> {
+  for (let attempt = 0; attempt < WORKER_PROBE_RETRIES; attempt += 1) {
+    if (await hasRegisteredEmailWorker(redisUrl, WORKER_PROBE_MS)) return true;
+    if (attempt < WORKER_PROBE_RETRIES - 1) {
+      await sleep(600);
+    }
+  }
+  return false;
+}
 
 export type ResolvedSendMode =
   | { mode: "queue"; queue: Queue<EmailJobPayload> }
@@ -58,17 +74,23 @@ export async function resolveCampaignSendMode(
   }
 
   const forceQueue = process.env.FORCE_EMAIL_QUEUE === "1";
-  const workerUp = await hasRegisteredEmailWorker(redisUrl, REDIS_PROBE_MS);
+  const workerUp = await probeWorkerWithRetries(redisUrl);
 
   if (!workerUp) {
+    if (forceQueue && recipientCount <= maxSyncRecipients) {
+      console.warn(
+        "[send-mode] FORCE_EMAIL_QUEUE=1 but worker missing — allowing in-process delivery " +
+          `for ${recipientCount} recipients (send governor active). Start mymail-worker when possible.`,
+      );
+      return { mode: "sync", queueConfigured: true, workerMissing: true };
+    }
     if (forceQueue || recipientCount > maxSyncRecipients) {
       return {
         mode: "blocked",
         queueConfigured: true,
         message:
-          `REDIS_URL is set but no email worker is connected to Redis. ` +
-          `Start the worker on the server (\`npm run worker\` or PM2 \`mymail-worker\`) ` +
-          `with the same .env.local as the web app (SUPABASE_SERVICE_ROLE_KEY + SMTP_ENCRYPTION_KEY). ` +
+          `Email worker is not running. On the server run: cd ~/mymail && bash scripts/ensure-email-stack.sh ` +
+          `(or pm2 restart mymail-worker). Redis is ${queueLive ? "up" : "down"}. ` +
           `This campaign has ${recipientCount} recipient(s).`,
       };
     }
