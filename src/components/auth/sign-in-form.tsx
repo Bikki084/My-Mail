@@ -25,8 +25,8 @@ import {
 import { AuthPageShell } from "@/components/auth/auth-page-shell";
 import { clearTabSession, markTabSessionActive } from "@/lib/auth/tab-session";
 import {
-  attemptsLeftLabel,
   clearLoginAttemptLockout,
+  failedAttemptLabel,
   getLoginLockoutSecondsLeft,
   isInvalidCredentialsError,
   recordFailedLoginAttempt,
@@ -175,7 +175,6 @@ export function SignInForm() {
             : "Set those vars in .env.local on the server, then run: rm -rf .next && npm run build:prod && pm2 restart mymail-web",
       };
       setFormError(err);
-      toast.error(err.title, { description: err.description });
       return;
     }
 
@@ -199,23 +198,18 @@ export function SignInForm() {
         if (result.locked) {
           setLockoutSecondsLeft(result.lockoutSeconds);
           setFormError({ title: "Too many failed attempts." });
-          toast.error("Too many failed attempts.", {
-            description: `Please wait ${result.lockoutSeconds} seconds before trying again.`,
-          });
           return;
         }
 
         const withAttempts: FormError = {
           title: err.title,
-          description: `${attemptsLeftLabel(result.attemptsLeft)}.`,
+          description: failedAttemptLabel(result.attemptNumber),
         };
         setFormError(withAttempts);
-        toast.error(withAttempts.title, { description: withAttempts.description });
         return;
       }
 
       setFormError(err);
-      toast.error(err.title, { description: err.description });
       return;
     }
 
@@ -224,7 +218,6 @@ export function SignInForm() {
       setLoading(false);
       const err: FormError = { title: "Could not load your session." };
       setFormError(err);
-      toast.error(err.title);
       return;
     }
 
@@ -245,7 +238,6 @@ export function SignInForm() {
         description: profileError.message,
       };
       setFormError(err);
-      toast.error(err.title, { description: err.description });
       return;
     }
 
@@ -260,7 +252,6 @@ export function SignInForm() {
         description: "Your account must be created by an administrator.",
       };
       setFormError(err);
-      toast.error(err.title, { description: err.description });
       return;
     }
 

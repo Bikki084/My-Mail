@@ -53,10 +53,10 @@ export function isLoginLockedOut(now = Date.now()): boolean {
 }
 
 export type FailedLoginAttemptResult =
-  | { locked: false; attemptsLeft: number }
+  | { locked: false; attemptNumber: number }
   | { locked: true; lockoutSeconds: number };
 
-/** Record one invalid-credentials failure; returns remaining attempts or lockout. */
+/** Record one invalid-credentials failure; returns attempt number (1–2) or lockout. */
 export function recordFailedLoginAttempt(now = Date.now()): FailedLoginAttemptResult {
   const state = readState();
 
@@ -76,9 +76,9 @@ export function recordFailedLoginAttempt(now = Date.now()): FailedLoginAttemptRe
   }
 
   writeState({ failedAttempts: nextAttempts, lockedUntil: null });
-  return { locked: false, attemptsLeft: LOGIN_MAX_ATTEMPTS - nextAttempts };
+  return { locked: false, attemptNumber: nextAttempts };
 }
 
-export function attemptsLeftLabel(attemptsLeft: number): string {
-  return `${attemptsLeft}/${LOGIN_MAX_ATTEMPTS} attempt${attemptsLeft === 1 ? "" : "s"} left`;
+export function failedAttemptLabel(attemptNumber: number): string {
+  return `${attemptNumber}/${LOGIN_MAX_ATTEMPTS}`;
 }
