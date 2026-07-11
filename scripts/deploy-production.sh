@@ -71,7 +71,17 @@ mv "${STAGING_DIR}" .next
 echo ""
 echo "5) Reload PM2 (graceful — only a few seconds of downtime)..."
 if pm2 describe "${APP_WEB}" >/dev/null 2>&1; then
-  pm2 reload "${APP_WEB}" --update-env
+  WEB_STATUS="$(pm2 jlist 2>/dev/null | node -e "
+    const apps = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+    const app = apps.find((a) => a.name === '${APP_WEB}');
+    console.log(app?.pm2_env?.status || 'stopped');
+  " 2>/dev/null || echo "stopped")"
+  if [[ "${WEB_STATUS}" == "online" ]]; then
+    pm2 reload "${APP_WEB}" --update-env
+  else
+    pm2 delete "${APP_WEB}" 2>/dev/null || true
+    pm2 start ecosystem.config.cjs --only "${APP_WEB}"
+  fi
 else
   echo "   ${APP_WEB} not running — starting ecosystem..."
   pm2 start ecosystem.config.cjs
@@ -93,11 +103,11 @@ for i in $(seq 1 25); do
   sleep 2
   if [[ $i -eq 25 ]]; then
     echo "   FAIL — rolling back to previous .next"
-    pm2 stop "${APP_WEB}" 2>/dev/null || true
     rm -rf .next
     if [[ -d "${BACKUP_DIR}" ]]; then
       mv "${BACKUP_DIR}" .next
-      pm2 reload "${APP_WEB}" --update-env || pm2 start ecosystem.config.cjs
+      pm2 delete "${APP_WEB}" 2>/dev/null || true
+      pm2 start ecosystem.config.cjs --only "${APP_WEB}" || pm2 start ecosystem.config.cjs
       pm2 save
       echo "   Rolled back — check logs: pm2 logs ${APP_WEB} --lines 40"
     else
