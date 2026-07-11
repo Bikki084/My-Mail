@@ -74,11 +74,22 @@ export function SignInForm() {
   const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
   const [formError, setFormError] = useState<FormError | null>(null);
   const [lockoutSecondsLeft, setLockoutSecondsLeft] = useState(0);
+  const failedAttemptsRef = useRef(0);
+  const submitInFlightRef = useRef(false);
   const resetToastShown = useRef(false);
   const authGateToastShown = useRef(false);
 
   useEffect(() => {
     clearTabSession();
+
+    const left = getLoginLockoutSecondsLeft();
+    if (left > 0) {
+      setLockoutSecondsLeft(left);
+      setFormError({ title: "Too many failed attempts." });
+    } else {
+      failedAttemptsRef.current = 0;
+    }
+
     if (!isSupabaseAuthConfigured()) {
       setSessionCleared(true);
       return;
@@ -118,14 +129,6 @@ export function SignInForm() {
   }, [searchParams]);
 
   useEffect(() => {
-    const left = getLoginLockoutSecondsLeft();
-    if (left > 0) {
-      setLockoutSecondsLeft(left);
-      setFormError({ title: "Too many failed attempts." });
-    }
-  }, []);
-
-  useEffect(() => {
     if (lockoutSecondsLeft <= 0) return;
 
     const timer = window.setInterval(() => {
@@ -141,6 +144,7 @@ export function SignInForm() {
 
   useEffect(() => {
     if (lockoutSecondsLeft !== 0) return;
+    failedAttemptsRef.current = 0;
     setFormError((prev) =>
       prev?.title === "Too many failed attempts." ? null : prev,
     );
@@ -148,7 +152,8 @@ export function SignInForm() {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!sessionCleared || lockoutSecondsLeft > 0) return;
+    if (!sessionCleared || lockoutSecondsLeft > 0 || submitInFlightRef.current) return;
+    submitInFlightRef.current = true;
     setFormError(null);
 
     const trimmedEmail = email.trim();
@@ -163,6 +168,7 @@ export function SignInForm() {
     }
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) {
+      submitInFlightRef.current = false;
       return;
     }
 
@@ -175,6 +181,7 @@ export function SignInForm() {
             : "Set those vars in .env.local on the server, then run: rm -rf .next && npm run build:prod && pm2 restart mymail-web",
       };
       setFormError(err);
+      submitInFlightRef.current = false;
       return;
     }
 
@@ -194,22 +201,27 @@ export function SignInForm() {
       const err = friendlyAuthError(signError.message);
 
       if (isInvalidCredentialsError(signError.message)) {
-        const result = recordFailedLoginAttempt();
+        const result = recordFailedLoginAttempt(failedAttemptsRef.current);
         if (result.locked) {
+          failedAttemptsRef.current = 0;
           setLockoutSecondsLeft(result.lockoutSeconds);
           setFormError({ title: "Too many failed attempts." });
+          submitInFlightRef.current = false;
           return;
         }
 
+        failedAttemptsRef.current = result.attemptNumber;
         const withAttempts: FormError = {
           title: err.title,
           description: failedAttemptLabel(result.attemptNumber),
         };
         setFormError(withAttempts);
+        submitInFlightRef.current = false;
         return;
       }
 
       setFormError(err);
+      submitInFlightRef.current = false;
       return;
     }
 
@@ -218,6 +230,7 @@ export function SignInForm() {
       setLoading(false);
       const err: FormError = { title: "Could not load your session." };
       setFormError(err);
+      submitInFlightRef.current = false;
       return;
     }
 
@@ -238,6 +251,7 @@ export function SignInForm() {
         description: profileError.message,
       };
       setFormError(err);
+      submitInFlightRef.current = false;
       return;
     }
 
@@ -252,6 +266,7 @@ export function SignInForm() {
         description: "Your account must be created by an administrator.",
       };
       setFormError(err);
+      submitInFlightRef.current = false;
       return;
     }
 
@@ -260,6 +275,7 @@ export function SignInForm() {
 
     setLoading(false);
     clearLoginAttemptLockout();
+    failedAttemptsRef.current = 0;
     markTabSessionActive();
 
     const nextParam = searchParams.get("next");
@@ -272,6 +288,7 @@ export function SignInForm() {
       router.replace(safeNext?.startsWith("/client") ? safeNext : "/client");
     }
     router.refresh();
+    submitInFlightRef.current = false;
   }
 
   return (
