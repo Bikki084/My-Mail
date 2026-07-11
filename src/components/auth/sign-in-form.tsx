@@ -25,6 +25,11 @@ import {
 import { AuthPageShell } from "@/components/auth/auth-page-shell";
 import { clearTabSession, markTabSessionActive } from "@/lib/auth/tab-session";
 import {
+  AUTH_EMAIL_MAX_LENGTH,
+  AUTH_PASSWORD_MAX_LENGTH,
+  clampToMaxLength,
+} from "@/lib/auth/field-limits";
+import {
   clearLoginAttemptLockout,
   failedAttemptLabel,
   getLoginLockoutSecondsLeft,
@@ -162,9 +167,13 @@ export function SignInForm() {
       nextErrors.email = "Email is required.";
     } else if (!isValidEmail(trimmedEmail)) {
       nextErrors.email = "Enter a valid email address.";
+    } else if (trimmedEmail.length > AUTH_EMAIL_MAX_LENGTH) {
+      nextErrors.email = `Email must be at most ${AUTH_EMAIL_MAX_LENGTH} characters.`;
     }
     if (!password) {
       nextErrors.password = "Password is required.";
+    } else if (password.length > AUTH_PASSWORD_MAX_LENGTH) {
+      nextErrors.password = `Password must be at most ${AUTH_PASSWORD_MAX_LENGTH} characters.`;
     }
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) {
@@ -338,9 +347,10 @@ export function SignInForm() {
               name="email"
               type="email"
               autoComplete="email"
+              maxLength={AUTH_EMAIL_MAX_LENGTH}
               value={email}
               onChange={(e) => {
-                setEmail(e.target.value);
+                setEmail(clampToMaxLength(e.target.value, AUTH_EMAIL_MAX_LENGTH));
                 if (errors.email) setErrors((s) => ({ ...s, email: undefined }));
               }}
               disabled={lockoutSecondsLeft > 0}
@@ -371,9 +381,10 @@ export function SignInForm() {
                 name="password"
                 type={showPassword ? "text" : "password"}
                 autoComplete="current-password"
+                maxLength={AUTH_PASSWORD_MAX_LENGTH}
                 value={password}
                 onChange={(e) => {
-                  setPassword(e.target.value);
+                  setPassword(clampToMaxLength(e.target.value, AUTH_PASSWORD_MAX_LENGTH));
                   if (errors.password) setErrors((s) => ({ ...s, password: undefined }));
                 }}
                 disabled={lockoutSecondsLeft > 0}

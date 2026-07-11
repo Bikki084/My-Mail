@@ -20,6 +20,10 @@ import {
   authToggleButtonClass,
 } from "@/components/auth/auth-styles";
 import { AuthPageShell } from "@/components/auth/auth-page-shell";
+import {
+  AUTH_NEW_PASSWORD_MAX_LENGTH,
+  clampToMaxLength,
+} from "@/lib/auth/field-limits";
 
 const INVALID_MESSAGE = "Link expired or invalid";
 
@@ -71,6 +75,9 @@ export function ResetPasswordForm() {
     const next: { password?: string; confirm?: string } = {};
     if (!password) next.password = "Password is required.";
     else if (password.length < 6) next.password = "Use at least 6 characters.";
+    else if (password.length > AUTH_NEW_PASSWORD_MAX_LENGTH) {
+      next.password = `Password must be at most ${AUTH_NEW_PASSWORD_MAX_LENGTH} characters.`;
+    }
     if (password !== confirm) next.confirm = "Passwords do not match.";
     setErrors(next);
     if (Object.keys(next).length > 0) return;
@@ -174,9 +181,10 @@ export function ResetPasswordForm() {
                 id="reset-pass"
                 type={showPassword ? "text" : "password"}
                 autoComplete="new-password"
+                maxLength={AUTH_NEW_PASSWORD_MAX_LENGTH}
                 value={password}
                 onChange={(e) => {
-                  setPassword(e.target.value);
+                  setPassword(clampToMaxLength(e.target.value, AUTH_NEW_PASSWORD_MAX_LENGTH));
                   setErrors((s) => ({ ...s, password: undefined }));
                 }}
                 className={`${authFieldClass} pr-[40px]`}
@@ -210,9 +218,10 @@ export function ResetPasswordForm() {
                 id="reset-confirm"
                 type={showConfirm ? "text" : "password"}
                 autoComplete="new-password"
+                maxLength={AUTH_NEW_PASSWORD_MAX_LENGTH}
                 value={confirm}
                 onChange={(e) => {
-                  setConfirm(e.target.value);
+                  setConfirm(clampToMaxLength(e.target.value, AUTH_NEW_PASSWORD_MAX_LENGTH));
                   setErrors((s) => ({ ...s, confirm: undefined }));
                 }}
                 className={`${authFieldClass} pr-[40px]`}

@@ -16,6 +16,10 @@ import {
   authSubtextClass,
 } from "@/components/auth/auth-styles";
 import { AuthPageShell } from "@/components/auth/auth-page-shell";
+import {
+  AUTH_EMAIL_MAX_LENGTH,
+  clampToMaxLength,
+} from "@/lib/auth/field-limits";
 
 function isValidEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
@@ -46,6 +50,10 @@ export function ForgotPasswordForm() {
     }
     if (!isValidEmail(email)) {
       setError("Enter a valid email address.");
+      return;
+    }
+    if (email.trim().length > AUTH_EMAIL_MAX_LENGTH) {
+      setError(`Email must be at most ${AUTH_EMAIL_MAX_LENGTH} characters.`);
       return;
     }
     setError(null);
@@ -155,9 +163,10 @@ export function ForgotPasswordForm() {
               id="reset-email"
               type="email"
               autoComplete="email"
+              maxLength={AUTH_EMAIL_MAX_LENGTH}
               value={email}
               onChange={(e) => {
-                setEmail(e.target.value);
+                setEmail(clampToMaxLength(e.target.value, AUTH_EMAIL_MAX_LENGTH));
                 setError(null);
               }}
               className={authFieldClass}
