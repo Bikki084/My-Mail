@@ -24,6 +24,13 @@ import {
 } from "@/components/auth/auth-styles";
 import { AuthPageShell } from "@/components/auth/auth-page-shell";
 import { clearTabSession, markTabSessionActive } from "@/lib/auth/tab-session";
+import {
+  attemptsLeftLabel,
+  clearLoginAttemptLockout,
+  getLoginLockoutSecondsLeft,
+  isInvalidCredentialsError,
+  recordFailedLoginAttempt,
+} from "@/lib/auth/login-attempt-lockout";
 
 function isValidEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
@@ -66,6 +73,7 @@ export function SignInForm() {
   const [sessionCleared, setSessionCleared] = useState(false);
   const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
   const [formError, setFormError] = useState<FormError | null>(null);
+  const [lockoutSecondsLeft, setLockoutSecondsLeft] = useState(0);
   const resetToastShown = useRef(false);
   const authGateToastShown = useRef(false);
 
@@ -109,9 +117,28 @@ export function SignInForm() {
     window.history.replaceState({}, "", u.pathname + u.search);
   }, [searchParams]);
 
+  useEffect(() => {
+    const left = getLoginLockoutSecondsLeft();
+    if (left > 0) setLockoutSecondsLeft(left);
+  }, []);
+
+  useEffect(() => {
+    if (lockoutSecondsLeft <= 0) return;
+
+    const timer = window.setInterval(() => {
+      const secondsLeft = getLoginLockoutSecondsLeft();
+      setLockoutSecondsLeft(secondsLeft);
+      if (secondsLeft <= 0) {
+        window.clearInterval(timer);
+      }
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [lockoutSecondsLeft > 0]);
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!sessionCleared) return;
+    if (!sessionCleared || lockoutSecondsLeft > 0) return;
     setFormError(null);
 
     const trimmedEmail = email.trim();
@@ -156,6 +183,29 @@ export function SignInForm() {
     if (signError) {
       setLoading(false);
       const err = friendlyAuthError(signError.message);
+
+      if (isInvalidCredentialsError(signError.message)) {
+        const result = recordFailedLoginAttempt();
+        if (result.locked) {
+          setLockoutSecondsLeft(result.lockoutSeconds);
+          const lockoutErr: FormError = {
+            title: "Too many failed attempts.",
+            description: `Please wait ${result.lockoutSeconds} seconds before trying again.`,
+          };
+          setFormError(lockoutErr);
+          toast.error(lockoutErr.title, { description: lockoutErr.description });
+          return;
+        }
+
+        const withAttempts: FormError = {
+          title: err.title,
+          description: `${attemptsLeftLabel(result.attemptsLeft)}.`,
+        };
+        setFormError(withAttempts);
+        toast.error(withAttempts.title, { description: withAttempts.description });
+        return;
+      }
+
       setFormError(err);
       toast.error(err.title, { description: err.description });
       return;
@@ -210,6 +260,7 @@ export function SignInForm() {
     // mounts, so we skip awaiting it here to keep sign-in fast.
 
     setLoading(false);
+    clearLoginAttemptLockout();
     markTabSessionActive();
 
     const nextParam = searchParams.get("next");
@@ -237,6 +288,20 @@ export function SignInForm() {
           <h1 className={authHeadingClass}>Welcome back</h1>
           <p className={authSubtextClass}>Sign in to your account</p>
         </div>
+
+        {lockoutSecondsLeft > 0 && (
+          <div
+            role="alert"
+            aria-live="assertive"
+            className="mb-6 rounded-lg border border-amber-500/35 bg-amber-500/10 px-4 py-3 text-[13px] leading-[1.5] text-amber-100"
+          >
+            <p className="font-medium text-amber-50">Login temporarily locked</p>
+            <p className="mt-1 text-amber-200/90">
+              Too many failed attempts. Try again in{" "}
+              <span className="font-semibold tabular-nums">{lockoutSecondsLeft}s</span>.
+            </p>
+          </div>
+        )}
 
         {formError && (
           <div
@@ -266,6 +331,7 @@ export function SignInForm() {
                 setEmail(e.target.value);
                 if (errors.email) setErrors((s) => ({ ...s, email: undefined }));
               }}
+              disabled={lockoutSecondsLeft > 0}
               className={authFieldClass}
               placeholder="you@company.com"
               aria-invalid={Boolean(errors.email)}
@@ -298,6 +364,7 @@ export function SignInForm() {
                   setPassword(e.target.value);
                   if (errors.password) setErrors((s) => ({ ...s, password: undefined }));
                 }}
+                disabled={lockoutSecondsLeft > 0}
                 className={`${authFieldClass} pr-[40px]`}
                 aria-invalid={Boolean(errors.password)}
                 aria-describedby={errors.password ? "password-error" : undefined}
@@ -322,8 +389,18 @@ export function SignInForm() {
             )}
           </div>
 
-          <button type="submit" disabled={loading || !sessionCleared} className={authSubmitClass}>
-            {!sessionCleared ? "Preparing sign in…" : loading ? "Signing in…" : "Sign in"}
+          <button
+            type="submit"
+            disabled={loading || !sessionCleared || lockoutSecondsLeft > 0}
+            className={authSubmitClass}
+          >
+            {!sessionCleared
+              ? "Preparing sign in…"
+              : lockoutSecondsLeft > 0
+                ? `Wait ${lockoutSecondsLeft}s…`
+                : loading
+                  ? "Signing in…"
+                  : "Sign in"}
           </button>
         </form>
 
