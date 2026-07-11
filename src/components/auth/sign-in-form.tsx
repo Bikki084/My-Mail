@@ -23,6 +23,7 @@ import {
   authToggleButtonClass,
 } from "@/components/auth/auth-styles";
 import { AuthPageShell } from "@/components/auth/auth-page-shell";
+import { clearTabSession, markTabSessionActive } from "@/lib/auth/tab-session";
 
 function isValidEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
@@ -62,10 +63,29 @@ export function SignInForm() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [sessionCleared, setSessionCleared] = useState(false);
   const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
   const [formError, setFormError] = useState<FormError | null>(null);
   const resetToastShown = useRef(false);
   const authGateToastShown = useRef(false);
+
+  useEffect(() => {
+    clearTabSession();
+    if (!isSupabaseAuthConfigured()) {
+      setSessionCleared(true);
+      return;
+    }
+    const supabase = createClient();
+    void (async () => {
+      try {
+        await supabase.auth.signOut();
+      } catch {
+        // Ignore — stale cookies may already be cleared.
+      } finally {
+        setSessionCleared(true);
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     if (searchParams.get("auth") !== "required" || authGateToastShown.current) return;
@@ -91,6 +111,7 @@ export function SignInForm() {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!sessionCleared) return;
     setFormError(null);
 
     const trimmedEmail = email.trim();
@@ -189,15 +210,16 @@ export function SignInForm() {
     // mounts, so we skip awaiting it here to keep sign-in fast.
 
     setLoading(false);
+    markTabSessionActive();
 
     const nextParam = searchParams.get("next");
     const safeNext =
       nextParam?.startsWith("/") && !nextParam.startsWith("//") ? nextParam : null;
 
     if (role === "admin") {
-      router.push(safeNext?.startsWith("/admin") ? safeNext : "/admin");
+      router.replace(safeNext?.startsWith("/admin") ? safeNext : "/admin");
     } else {
-      router.push(safeNext?.startsWith("/client") ? safeNext : "/client");
+      router.replace(safeNext?.startsWith("/client") ? safeNext : "/client");
     }
     router.refresh();
   }
@@ -300,8 +322,8 @@ export function SignInForm() {
             )}
           </div>
 
-          <button type="submit" disabled={loading} className={authSubmitClass}>
-            {loading ? "Signing in…" : "Sign in"}
+          <button type="submit" disabled={loading || !sessionCleared} className={authSubmitClass}>
+            {!sessionCleared ? "Preparing sign in…" : loading ? "Signing in…" : "Sign in"}
           </button>
         </form>
 

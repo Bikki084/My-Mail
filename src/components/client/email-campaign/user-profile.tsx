@@ -2,10 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { ChevronDown } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
 import { isClientDashboardPreviewMode } from "@/lib/auth-config";
-import { recordLogoutEvent } from "@/app/actions/auth-events";
-import { LOGIN_EVENT_BOOTSTRAP_KEY } from "@/components/auth/login-event-bootstrap";
+import { performClientSignOut } from "@/lib/auth/tab-session";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -68,20 +66,7 @@ export function UserProfile({
       router.refresh();
       return;
     }
-    try {
-      await recordLogoutEvent();
-    } catch {
-      // Non-fatal: logout audit is best-effort.
-    }
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    try {
-      sessionStorage.removeItem(LOGIN_EVENT_BOOTSTRAP_KEY);
-    } catch {
-      // Ignore storage errors.
-    }
-    router.push("/login");
-    router.refresh();
+    await performClientSignOut(router);
   }
 
   return (

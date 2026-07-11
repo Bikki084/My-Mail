@@ -5,10 +5,11 @@ import { supabaseProjectUrl } from "@/lib/supabase/project-url";
 
 type Role = "admin" | "client" | null;
 
-function homeForRole(role: Role): "/admin" | "/client" | "/login" {
-  if (role === "admin") return "/admin";
-  if (role === "client") return "/client";
-  return "/login";
+function applyNoStoreHeaders(response: NextResponse): NextResponse {
+  response.headers.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  response.headers.set("Pragma", "no-cache");
+  response.headers.set("Expires", "0");
+  return response;
 }
 
 export async function updateSession(request: NextRequest) {
@@ -100,15 +101,8 @@ export async function updateSession(request: NextRequest) {
     }
   }
 
-  // --- Auth pages while signed in → send to role home
-  if ((path === "/login" || path === "/signin" || path === "/forgot-password") && user) {
-    const role = await resolveRole();
-    // Avoid redirect loop: session without a resolvable role used to send users to `/login`
-    // while already on `/login` (homeForRole(null) → "/login"), which proxies often surface as 404.
-    if (!role) {
-      return supabaseResponse;
-    }
-    return NextResponse.redirect(new URL(homeForRole(role), request.url));
+  if (path.startsWith("/admin") || path.startsWith("/client")) {
+    return applyNoStoreHeaders(supabaseResponse);
   }
 
   return supabaseResponse;

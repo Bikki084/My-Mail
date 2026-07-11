@@ -29,13 +29,10 @@ import {
   SidebarSeparator,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
-import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
-import { recordLogoutEvent } from "@/app/actions/auth-events";
-import {
-  LoginEventBootstrap,
-  LOGIN_EVENT_BOOTSTRAP_KEY,
-} from "@/components/auth/login-event-bootstrap";
+import { LoginEventBootstrap } from "@/components/auth/login-event-bootstrap";
+import { TabSessionGuard } from "@/components/auth/tab-session-guard";
+import { performClientSignOut } from "@/lib/auth/tab-session";
 import { APP_BRAND_NAME } from "@/lib/brand";
 
 const nav = [
@@ -55,26 +52,14 @@ export function ClientShell({
 }) {
   const pathname = usePathname();
   const router = useRouter();
-  const supabase = createClient();
 
   async function signOut() {
-    try {
-      await recordLogoutEvent();
-    } catch {
-      // Non-fatal: logout audit is best-effort.
-    }
-    await supabase.auth.signOut();
-    try {
-      sessionStorage.removeItem(LOGIN_EVENT_BOOTSTRAP_KEY);
-    } catch {
-      // Ignore storage errors.
-    }
-    router.push("/login");
-    router.refresh();
+    await performClientSignOut(router);
   }
 
   return (
     <SidebarProvider>
+      <TabSessionGuard />
       <LoginEventBootstrap />
       <Sidebar collapsible="icon" variant="sidebar" className="border-r border-border">
         <SidebarHeader className="gap-3 border-b border-border/60 px-4 py-3">

@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { Mail } from "lucide-react";
 import { UserProfile } from "@/components/client/email-campaign/user-profile";
 import { LoginEventBootstrap } from "@/components/auth/login-event-bootstrap";
+import { TabSessionGuard } from "@/components/auth/tab-session-guard";
 import { AnnouncementBell } from "@/components/client/announcements/announcement-bell";
 import {
   AnnouncementsProvider,
@@ -81,6 +82,7 @@ export function ClientConsoleShell({
       }}
     >
       <div className="flex min-h-svh flex-col bg-zinc-950">
+        {!previewMode && <TabSessionGuard />}
         {!previewMode && <LoginEventBootstrap />}
         {previewMode && (
           <div className="border-b border-amber-500/35 bg-amber-500/10 px-4 py-2 text-center text-xs text-amber-100/95">

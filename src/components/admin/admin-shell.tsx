@@ -2,13 +2,9 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
-import { isSupabaseAuthConfigured } from "@/lib/auth-config";
-import { recordLogoutEvent } from "@/app/actions/auth-events";
-import {
-  LoginEventBootstrap,
-  LOGIN_EVENT_BOOTSTRAP_KEY,
-} from "@/components/auth/login-event-bootstrap";
+import { LoginEventBootstrap } from "@/components/auth/login-event-bootstrap";
+import { TabSessionGuard } from "@/components/auth/tab-session-guard";
+import { performClientSignOut } from "@/lib/auth/tab-session";
 import {
   LayoutDashboard,
   Users,
@@ -64,30 +60,12 @@ export function AdminShell({
   const router = useRouter();
 
   async function handleSignOut() {
-    if (isSupabaseAuthConfigured()) {
-      try {
-        await recordLogoutEvent();
-      } catch {
-        // Non-fatal: logout audit is best-effort.
-      }
-      try {
-        const supabase = createClient();
-        await supabase.auth.signOut();
-      } catch {
-        // fall through — still send the user back to the login screen
-      }
-    }
-    try {
-      sessionStorage.removeItem(LOGIN_EVENT_BOOTSTRAP_KEY);
-    } catch {
-      // Ignore storage errors.
-    }
-    router.push("/login");
-    router.refresh();
+    await performClientSignOut(router);
   }
 
   return (
     <SidebarProvider>
+      <TabSessionGuard />
       <LoginEventBootstrap />
       <Sidebar collapsible="icon" className="border-r border-gray-800 bg-[#111827] text-gray-100">
         <SidebarHeader className="gap-3 border-b border-gray-800 px-4 py-4">
