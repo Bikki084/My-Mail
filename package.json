@@ -21,6 +21,7 @@
     "db:essential": "tsx scripts/apply-essential-sql.ts",
     "lightsail:ensure-primary": "tsx scripts/ensure-lightsail-primary.ts",
     "site:recover": "bash scripts/recover-site.sh",
+    "site:deploy": "bash scripts/deploy-production.sh",
     "pm2:fix-web": "bash scripts/pm2-fix-web.sh",
     "stack:ensure": "bash scripts/ensure-email-stack.sh",
     "vps:swap": "bash scripts/ensure-swap.sh",

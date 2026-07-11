@@ -44,7 +44,7 @@ if ! pm2 describe mymail-web >/dev/null 2>&1 || ! pm2 describe mymail-worker >/d
     exit 1
   fi
 else
-  pm2 restart ecosystem.config.cjs
+  pm2 reload ecosystem.config.cjs --update-env
 fi
 pm2 save
 

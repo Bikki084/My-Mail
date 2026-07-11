@@ -13,7 +13,12 @@ if [[ ! -f .env.local ]]; then
   exit 1
 fi
 
-echo "1) Stop PM2..."
+echo "1) Stop PM2 only if no working build to serve..."
+if [[ -f .next/BUILD_ID ]] && curl -sf --connect-timeout 2 http://127.0.0.1:3000/api/health >/dev/null 2>&1; then
+  echo "   Site is up — using safe deploy (build staging + reload) instead of delete-all."
+  exec bash scripts/deploy-production.sh
+fi
+
 pm2 delete all 2>/dev/null || true
 sleep 2
 

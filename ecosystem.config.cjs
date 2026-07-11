@@ -3,7 +3,8 @@
  *   bash scripts/ensure-email-stack.sh
  *
  * Requires .env.local (Supabase, SMTP_ENCRYPTION_KEY, REDIS_URL).
- * After git pull: bash scripts/pm2-fix-web.sh  (first time / after OOM)
+ * After git pull: bash scripts/deploy-production.sh  (safe — site stays up during build)
+ * First time / full recovery: bash scripts/pm2-fix-web.sh
  * Daily recovery: bash scripts/ensure-email-stack.sh
  */
 module.exports = {

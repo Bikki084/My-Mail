@@ -1,6 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Staging builds use NEXT_DIST_DIR=.next-staging so production can keep serving .next during deploy.
+  distDir: process.env.NEXT_DIST_DIR || ".next",
   // Hide the Next.js route/bundler dev badge (bottom-left "N" panel) during local dev.
   devIndicators: false,
   // Ensure NEXT_PUBLIC_* from .env.local are embedded in the client bundle at build time.

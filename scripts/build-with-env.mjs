@@ -75,6 +75,7 @@ const buildEnv = {
   NODE_OPTIONS: `--max-old-space-size=${heapMb}`,
 };
 
+console.log(`[build-with-env] distDir=${process.env.NEXT_DIST_DIR || ".next"}`);
 console.log("[build-with-env] Building with Supabase URL:", url.slice(0, 40) + "…");
 console.log(`[build-with-env] NODE_OPTIONS=${buildEnv.NODE_OPTIONS}`);
 
