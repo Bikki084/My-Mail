@@ -1,7 +1,7 @@
 import nodemailer, { type Transporter, type TransportOptions } from "nodemailer";
 import { getDkimConfigFromEnv } from "@/lib/deliverability";
 import { parsePositiveIntEnv } from "@/lib/async-pool";
-import { isSesSmtpHost, isBrevoSmtpHost } from "@/lib/smtp/from-address";
+import { isSesSmtpHost, isBrevoSmtpHost, isZohoSmtpHost } from "@/lib/smtp/from-address";
 import { buildSmtpEgressGetSocket, shouldApplySmtpEgress } from "@/lib/smtp-egress-proxy";
 
 /** Loopback relays (e.g. Postfix on the same VPS as the app). */
@@ -65,7 +65,7 @@ export function buildSmtpUserTransport(v: {
   const usesImplicitTls = resolveSmtpImplicitTls(v.host, v.port, v.secure);
   // SES (and most public relays) DKIM-sign on their side — skip in-process signing.
   const dkim =
-    isSesSmtpHost(v.host) || isBrevoSmtpHost(v.host) ? null : getDkimConfigFromEnv();
+    isSesSmtpHost(v.host) || isBrevoSmtpHost(v.host) || isZohoSmtpHost(v.host) ? null : getDkimConfigFromEnv();
   const rawEgressUrl = v.egressUrl?.trim() || null;
   const egressUrl =
     rawEgressUrl && shouldApplySmtpEgress(v.host, rawEgressUrl) ? rawEgressUrl : null;

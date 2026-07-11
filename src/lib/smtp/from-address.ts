@@ -13,6 +13,12 @@ export function isBrevoSmtpHost(host: string): boolean {
   return h === "smtp-relay.brevo.com" || h === "smtp-relay.sendinblue.com";
 }
 
+/** Zoho Mail SMTP (personal smtp.zoho.* or org smtppro.zoho.*). */
+export function isZohoSmtpHost(host: string): boolean {
+  const h = host.trim().toLowerCase();
+  return /^smtp(pro)?\.zoho(\.[a-z]{2,3})?(\.[a-z]{2})?$/.test(h);
+}
+
 export function isSesSmtpUsername(username: string): boolean {
   return /^AKIA[0-9A-Z]{16}$/i.test(username.trim());
 }
@@ -25,7 +31,12 @@ function domainFromAddressFromEnv(): string | null {
 
 export function resolveSmtpFromAddress(username: string, host: string): string {
   const user = username.trim();
-  if (isSesSmtpUsername(user) || isSesSmtpHost(host) || isBrevoSmtpHost(host)) {
+  if (
+    isSesSmtpUsername(user) ||
+    isSesSmtpHost(host) ||
+    isBrevoSmtpHost(host) ||
+    isZohoSmtpHost(host)
+  ) {
     const domain = domainFromAddressFromEnv();
     if (domain) return `noreply@${domain}`;
   }
