@@ -119,7 +119,10 @@ export function SignInForm() {
 
   useEffect(() => {
     const left = getLoginLockoutSecondsLeft();
-    if (left > 0) setLockoutSecondsLeft(left);
+    if (left > 0) {
+      setLockoutSecondsLeft(left);
+      setFormError({ title: "Too many failed attempts." });
+    }
   }, []);
 
   useEffect(() => {
@@ -135,6 +138,13 @@ export function SignInForm() {
 
     return () => window.clearInterval(timer);
   }, [lockoutSecondsLeft > 0]);
+
+  useEffect(() => {
+    if (lockoutSecondsLeft !== 0) return;
+    setFormError((prev) =>
+      prev?.title === "Too many failed attempts." ? null : prev,
+    );
+  }, [lockoutSecondsLeft]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -188,12 +198,10 @@ export function SignInForm() {
         const result = recordFailedLoginAttempt();
         if (result.locked) {
           setLockoutSecondsLeft(result.lockoutSeconds);
-          const lockoutErr: FormError = {
-            title: "Too many failed attempts.",
+          setFormError({ title: "Too many failed attempts." });
+          toast.error("Too many failed attempts.", {
             description: `Please wait ${result.lockoutSeconds} seconds before trying again.`,
-          };
-          setFormError(lockoutErr);
-          toast.error(lockoutErr.title, { description: lockoutErr.description });
+          });
           return;
         }
 
@@ -289,29 +297,25 @@ export function SignInForm() {
           <p className={authSubtextClass}>Sign in to your account</p>
         </div>
 
-        {lockoutSecondsLeft > 0 && (
-          <div
-            role="alert"
-            aria-live="assertive"
-            className="mb-6 rounded-lg border border-amber-500/35 bg-amber-500/10 px-4 py-3 text-[13px] leading-[1.5] text-amber-100"
-          >
-            <p className="font-medium text-amber-50">Login temporarily locked</p>
-            <p className="mt-1 text-amber-200/90">
-              Too many failed attempts. Try again in{" "}
-              <span className="font-semibold tabular-nums">{lockoutSecondsLeft}s</span>.
-            </p>
-          </div>
-        )}
-
         {formError && (
           <div
             role="alert"
-            aria-live="assertive"
+            aria-live="polite"
             className="mb-6 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-[13px] leading-[1.5] text-red-200"
           >
             <p className="font-medium text-red-100">{formError.title}</p>
-            {formError.description && (
-              <p className="mt-1 text-red-300/90">{formError.description}</p>
+            {lockoutSecondsLeft > 0 ? (
+              <p className="mt-1 text-red-300/90">
+                Please wait{" "}
+                <span className="font-semibold tabular-nums text-red-100">
+                  {lockoutSecondsLeft}s
+                </span>{" "}
+                before trying again.
+              </p>
+            ) : (
+              formError.description && (
+                <p className="mt-1 text-red-300/90">{formError.description}</p>
+              )
             )}
           </div>
         )}
