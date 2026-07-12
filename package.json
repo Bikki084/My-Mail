@@ -23,6 +23,7 @@
     "site:recover": "bash scripts/recover-site.sh",
     "site:deploy": "bash scripts/deploy-production.sh",
     "site:restart-web": "bash scripts/restart-web.sh",
+    "site:setup-https": "sudo bash scripts/setup-https.sh",
     "pm2:fix-web": "bash scripts/pm2-fix-web.sh",
     "stack:ensure": "bash scripts/ensure-email-stack.sh",
     "vps:swap": "bash scripts/ensure-swap.sh",

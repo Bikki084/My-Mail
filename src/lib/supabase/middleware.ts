@@ -15,6 +15,28 @@ function applyNoStoreHeaders(response: NextResponse): NextResponse {
 export async function updateSession(request: NextRequest) {
   const path = request.nextUrl.pathname;
 
+  if (process.env.NODE_ENV === "production") {
+    const host = (request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? "")
+      .split(",")[0]
+      ?.trim()
+      .toLowerCase();
+    const proto = (request.headers.get("x-forwarded-proto") ?? request.nextUrl.protocol.replace(":", ""))
+      .split(",")[0]
+      ?.trim()
+      .toLowerCase();
+    const isLocal =
+      !host ||
+      host.startsWith("localhost") ||
+      host.startsWith("127.0.0.1") ||
+      host.includes(":");
+
+    if (!isLocal && proto === "http") {
+      const url = request.nextUrl.clone();
+      url.protocol = "https:";
+      return NextResponse.redirect(url, 308);
+    }
+  }
+
   // Dev UI preview for /client when Supabase env vars are not yet configured.
   if (path.startsWith("/client") && isClientDashboardPreviewMode()) {
     return NextResponse.next({ request });

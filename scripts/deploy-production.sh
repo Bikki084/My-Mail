@@ -123,4 +123,5 @@ echo ""
 pm2 status
 echo ""
 echo "=== Deploy complete — https://bulkfirepro.com ==="
+echo "If browser shows http only, run once: sudo bash scripts/setup-https.sh"
 echo ""
