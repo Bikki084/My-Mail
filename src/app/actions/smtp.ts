@@ -126,6 +126,51 @@ function buildTransportOptions(v: ValidatedSmtpInput): TransportOptions {
   } as TransportOptions;
 }
 
+/** Shorter timeouts for UI "Test SMTP" — avoids 30–45s hangs on slow relays. */
+function buildSmtpTestTransportOptions(v: ValidatedSmtpInput): TransportOptions {
+  const usesImplicitTls = resolveSmtpImplicitTls(v.host, v.port, v.secure);
+  const authUser = v.username;
+  const authPass = v.password;
+  return {
+    host: v.host,
+    port: v.port,
+    secure: usesImplicitTls,
+    pool: false,
+    family: 4,
+    ...(isLocalSmtpHost(v.host)
+      ? smtpAuthOptions(v.host, authUser, authPass)
+      : { auth: { user: authUser, pass: authPass } }),
+    connectionTimeout: 6_000,
+    greetingTimeout: 5_000,
+    socketTimeout: 8_000,
+    ...smtpConnectionExtras(v.host, v.port),
+  } as TransportOptions;
+}
+
+const SMTP_TEST_VERIFY_DEADLINE_MS = 12_000;
+const SMTP_TEST_SEND_DEADLINE_MS = 20_000;
+
+async function withSmtpTestDeadline<T>(
+  work: Promise<T>,
+  ms = SMTP_TEST_VERIFY_DEADLINE_MS,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(
+        Object.assign(new Error(`SMTP test timed out after ${Math.round(ms / 1000)} seconds.`), {
+          code: "ETIMEDOUT",
+        }),
+      );
+    }, ms);
+  });
+  try {
+    return await Promise.race([work, deadline]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function friendlySmtpError(err: unknown, hostHint?: string): string {
   if (err instanceof SmtpSecretConfigError) return err.message;
   const e = err as { code?: string; responseCode?: number; response?: string; message?: string };
@@ -150,8 +195,10 @@ function friendlySmtpError(err: unknown, hostHint?: string): string {
     const localHint =
       host === "127.0.0.1" || host === "localhost"
         ? " For 127.0.0.1:25, install and start Postfix on this server (sudo systemctl status postfix)."
-        : "";
-    return `Could not reach ${host} — connection timed out. Check host, port, and that outbound SMTP isn't blocked (${msg}).${localHint}`;
+        : host.includes("brevo.com")
+          ? " For Brevo: confirm your server IP is in Brevo → SMTP & API → Authorized IPs, then retry."
+          : "";
+    return `Could not reach ${host} — connection timed out. Check host, port, firewall, and authorized IPs (${msg}).${localHint}`;
   }
   if (code === "ECONNECTION" || code === "ECONNREFUSED") {
     const localHint =
@@ -254,8 +301,8 @@ export async function testSmtpConnection(
   if (typeof v === "string") return { ok: false, error: v };
 
   try {
-    const transporter = nodemailer.createTransport(buildTransportOptions(v));
-    await transporter.verify();
+    const transporter = nodemailer.createTransport(buildSmtpTestTransportOptions(v));
+    await withSmtpTestDeadline(transporter.verify());
     transporter.close();
     return { ok: true, data: { verified: true } };
   } catch (err) {
@@ -292,17 +339,20 @@ export async function sendSmtpTestEmail(
   }
 
   try {
-    const transporter = nodemailer.createTransport(buildTransportOptions(v));
+    const transporter = nodemailer.createTransport(buildSmtpTestTransportOptions(v));
     const fromAddr = resolveSmtpFromAddress(v.username, v.host);
-    const info = await transporter.sendMail({
-      from: `"${APP_BRAND_NAME} Test" <${fromAddr}>`,
-      to,
-      subject: `${APP_BRAND_NAME} SMTP test`,
-      text:
-        `This is a test email sent from the ${APP_BRAND_NAME} SMTP configuration page.\n\n` +
-        `Host: ${v.host}\nPort: ${v.port}\nUsername: ${v.username}\n\n` +
-        `If you received this, your SMTP is working. You can now use it to send campaigns.`,
-    });
+    const info = await withSmtpTestDeadline(
+      transporter.sendMail({
+        from: `"${APP_BRAND_NAME} Test" <${fromAddr}>`,
+        to,
+        subject: `${APP_BRAND_NAME} SMTP test`,
+        text:
+          `This is a test email sent from the ${APP_BRAND_NAME} SMTP configuration page.\n\n` +
+          `Host: ${v.host}\nPort: ${v.port}\nUsername: ${v.username}\n\n` +
+          `If you received this, your SMTP is working. You can now use it to send campaigns.`,
+      }),
+      SMTP_TEST_SEND_DEADLINE_MS,
+    );
     transporter.close();
     return {
       ok: true,

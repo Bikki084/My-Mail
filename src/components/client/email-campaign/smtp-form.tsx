@@ -1097,7 +1097,7 @@ export function SmtpForm({
               disabled={testing || saving || sendingTest}
             >
               {testing && <Loader2 className="mr-2 size-4 animate-spin" />}
-              Test SMTP
+              {testing ? "Testing… (up to 12s)" : "Test SMTP"}
             </Button>
             <Button
               type="button"
