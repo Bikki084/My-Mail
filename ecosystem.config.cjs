@@ -16,6 +16,7 @@ module.exports = {
       interpreter: "node",
       env: {
         NODE_ENV: "production",
+        NEXT_DIST_DIR: "",
         EMAIL_CAMPAIGN_CONCURRENCY: "6",
         EMAIL_WORKER_CONCURRENCY: "6",
         GLOBAL_SMTP_CONCURRENCY: "36",
