@@ -21,6 +21,7 @@
     "db:essential": "tsx scripts/apply-essential-sql.ts",
     "lightsail:ensure-primary": "tsx scripts/ensure-lightsail-primary.ts",
     "site:recover": "bash scripts/recover-site.sh",
+    "site:fix-502": "bash scripts/fix-502.sh",
     "site:deploy": "bash scripts/deploy-production.sh",
     "site:restart-web": "bash scripts/restart-web.sh",
     "site:setup-https": "sudo bash scripts/setup-https.sh",
