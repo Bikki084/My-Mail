@@ -86,5 +86,5 @@ export function recordFailedLoginAttempt(
 }
 
 export function failedAttemptLabel(attemptNumber: number): string {
-  return `${attemptNumber}/${LOGIN_MAX_ATTEMPTS}`;
+  return `Attempts left: ${attemptNumber}/${LOGIN_MAX_ATTEMPTS}`;
 }
