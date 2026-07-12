@@ -1,8 +1,15 @@
 import type { NextConfig } from "next";
 
+/** Staging dir only during `next build` — runtime `next start` must always use `.next`. */
+function resolveDistDir(): string {
+  const staging = process.env.NEXT_DIST_DIR?.trim();
+  if (!staging || staging === ".next") return ".next";
+  if (process.env.NEXT_PHASE === "phase-production-build") return staging;
+  return ".next";
+}
+
 const nextConfig: NextConfig = {
-  // Staging builds use NEXT_DIST_DIR=.next-staging so production can keep serving .next during deploy.
-  distDir: process.env.NEXT_DIST_DIR || ".next",
+  distDir: resolveDistDir(),
   // Hide the Next.js route/bundler dev badge (bottom-left "N" panel) during local dev.
   devIndicators: false,
   // Ensure NEXT_PUBLIC_* from .env.local are embedded in the client bundle at build time.
@@ -19,9 +26,6 @@ const nextConfig: NextConfig = {
   // On small Lightsail VPS, set SKIP_NEXT_TYPECHECK=1 during `npm run build:prod` to avoid OOM.
   typescript: {
     ignoreBuildErrors: process.env.SKIP_NEXT_TYPECHECK === "1",
-  },
-  eslint: {
-    ignoreDuringBuilds: process.env.SKIP_NEXT_LINT === "1",
   },
   // Larger JSON bodies for /api/campaigns with small PDF attachments (base64)
   experimental: {

@@ -12,6 +12,9 @@ const { applyPendingMigrations } = require("./lib/migrate-runner.cjs");
 
 loadProjectEnv();
 
+// Never let a deploy-time staging dir leak into `next start` (causes 502 / missing BUILD_ID).
+delete process.env.NEXT_DIST_DIR;
+
 const BUILD_ID = join(process.cwd(), ".next", "BUILD_ID");
 const NEXT_BIN = join(process.cwd(), "node_modules", "next", "dist", "bin", "next");
 

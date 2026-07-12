@@ -68,6 +68,9 @@ if [[ -d .next ]]; then
 fi
 mv "${STAGING_DIR}" .next
 
+unset NEXT_DIST_DIR
+export NEXT_DIST_DIR=
+
 echo ""
 echo "5) Reload PM2 (graceful — only a few seconds of downtime)..."
 if pm2 describe "${APP_WEB}" >/dev/null 2>&1; then

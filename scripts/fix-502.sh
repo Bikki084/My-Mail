@@ -13,6 +13,12 @@ if [[ ! -f .env.local ]]; then
   exit 1
 fi
 
+# Staging dir must never be used at runtime (causes "Could not find .next-staging").
+if grep -q '^NEXT_DIST_DIR=' .env.local 2>/dev/null; then
+  echo "WARN: Removing NEXT_DIST_DIR from .env.local (deploy-only var)..."
+  sed -i.bak '/^NEXT_DIST_DIR=/d' .env.local
+fi
+
 if ! command -v pm2 >/dev/null 2>&1; then
   echo "ERROR: pm2 not installed. Run: npm i -g pm2"
   exit 1
