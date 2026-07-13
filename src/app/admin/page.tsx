@@ -1,13 +1,18 @@
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { BrevoQuotaPanel } from "@/components/admin/brevo-quota-panel";
+import { UserEmailsTodayCards } from "@/components/admin/user-emails-today-cards";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getBrevoQuotaForAdmin } from "@/app/admin/brevo-quota-actions";
-import { getDashboardStats } from "./actions";
+import { getDashboardStats, getPerUserEmailsToday } from "./actions";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminDashboardPage() {
-  const [s, brevo] = await Promise.all([getDashboardStats(), getBrevoQuotaForAdmin()]);
+  const [s, brevo, perUser] = await Promise.all([
+    getDashboardStats(),
+    getBrevoQuotaForAdmin(),
+    getPerUserEmailsToday(),
+  ]);
   return (
     <>
       <AdminPageHeader
@@ -59,6 +64,11 @@ export default async function AdminDashboardPage() {
 
       <div className="mt-6">
         <BrevoQuotaPanel initial={brevo} />
+      </div>
+
+      <div className="mt-6">
+        <h2 className="mb-3 text-sm font-medium text-gray-400">Emails sent today by client</h2>
+        <UserEmailsTodayCards rows={perUser.rows} live={perUser.live} />
       </div>
     </>
   );

@@ -12,6 +12,13 @@ export type AdminDashboardStats = {
   live: boolean;
 };
 
+export type UserEmailsTodayRow = {
+  userId: string;
+  displayName: string;
+  email: string;
+  emailsSent: number;
+};
+
 const EMPTY_STATS: AdminDashboardStats = {
   clientAccounts: 0,
   activeCampaigns: 0,
@@ -73,4 +80,57 @@ export async function getDashboardStats(): Promise<AdminDashboardStats> {
     creditsIssuedMonth,
     live: true,
   };
+}
+
+export async function getPerUserEmailsToday(): Promise<{
+  rows: UserEmailsTodayRow[];
+  live: boolean;
+}> {
+  if (!isSupabaseAuthConfigured()) {
+    return { rows: [], live: false };
+  }
+
+  const supabase = await createServerSupabase();
+  const todayIso = startOfTodayIso();
+
+  const { data: profiles, error: profileErr } = await supabase
+    .from("profiles")
+    .select("id, email, full_name")
+    .eq("role", "client")
+    .order("created_at", { ascending: true });
+
+  if (profileErr || !profiles?.length) {
+    return { rows: [], live: !profileErr };
+  }
+
+  const clientIds = profiles.map((p) => p.id);
+  const { data: logs, error: logsErr } = await supabase
+    .from("sending_logs")
+    .select("user_id")
+    .in("user_id", clientIds)
+    .eq("status", "sent")
+    .gte("sent_at", todayIso);
+
+  if (logsErr) {
+    return { rows: [], live: false };
+  }
+
+  const counts = new Map<string, number>();
+  for (const row of logs ?? []) {
+    counts.set(row.user_id, (counts.get(row.user_id) ?? 0) + 1);
+  }
+
+  const rows: UserEmailsTodayRow[] = profiles
+    .map((p) => ({
+      userId: p.id,
+      displayName: p.full_name?.trim() || p.email,
+      email: p.email,
+      emailsSent: counts.get(p.id) ?? 0,
+    }))
+    .sort((a, b) => {
+      if (b.emailsSent !== a.emailsSent) return b.emailsSent - a.emailsSent;
+      return a.displayName.localeCompare(b.displayName);
+    });
+
+  return { rows, live: true };
 }
