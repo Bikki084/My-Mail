@@ -1,11 +1,10 @@
 import type { NextConfig } from "next";
 
-/** Staging dir only during `next build` — runtime `next start` must always use `.next`. */
+/** Honor NEXT_DIST_DIR during `next build` (deploy script). Runtime clears it before `next start`. */
 function resolveDistDir(): string {
   const staging = process.env.NEXT_DIST_DIR?.trim();
   if (!staging || staging === ".next") return ".next";
-  if (process.env.NEXT_PHASE === "phase-production-build") return staging;
-  return ".next";
+  return staging;
 }
 
 const nextConfig: NextConfig = {

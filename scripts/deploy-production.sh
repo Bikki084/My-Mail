@@ -21,6 +21,11 @@ if [[ ! -f .env.local ]]; then
   exit 1
 fi
 
+if grep -q '^NEXT_DIST_DIR=' .env.local 2>/dev/null; then
+  echo "WARN: Removing NEXT_DIST_DIR from .env.local (deploy-only; must not persist at runtime)..."
+  sed -i.bak '/^NEXT_DIST_DIR=/d' .env.local
+fi
+
 if ! command -v pm2 >/dev/null 2>&1; then
   echo "ERROR: pm2 not found. Install: npm i -g pm2"
   exit 1
@@ -56,6 +61,10 @@ fi
 
 if [[ ! -f "${STAGING_DIR}/BUILD_ID" ]]; then
   echo "ERROR: ${STAGING_DIR}/BUILD_ID missing after build"
+  if [[ -f .next/BUILD_ID ]]; then
+    echo "       Build output landed in .next instead (NEXT_DIST_DIR not applied)."
+    echo "       Run: git pull && bash scripts/deploy-production.sh again after updating next.config.ts"
+  fi
   rm -rf "${STAGING_DIR}"
   exit 1
 fi
