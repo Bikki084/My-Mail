@@ -1,16 +1,18 @@
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
+import { BrevoQuotaPanel } from "@/components/admin/brevo-quota-panel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { getBrevoQuotaForAdmin } from "@/app/admin/brevo-quota-actions";
 import { getDashboardStats } from "./actions";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminDashboardPage() {
-  const s = await getDashboardStats();
+  const [s, brevo] = await Promise.all([getDashboardStats(), getBrevoQuotaForAdmin()]);
   return (
     <>
       <AdminPageHeader
         title="Dashboard"
-        description="Overview of tenants, sending activity, and credits."
+        description="Overview of tenants, sending activity, credits, and Brevo relay quota."
       />
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card className="border-gray-800 bg-[#111827]">
@@ -53,6 +55,10 @@ export default async function AdminDashboardPage() {
             </p>
           </CardContent>
         </Card>
+      </div>
+
+      <div className="mt-6">
+        <BrevoQuotaPanel initial={brevo} />
       </div>
     </>
   );
