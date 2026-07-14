@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { getSecurityHeaders } from "./src/lib/security-headers";
 
 /** Honor NEXT_DIST_DIR during `next build` (deploy script). Runtime clears it before `next start`. */
 function resolveDistDir(): string {
@@ -33,6 +34,17 @@ const nextConfig: NextConfig = {
     },
     // Multipart (PDF uploads) and large JSON fallbacks
     proxyClientMaxBodySize: "32mb",
+  },
+  async headers() {
+    const securityHeaders = getSecurityHeaders({
+      production: process.env.NODE_ENV === "production",
+    });
+    return [
+      {
+        source: "/:path*",
+        headers: securityHeaders,
+      },
+    ];
   },
 };
 
