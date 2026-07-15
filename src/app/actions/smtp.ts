@@ -25,6 +25,8 @@ import {
   type SmtpPlanCapacity,
 } from "@/lib/smtp-plan-limit";
 import { parseStrict, smtpFormSchema, type ValidatedSmtpInput } from "@/lib/validation";
+import { chunkArray, DEFAULT_BATCH_CHUNK_SIZE } from "@/lib/db/batch-writes";
+import { parsePositiveIntEnv } from "@/lib/async-pool";
 
 export type ActionResult<T = undefined> =
   | { ok: true; data?: T }
@@ -497,7 +499,6 @@ export async function importBulkSmtpServers(
   const supabase = await createServerSupabase();
 
   const planCap = await getSmtpPlanCapacity(supabase, guard.userId);
-  let slotCount = planCap.current;
 
   const { data: existingRows } = await supabase
     .from("smtp_servers")
@@ -532,6 +533,24 @@ export async function importBulkSmtpServers(
   let imported = 0;
   const insertedIds: string[] = [];
 
+  type PendingSmtpInsert = {
+    index: number;
+    identityKey: string;
+    payload: {
+      user_id: string;
+      label: string;
+      provider: ValidatedSmtpInput["provider"];
+      host: string;
+      port: number;
+      username: string;
+      password_enc: string;
+      secure: boolean;
+      rotation_order: number;
+    };
+  };
+
+  const pending: PendingSmtpInsert[] = [];
+
   for (let i = 0; i < inputs.length; i++) {
     const raw = inputs[i];
     const v = validateSmtpInput(raw);
@@ -558,7 +577,7 @@ export async function importBulkSmtpServers(
       continue;
     }
 
-    if (planCap.limit !== null && slotCount >= planCap.limit) {
+    if (planCap.limit !== null && planCap.current + pending.length >= planCap.limit) {
       failed.push({
         index: i,
         error: `Plan allows ${planCap.limit} SMTP server(s). Remove saved servers or upgrade your plan.`,
@@ -574,41 +593,74 @@ export async function importBulkSmtpServers(
       continue;
     }
 
-    const payload = {
-      user_id: guard.userId,
-      label: v.label ?? `${v.provider} — ${v.username}`,
-      provider: v.provider,
-      host: v.host,
-      port: v.port,
-      username: v.username,
-      password_enc,
-      secure: v.secure,
-      rotation_order: nextOrder++,
-    };
+    pending.push({
+      index: i,
+      identityKey,
+      payload: {
+        user_id: guard.userId,
+        label: v.label ?? `${v.provider} — ${v.username}`,
+        provider: v.provider,
+        host: v.host,
+        port: v.port,
+        username: v.username,
+        password_enc,
+        secure: v.secure,
+        rotation_order: nextOrder++,
+      },
+    });
+  }
 
+  const insertChunkSize = parsePositiveIntEnv(
+    "SMTP_BULK_INSERT_CHUNK",
+    DEFAULT_BATCH_CHUNK_SIZE,
+  );
+
+  async function insertOnePending(row: PendingSmtpInsert): Promise<void> {
     const { data: insRow, error } = await supabase
       .from("smtp_servers")
-      .insert(payload)
+      .insert(row.payload)
       .select("id")
       .single();
     if (error) {
       if (isUniqueViolation(error as { code?: string })) {
         skippedDuplicates.push({
-          index: i,
+          index: row.index,
           reason: DUPLICATE_SMTP_MESSAGE,
         });
-        existingKeys.add(identityKey);
+        existingKeys.add(row.identityKey);
       } else {
-        failed.push({ index: i, error: error.message });
+        failed.push({ index: row.index, error: error.message });
       }
-      continue;
+      return;
     }
     if (insRow?.id && typeof insRow.id === "string") {
       insertedIds.push(insRow.id);
     }
-    existingKeys.add(identityKey);
+    existingKeys.add(row.identityKey);
     imported += 1;
-    slotCount += 1;
+  }
+
+  for (const chunk of chunkArray(pending, insertChunkSize)) {
+    const { data, error } = await supabase
+      .from("smtp_servers")
+      .insert(chunk.map((row) => row.payload))
+      .select("id");
+
+    if (!error && data) {
+      for (let j = 0; j < data.length; j++) {
+        const id = data[j]?.id;
+        if (typeof id === "string") {
+          insertedIds.push(id);
+        }
+        existingKeys.add(chunk[j]!.identityKey);
+        imported += 1;
+      }
+      continue;
+    }
+
+    for (const row of chunk) {
+      await insertOnePending(row);
+    }
   }
 
   revalidatePath("/client");

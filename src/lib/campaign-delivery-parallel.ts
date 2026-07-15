@@ -41,6 +41,7 @@ import {
   extractAddress,
 } from "@/lib/deliverability";
 import { partitionRecipientsBySmtp } from "@/lib/smtp-distribution";
+import { SendingLogBatcher, type SendingLogInsert } from "@/lib/db/batch-writes";
 
 type SmtpRow = {
   id: string;
@@ -84,16 +85,6 @@ function friendlyErr(err: unknown): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function insertSendingLog(
-  supabase: SupabaseClient,
-  row: Record<string, unknown>,
-): Promise<void> {
-  const { error } = await supabase.from("sending_logs").insert(row);
-  if (error) {
-    console.warn(`[campaign-delivery] sending_logs insert failed: ${error.message}`);
-  }
 }
 
 async function loadAlreadySentEmails(
@@ -214,6 +205,7 @@ export async function deliverCampaignInParallel(
 
   const withRotationLock = createAsyncMutex();
   const withStatsLock = createAsyncMutex();
+  const sendingLogBatcher = new SendingLogBatcher(supabase);
   const renderSemaphore =
     renderBrowser && htmlAttSpec ? createRenderSemaphore() : null;
   const alreadySent = await loadAlreadySentEmails(supabase, campaignId);
@@ -253,6 +245,7 @@ export async function deliverCampaignInParallel(
     const now = Date.now();
     if (!force && now - shared.lastProgressFlushAt < 400) return;
     shared.lastProgressFlushAt = now;
+    await sendingLogBatcher.flush();
     await supabase
       .from("campaigns")
       .update({
@@ -291,12 +284,7 @@ export async function deliverCampaignInParallel(
       if (shared.sentInBurst < shared.rotationThreshold) return;
       if (shared.pausedForRotation) return;
 
-      const { count } = await supabase
-        .from("sending_logs")
-        .select("id", { count: "exact", head: true })
-        .eq("campaign_id", campaignId);
-      const logged = count ?? 0;
-      const remaining = shared.recipientsTotal - logged;
+      const remaining = shared.recipientsTotal - shared.alreadySent.size;
       if (remaining <= 0) return;
 
       if (manualIpRotationPause) {
@@ -380,12 +368,13 @@ export async function deliverCampaignInParallel(
       pass = decryptSmtpPassword(smtp.password_enc);
     } catch (e) {
       const errMsg = `SMTP password decrypt: ${friendlyErr(e)}`.slice(0, 2000);
+      const failureLogs: SendingLogInsert[] = [];
       for (const { recipient } of queue) {
         const emailKey = recipient.email.trim().toLowerCase();
         if (shared.alreadySent.has(emailKey)) continue;
         shared.alreadySent.add(emailKey);
         await recordFailedSend();
-        await insertSendingLog(supabase, {
+        failureLogs.push({
           campaign_id: campaignId,
           user_id: userId,
           recipient_email: recipient.email,
@@ -394,6 +383,9 @@ export async function deliverCampaignInParallel(
           error_message: errMsg,
         });
         shared.liveFailed += 1;
+      }
+      if (failureLogs.length > 0) {
+        await sendingLogBatcher.pushMany(failureLogs);
         void flushCampaignProgress();
       }
       return;
@@ -442,7 +434,7 @@ export async function deliverCampaignInParallel(
       if (suppressed.has(emailKey)) {
         shared.alreadySent.add(emailKey);
         await recordFailedSend();
-        await insertSendingLog(supabase, {
+        await sendingLogBatcher.push({
           campaign_id: campaignId,
           user_id: userId,
           recipient_email: recipient.email,
@@ -576,7 +568,7 @@ export async function deliverCampaignInParallel(
 
         shared.alreadySent.add(emailKey);
         const sentAt = new Date().toISOString();
-        await insertSendingLog(supabase, {
+        await sendingLogBatcher.push({
           campaign_id: campaignId,
           user_id: userId,
           recipient_email: recipient.email,
@@ -596,7 +588,7 @@ export async function deliverCampaignInParallel(
       } catch (e) {
         shared.alreadySent.add(emailKey);
         await recordFailedSend();
-        await insertSendingLog(supabase, {
+        await sendingLogBatcher.push({
           campaign_id: campaignId,
           user_id: userId,
           recipient_email: recipient.email,
@@ -627,6 +619,7 @@ export async function deliverCampaignInParallel(
     smtpList.map((smtp, smtpIndex) => runSmtpWorker(smtpIndex, smtp)),
   );
 
+  await sendingLogBatcher.flush();
   await flushCampaignProgress(true);
 
   return {
