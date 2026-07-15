@@ -3,6 +3,11 @@
 import { revalidatePath } from "next/cache";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/admin";
+import {
+  parseStrict,
+  announcementCreateSchema,
+  announcementIdSchema,
+} from "@/lib/validation";
 
 export type ActionResult<T = undefined> =
   | { ok: true; data?: T }
@@ -44,9 +49,6 @@ export type AdminAnnouncementRow = {
   created_at: string;
 };
 
-const TITLE_MAX = 160;
-const BODY_MAX = 4000;
-
 export async function createAnnouncement(input: {
   title: string;
   body: string;
@@ -54,17 +56,9 @@ export async function createAnnouncement(input: {
   const guard = await assertAdmin();
   if (!guard.ok) return guard;
 
-  const title = input.title.trim();
-  const body = input.body.trim();
-
-  if (!title) return { ok: false, error: "Title is required." };
-  if (title.length > TITLE_MAX) {
-    return { ok: false, error: `Title must be ${TITLE_MAX} characters or fewer.` };
-  }
-  if (!body) return { ok: false, error: "Message is required." };
-  if (body.length > BODY_MAX) {
-    return { ok: false, error: `Message must be ${BODY_MAX} characters or fewer.` };
-  }
+  const parsed = parseStrict(announcementCreateSchema, input);
+  if (!parsed.ok) return { ok: false, error: parsed.error };
+  const { title, body } = parsed.data;
 
   const svc = getServiceClient();
   if (!svc.ok) return svc;
@@ -100,12 +94,13 @@ export async function deleteAnnouncement(id: string): Promise<ActionResult> {
   const guard = await assertAdmin();
   if (!guard.ok) return guard;
 
-  if (!id) return { ok: false, error: "Announcement id is required." };
+  const parsed = parseStrict(announcementIdSchema, { id });
+  if (!parsed.ok) return { ok: false, error: parsed.error };
 
   const svc = getServiceClient();
   if (!svc.ok) return svc;
 
-  const { error } = await svc.client.from("announcements").delete().eq("id", id);
+  const { error } = await svc.client.from("announcements").delete().eq("id", parsed.data.id);
   if (error) return { ok: false, error: error.message };
 
   revalidatePath("/admin/announcements");

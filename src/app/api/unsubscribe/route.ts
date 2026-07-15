@@ -20,6 +20,7 @@
  */
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/admin";
+import { emailField, parseStrict, unsubscribeQuerySchema } from "@/lib/validation";
 
 export const dynamic = "force-dynamic";
 
@@ -29,22 +30,29 @@ type Params = {
 };
 
 function parseParams(url: URL): Params {
-  const c = url.searchParams.get("c");
-  const r = url.searchParams.get("r");
+  const parsed = parseStrict(unsubscribeQuerySchema, {
+    c: url.searchParams.get("c"),
+    r: url.searchParams.get("r"),
+  });
+  if (!parsed.ok) {
+    return { campaignId: null, recipientEmail: null };
+  }
+
   let recipientEmail: string | null = null;
-  if (r) {
+  if (parsed.data.r) {
     try {
-      // base64url → utf-8. Reject if it doesn't look like an email after decode.
-      const decoded = Buffer.from(r, "base64url").toString("utf8").trim();
-      if (decoded.includes("@") && decoded.length <= 320) {
-        recipientEmail = decoded.toLowerCase();
+      const decoded = Buffer.from(parsed.data.r, "base64url").toString("utf8");
+      const emailParsed = emailField.safeParse(decoded);
+      if (emailParsed.success) {
+        recipientEmail = emailParsed.data;
       }
     } catch {
       recipientEmail = null;
     }
   }
+
   return {
-    campaignId: c && /^[0-9a-fA-F-]{16,40}$/.test(c) ? c : null,
+    campaignId: parsed.data.c ?? null,
     recipientEmail,
   };
 }

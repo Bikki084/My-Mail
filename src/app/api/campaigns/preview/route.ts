@@ -1,23 +1,10 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { buildCampaignStorageHtml } from "@/lib/campaign-email-body-build";
-import { MAX_CAMPAIGN_ATTACHMENTS } from "@/lib/campaign-multipart";
-
-const htmlAttachmentPayloadSchema = z.object({
-  kind: z.enum(["pdf", "png", "jpeg", "pdf_image"]),
-  html: z.string().max(500_000),
-});
-
-const previewPayloadSchema = z.object({
-  subject: z.union([z.string(), z.null()]).optional(),
-  sender_name: z.union([z.string(), z.null()]).optional(),
-  body_html: z.union([z.string(), z.null()]).optional(),
-  encoding: z.string().optional(),
-  preview_to: z.union([z.string(), z.null()]).optional(),
-  attachment_names: z.array(z.string()).max(MAX_CAMPAIGN_ATTACHMENTS).optional(),
-  html_attachment: htmlAttachmentPayloadSchema.optional().nullable(),
-});
+import {
+  campaignPreviewPayloadSchema,
+  formatZodError,
+} from "@/lib/validation";
 
 export async function POST(req: Request) {
   const supabase = await createClient();
@@ -58,9 +45,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Invalid JSON in "payload".' }, { status: 400 });
   }
 
-  const parsed = previewPayloadSchema.safeParse(meta);
+  const parsed = campaignPreviewPayloadSchema.safeParse(meta);
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+    return NextResponse.json({ error: formatZodError(parsed.error) }, { status: 400 });
   }
 
   const built = await buildCampaignStorageHtml({
@@ -70,7 +57,7 @@ export async function POST(req: Request) {
   const previewToRaw = (parsed.data.preview_to ?? "").trim();
   const previewTo =
     previewToRaw && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(previewToRaw)
-      ? previewToRaw
+      ? previewToRaw.toLowerCase()
       : "john@example.com";
 
   const names = [...(parsed.data.attachment_names ?? [])];

@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import type { RecipientRow } from "@/lib/merge-tags";
 import { htmlToPlainText } from "@/lib/html-email";
@@ -10,59 +9,15 @@ import {
   normalizedAttachmentsFromMultipart,
 } from "@/lib/campaign-multipart";
 import { requireActivePlanForMailOrJson } from "@/lib/active-plan-guard";
+import {
+  campaignCreateBodySchema,
+  campaignFieldsSchema,
+  formatZodError,
+  htmlAttachmentPayloadSchema,
+} from "@/lib/validation";
+import type { z } from "zod";
 
 const MAX_ATTACHMENTS = MAX_CAMPAIGN_ATTACHMENTS;
-
-const attachmentItemSchema = z.object({
-  filename: z.string().min(1).max(200),
-  /** Base64 of file bytes (not data- URL). */
-  contentBase64: z.string().min(1).max(4_000_000),
-});
-
-const htmlAttachmentPayloadSchema = z.object({
-  kind: z.enum(["pdf", "png", "jpeg", "pdf_image"]),
-  html: z.string().max(500_000),
-});
-
-const campaignFieldsSchema = z.object({
-  stream_name: z.string().min(1),
-  subject: z.union([z.string(), z.null()]).optional(),
-  sender_name: z.union([z.string(), z.null()]).optional(),
-  body_html: z.union([z.string(), z.null()]).optional(),
-  /**
-   * Accepted for backward compatibility but IGNORED — the server always regenerates
-   * plain text from the HTML using html-to-text to guarantee the two parts stay in sync.
-   */
-  body_text: z.union([z.string(), z.null()]).optional(),
-  /** User-facing (`auto`, …) or legacy MIME tokens; coerced server-side. */
-  encoding: z.string().optional(),
-  smtp_server_ids: z.array(z.string().uuid()).optional(),
-  rotation_strategy: z
-    .enum(["round_robin", "random", "threshold", "alternating"])
-    .optional(),
-  /** Rendered to PDF or PNG per recipient at send time. */
-  html_attachment: htmlAttachmentPayloadSchema.optional().nullable(),
-  recipients: z.array(
-    z.object({
-      email: z.string().email(),
-      name: z.string().optional(),
-      c3: z.string().optional(),
-      c4: z.string().optional(),
-      c5: z.string().optional(),
-      c6: z.string().optional(),
-      /**
-       * Arbitrary CSV columns surfaced as merge tags. Capped per row so a
-       * pathological upload can't blow up the JSON payload.
-       */
-      fields: z.record(z.string().min(1).max(100), z.string().max(2000)).optional(),
-    }),
-  ),
-});
-
-const bodySchema = campaignFieldsSchema.extend({
-  /** Inline small files: stored in `attachment_paths` until send completes. */
-  attachments: z.array(attachmentItemSchema).max(MAX_ATTACHMENTS).optional(),
-});
 
 function normalizeHtmlAttachment(
   raw: z.infer<typeof htmlAttachmentPayloadSchema> | null | undefined,
@@ -139,7 +94,7 @@ export async function POST(req: Request) {
     }
     const parsed = campaignFieldsSchema.safeParse(meta);
     if (!parsed.success) {
-      return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+      return NextResponse.json({ error: formatZodError(parsed.error) }, { status: 400 });
     }
     const expRaw = req.headers.get("x-mymail-expected-files");
     const nParsed = parseInt(String(expRaw ?? "0"), 10);
@@ -157,19 +112,16 @@ export async function POST(req: Request) {
     rest = r;
   } else {
     const json = await req.json().catch(() => null);
-    const parsed = bodySchema.safeParse(json);
+    const parsed = campaignCreateBodySchema.safeParse(json);
     if (!parsed.success) {
-      return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+      return NextResponse.json({ error: formatZodError(parsed.error) }, { status: 400 });
     }
     const p = parsed.data;
     const { recipients, smtp_server_ids: smtp, attachments, ...r } = p;
     row = recipients;
     smtp_server_ids = smtp;
     rest = r;
-    normalizedAttachments = (attachments ?? []).map((a) => ({
-      filename: a.filename,
-      contentBase64: a.contentBase64.replace(/\s/g, ""),
-    }));
+    normalizedAttachments = attachments ?? [];
   }
 
   const encPersist = coerceEncodingInput(rest.encoding ?? "auto");

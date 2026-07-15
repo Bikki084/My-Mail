@@ -24,6 +24,7 @@ import {
   getSmtpPlanCapacity,
   type SmtpPlanCapacity,
 } from "@/lib/smtp-plan-limit";
+import { parseStrict, smtpFormSchema, type ValidatedSmtpInput } from "@/lib/validation";
 
 export type ActionResult<T = undefined> =
   | { ok: true; data?: T }
@@ -45,65 +46,14 @@ export type SmtpFormInput = {
   rotationOrder?: number | null;
 };
 
-const HOST_RE = /^[a-z0-9.-]+\.[a-z]{2,}$/i;
-const IP_V4 =
-  /^(?:(?:25[0-5]|2[0-4]\d|[01]?\d{1,2})\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d{1,2})$/;
-
-function isValidSmtpHost(host: string): boolean {
-  if (host === "localhost") return true;
-  if (IP_V4.test(host)) return true;
-  return HOST_RE.test(host);
-}
-
-type ValidatedSmtpInput = {
-  host: string;
-  port: number;
-  secure: boolean;
-  username: string;
-  password: string;
-  label: string | null;
-  provider: SmtpProvider;
-};
-
 function validateSmtpInput(input: SmtpFormInput): ValidatedSmtpInput | string {
-  const host = String(input.host ?? "").trim().toLowerCase();
-  if (!host) return "Host is required.";
-  if (!isValidSmtpHost(host)) {
-    return "Host looks invalid (use e.g. smtp.gmail.com, localhost, or 127.0.0.1).";
-  }
-
-  const portNum =
-    typeof input.port === "number" ? input.port : parseInt(String(input.port ?? ""), 10);
-  if (!Number.isFinite(portNum) || portNum <= 0 || portNum > 65535) {
-    return "Port must be a number between 1 and 65535.";
-  }
-
-  const username = String(input.username ?? "").trim();
-  if (!username) return "Username is required.";
-  if (username.length > 320) return "Username is too long.";
-
-  // Gmail App Passwords are displayed with spaces ("abcd efgh ijkl mnop") but
-  // the real credential is the 16 char blob without spaces. Strip to be safe —
-  // Google documents either form as acceptable.
-  const password = String(input.password ?? "").replace(/\s+/g, "");
-  if (!password) return "Password is required.";
-  if (password.length > 512) return "Password is unexpectedly long.";
-
-  const label = input.label ? String(input.label).trim().slice(0, 80) : null;
-
-  const provider: SmtpProvider =
-    input.provider && ["gmail", "yahoo", "outlook", "custom"].includes(input.provider)
-      ? input.provider
-      : "custom";
-
+  const parsed = parseStrict(smtpFormSchema, input);
+  if (!parsed.ok) return parsed.error;
+  const provider: SmtpProvider = parsed.data.provider ?? "custom";
   return {
-    host,
-    port: portNum,
-    secure: Boolean(input.secure),
-    username,
-    password,
-    label: label && label.length > 0 ? label : null,
+    ...parsed.data,
     provider,
+    label: parsed.data.label ?? null,
   };
 }
 

@@ -4,15 +4,18 @@ import {
   equalTokenHashes,
   hashAdminResetToken,
 } from "@/lib/admin-reset-token";
+import { adminResetVerifyQuerySchema } from "@/lib/validation";
 
 const noStore = { headers: { "Cache-Control": "no-store" } } as const;
 
 export async function GET(request: NextRequest) {
-  const token = request.nextUrl.searchParams.get("token")?.trim() ?? "";
-
-  if (!token || token.length > 512) {
+  const parsed = adminResetVerifyQuerySchema.safeParse({
+    token: request.nextUrl.searchParams.get("token"),
+  });
+  if (!parsed.success) {
     return NextResponse.json({ valid: false as const }, noStore);
   }
+  const token = parsed.data.token;
 
   try {
     const supabase = createServiceClient();

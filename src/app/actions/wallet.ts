@@ -7,6 +7,7 @@ import { findPlan, PLANS, type Plan } from "@/lib/plans";
 import { cancelActivePlanForUser } from "@/lib/wallet-plan-cancel";
 import { countUnfinishedCampaigns } from "@/lib/campaign-cancel";
 import { resetOutboundIpRotationForNewPlan } from "@/lib/outbound-ip";
+import { parseStrict, planIdField } from "@/lib/validation";
 
 export type ActionResult<T = undefined> =
   | { ok: true; data?: T }
@@ -119,7 +120,9 @@ export async function getWalletState(): Promise<WalletState> {
 export async function activatePlan(
   planId: string,
 ): Promise<ActionResult<WalletState>> {
-  const plan = findPlan(planId);
+  const parsed = parseStrict(planIdField, planId);
+  if (!parsed.ok) return { ok: false, error: "Unknown plan." };
+  const plan = findPlan(parsed.data);
   if (!plan) return { ok: false, error: "Unknown plan." };
 
   const supabase = await createServerSupabase();

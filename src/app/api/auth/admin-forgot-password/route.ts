@@ -1,5 +1,4 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { z } from "zod";
 import { createServiceClient } from "@/lib/supabase/admin";
 import { getBootstrapAdminEmail } from "@/lib/admin-bootstrap";
 import {
@@ -10,10 +9,7 @@ import {
 import { sendAdminPasswordResetEmail } from "@/lib/admin-reset-mail";
 import { sendAdminRecoveryViaSupabaseAuth } from "@/lib/admin-recovery-supabase";
 import { getPublicOrigin } from "@/lib/request-origin";
-
-const bodySchema = z.object({
-  email: z.string().min(1).max(320),
-});
+import { adminForgotPasswordBodySchema, formatZodError } from "@/lib/validation";
 
 const SUCCESS_MESSAGE =
   "If this email exists in our system, a reset link has been sent.";
@@ -42,7 +38,7 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  const parsed = bodySchema.safeParse(json);
+  const parsed = adminForgotPasswordBodySchema.safeParse(json);
   if (!parsed.success) {
     return NextResponse.json({ ok: true, message: SUCCESS_MESSAGE }, {
       headers: { "Cache-Control": "no-store" },

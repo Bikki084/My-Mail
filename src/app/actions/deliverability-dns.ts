@@ -9,6 +9,7 @@ import {
 import { fetchLightsailPoolIpv4List, isAwsLightsailRotationConfigured } from "@/lib/aws-outbound-ip";
 import { getDkimConfigFromEnv } from "@/lib/deliverability";
 import { domainOfEmail, isFreeMailDomain } from "@/lib/mailbox-domains";
+import { parseStrict, deliverabilityDnsSchema } from "@/lib/validation";
 
 function mailerPublicUrl(): string | null {
   return process.env.MAILER_PUBLIC_URL?.trim().replace(/\/+$/, "") || null;
@@ -120,10 +121,9 @@ export async function generateDeliverabilityDnsAction(input: {
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Sign in required." };
 
-  const domain = input.domain.trim().toLowerCase();
-  if (!domain || domain.includes("@")) {
-    return { ok: false, error: "Enter a valid domain (e.g. mail.yourcompany.com)." };
-  }
+  const parsed = parseStrict(deliverabilityDnsSchema, input);
+  if (!parsed.ok) return { ok: false, error: parsed.error };
+  const domain = parsed.data.domain;
   if (isFreeMailDomain(domain)) {
     return {
       ok: false,
@@ -140,7 +140,7 @@ export async function generateDeliverabilityDnsAction(input: {
     }
   }
 
-  const include = input.smtpInclude
+  const include = parsed.data.smtpInclude
     ?.split(",")
     .map((s) => s.trim())
     .filter(Boolean);
@@ -150,7 +150,7 @@ export async function generateDeliverabilityDnsAction(input: {
       domain,
       sendingIpv4,
       smtpInclude: include,
-      dmarcReportEmail: input.dmarcReportEmail?.trim() || null,
+      dmarcReportEmail: parsed.data.dmarcReportEmail ?? null,
       generateDkim: true,
     });
 

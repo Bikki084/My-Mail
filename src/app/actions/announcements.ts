@@ -2,6 +2,7 @@
 
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/admin";
+import { parseStrict, announcementReadIdsSchema } from "@/lib/validation";
 
 export type AnnouncementItem = {
   id: string;
@@ -82,7 +83,9 @@ export async function listAnnouncementsForClient(): Promise<AnnouncementsForClie
 export async function markAnnouncementsRead(
   ids: string[],
 ): Promise<{ ok: true; persisted: boolean } | { ok: false; error: string }> {
-  if (!Array.isArray(ids) || ids.length === 0) return { ok: true, persisted: false };
+  const parsed = parseStrict(announcementReadIdsSchema, { ids });
+  if (!parsed.ok) return { ok: false, error: parsed.error };
+  if (parsed.data.ids.length === 0) return { ok: true, persisted: false };
 
   const supabase = await createServerSupabase();
   const {
@@ -100,7 +103,7 @@ export async function markAnnouncementsRead(
     service = supabase;
   }
 
-  const rows = ids.map((id) => ({ announcement_id: id, user_id: user.id }));
+  const rows = parsed.data.ids.map((id) => ({ announcement_id: id, user_id: user.id }));
   const { error } = await service
     .from("announcement_reads")
     .upsert(rows, {

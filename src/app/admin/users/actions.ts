@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/admin";
+import { parseStrict, createClientUserSchema, updateClientUserEmailSchema } from "@/lib/validation";
 
 export type CreateClientUserInput = {
   organizationName: string;
@@ -14,7 +15,6 @@ export type ActionResult<T = undefined> =
   | { ok: true; data?: T }
   | { ok: false; error: string };
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 async function assertAdmin(): Promise<ActionResult> {
   const supabase = await createServerSupabase();
@@ -39,15 +39,9 @@ export async function createClientUser(
   const guard = await assertAdmin();
   if (!guard.ok) return guard;
 
-  const organizationName = input.organizationName.trim();
-  const email = input.email.trim().toLowerCase();
-  const password = input.password;
-
-  if (!organizationName) return { ok: false, error: "Organization name is required." };
-  if (!email || !EMAIL_RE.test(email)) return { ok: false, error: "Enter a valid email address." };
-  if (!password || password.length < 6) {
-    return { ok: false, error: "Password must be at least 6 characters." };
-  }
+  const parsed = parseStrict(createClientUserSchema, input);
+  if (!parsed.ok) return { ok: false, error: parsed.error };
+  const { organizationName, email, password } = parsed.data;
 
   let admin;
   try {
@@ -131,9 +125,6 @@ export type UpdateClientUserEmailInput = {
   email: string;
 };
 
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 /**
  * Updates a client user's email in both Supabase Auth (via the admin API) and
  * the mirrored `profiles.email` column. `email_confirm: true` skips the
@@ -146,14 +137,9 @@ export async function updateClientUserEmail(
   const guard = await assertAdmin();
   if (!guard.ok) return guard;
 
-  const userId = (input.userId ?? "").trim();
-  if (!userId || !UUID_RE.test(userId)) {
-    return { ok: false, error: "Invalid user id." };
-  }
-  const email = (input.email ?? "").trim().toLowerCase();
-  if (!email || !EMAIL_RE.test(email)) {
-    return { ok: false, error: "Enter a valid email address." };
-  }
+  const parsed = parseStrict(updateClientUserEmailSchema, input);
+  if (!parsed.ok) return { ok: false, error: parsed.error };
+  const { userId, email } = parsed.data;
 
   let admin;
   try {

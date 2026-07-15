@@ -1,19 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 import bcrypt from "bcryptjs";
-import { z } from "zod";
 import { createServiceClient } from "@/lib/supabase/admin";
 import {
   equalTokenHashes,
   hashAdminResetToken,
 } from "@/lib/admin-reset-token";
+import { adminResetPasswordBodySchema, formatZodError } from "@/lib/validation";
 
 const BCRYPT_ROUNDS = 12;
-
-const bodySchema = z.object({
-  token: z.string().min(1).max(512),
-  password: z.string().min(6).max(512),
-  confirmPassword: z.string().min(6).max(512),
-});
 
 const INVALID_LINK = "Link expired or invalid";
 
@@ -27,18 +21,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false, error: INVALID_LINK }, { status: 400, ...noStore });
   }
 
-  const parsed = bodySchema.safeParse(json);
+  const parsed = adminResetPasswordBodySchema.safeParse(json);
   if (!parsed.success) {
-    return NextResponse.json({ ok: false, error: INVALID_LINK }, { status: 400, ...noStore });
+    return NextResponse.json({ ok: false, error: formatZodError(parsed.error) }, { status: 400, ...noStore });
   }
 
-  const { token, password, confirmPassword } = parsed.data;
-  if (password !== confirmPassword) {
-    return NextResponse.json(
-      { ok: false, error: "Passwords do not match." },
-      { status: 400, ...noStore },
-    );
-  }
+  const { token, password } = parsed.data;
 
   try {
     const supabase = createServiceClient();

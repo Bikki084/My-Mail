@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/admin";
+import { parseStrict, walletTopUpSchema } from "@/lib/validation";
 
 export type ActionResult<T = undefined> =
   | { ok: true; data?: T }
@@ -107,18 +108,9 @@ export async function topUpWallet(input: {
   const guard = await assertAdmin();
   if (!guard.ok) return guard;
 
-  const userId = input.userId?.trim();
-  if (!userId || !UUID_RE.test(userId)) {
-    return { ok: false, error: "Select a valid user." };
-  }
-
-  const amount = Math.floor(Number(input.amount));
-  if (!Number.isFinite(amount) || amount <= 0) {
-    return { ok: false, error: "Amount must be a positive whole number." };
-  }
-  if (amount > MAX_TOPUP) {
-    return { ok: false, error: "Amount is unrealistically large." };
-  }
+  const parsed = parseStrict(walletTopUpSchema, input);
+  if (!parsed.ok) return { ok: false, error: parsed.error };
+  const { userId, amount, note } = parsed.data;
 
   let admin;
   try {
@@ -180,7 +172,7 @@ export async function topUpWallet(input: {
     kind: "topup",
     amount,
     plan_id: null,
-    note: input.note?.trim() || null,
+    note: note ?? null,
   });
   if (txErr) {
     if (isMissingWalletSchema(txErr)) return { ok: false, error: MIGRATION_HINT };

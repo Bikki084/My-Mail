@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
+import { parseStrict, usageReportQuerySchema } from "@/lib/validation";
 
 export type ActionResult<T = undefined> =
   | { ok: true; data?: T }
@@ -51,10 +52,13 @@ export async function listUsageReports(params?: {
   const guard = await assertAdmin();
   if (!guard.ok) return guard;
 
+  const parsed = parseStrict(usageReportQuerySchema, params ?? {});
+  if (!parsed.ok) return { ok: false, error: parsed.error };
+
   const supabase = await createServerSupabase();
 
-  const fromIso = params?.from ? `${params.from}T00:00:00.000Z` : null;
-  const toIso = params?.to ? `${params.to}T23:59:59.999Z` : null;
+  const fromIso = parsed.data.from ? `${parsed.data.from}T00:00:00.000Z` : null;
+  const toIso = parsed.data.to ? `${parsed.data.to}T23:59:59.000Z` : null;
 
   const { data: clientProfiles, error: profileErr } = await supabase
     .from("profiles")
