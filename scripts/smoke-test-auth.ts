@@ -44,10 +44,17 @@ async function main() {
     process.exit(1);
   }
 
-  const adminEmail = "mymail87455@gmail.com";
-  const adminPwd = "admin123";
-  const clientEmail = "client.test@gmail.com";
-  const clientPwd = "client123";
+  const adminEmail = process.env.BOOTSTRAP_ADMIN_EMAIL?.trim();
+  const adminPwd = process.env.BOOTSTRAP_ADMIN_PASSWORD?.trim();
+  const clientEmail = process.env.SMOKE_TEST_CLIENT_EMAIL?.trim() ?? "client.test@gmail.com";
+  const clientPwd = process.env.SMOKE_TEST_CLIENT_PASSWORD?.trim();
+
+  if (!adminEmail || !adminPwd || !clientPwd) {
+    console.error(
+      "Set BOOTSTRAP_ADMIN_EMAIL, BOOTSTRAP_ADMIN_PASSWORD, and SMOKE_TEST_CLIENT_PASSWORD in .env.local (no hardcoded credentials in repo).",
+    );
+    process.exit(1);
+  }
 
   const admin = createClient(url, svc, {
     auth: { persistSession: false, autoRefreshToken: false },

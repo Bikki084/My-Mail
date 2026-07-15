@@ -15,6 +15,7 @@
  *   self-contained.
  */
 
+import "server-only";
 import crypto from "node:crypto";
 
 const ALGO = "aes-256-gcm";

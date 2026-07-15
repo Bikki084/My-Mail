@@ -261,10 +261,15 @@ async function main(): Promise<void> {
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
   const serviceRole = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
 
-  const email =
-    process.env.BOOTSTRAP_ADMIN_EMAIL?.trim() ?? "mymail87455@gmail.com";
-  const password =
-    process.env.BOOTSTRAP_ADMIN_PASSWORD?.trim() ?? "admin";
+  const email = process.env.BOOTSTRAP_ADMIN_EMAIL?.trim() ?? "mymail87455@gmail.com";
+  const password = process.env.BOOTSTRAP_ADMIN_PASSWORD?.trim();
+
+  if (!password || password.length < 6) {
+    console.error(
+      "Set BOOTSTRAP_ADMIN_PASSWORD in .env.local (min 6 characters). Do not rely on repo defaults.",
+    );
+    process.exit(1);
+  }
 
   if (!url || !anon) {
     console.error(
@@ -275,12 +280,16 @@ async function main(): Promise<void> {
 
   console.log(`[create-admin] Email: ${email}`);
 
-  const effectivePassword = password.length >= 6 ? password : "admin123";
-  if (password.length < 6) {
-    console.warn(
-      `[create-admin] Password shorter than 6 chars — using "${effectivePassword}" (Supabase default minimum).`,
+  const effectivePassword = password;
+
+  if (!url || !anon) {
+    console.error(
+      "Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY (.env.local).",
     );
+    process.exit(1);
   }
+
+  console.log(`[create-admin] Email: ${email}`);
 
   let ok = false;
   if (serviceRole) {

@@ -35,6 +35,10 @@ yarn-error.log*
 !.env.example
 .gmail-oauth-token.json
 
+# local test data (may contain real recipient emails)
+test_*.csv
+**/test-recipients*.csv
+
 # vercel
 .vercel
 

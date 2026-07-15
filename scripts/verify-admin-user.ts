@@ -40,7 +40,14 @@ async function main(): Promise<void> {
   const serviceRole = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
   const email = process.env.BOOTSTRAP_ADMIN_EMAIL?.trim() ?? "mymail87455@gmail.com";
-  const password = process.env.BOOTSTRAP_ADMIN_PASSWORD?.trim() ?? "admin123";
+  const password = process.env.BOOTSTRAP_ADMIN_PASSWORD?.trim();
+
+  if (!password || password.length < 6) {
+    console.error(
+      "Set BOOTSTRAP_ADMIN_PASSWORD in .env.local (min 6 characters). Do not rely on repo defaults.",
+    );
+    process.exit(1);
+  }
 
   if (!url || !serviceRole || !anon) {
     console.error(
