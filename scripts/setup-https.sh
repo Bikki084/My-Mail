@@ -6,6 +6,9 @@
 # Requires: DNS A record for bulkfirepro.com → this server's public IP, port 80 open.
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "${SCRIPT_DIR}/.."
+
 DOMAIN="${BULK_DOMAIN:-bulkfirepro.com}"
 WWW_DOMAIN="www.${DOMAIN}"
 EMAIL="${CERTBOT_EMAIL:-}"
@@ -50,6 +53,7 @@ server {
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host \$host;
+        proxy_set_header Accept-Encoding "";
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
@@ -92,17 +96,21 @@ echo "5) Reload nginx + verify HTTPS..."
 nginx -t
 systemctl reload nginx
 
-if curl -sf --connect-timeout 10 "https://${DOMAIN}/api/health" >/dev/null; then
-  echo "   OK — https://${DOMAIN}/api/health"
-else
-  echo "   WARN: HTTPS probe failed from this server — check firewall / DNS externally."
-fi
+echo ""
+echo "5b) Enable gzip/brotli compression for JSON API responses..."
+bash "${SCRIPT_DIR}/enable-nginx-compression.sh"
 
 echo ""
 echo "6) Auto-renewal timer..."
 systemctl enable certbot.timer 2>/dev/null || true
 systemctl start certbot.timer 2>/dev/null || true
 certbot renew --dry-run 2>/dev/null || echo "   (dry-run skipped — cert is new)"
+
+if curl -sf --connect-timeout 10 "https://${DOMAIN}/api/health" >/dev/null; then
+  echo "   OK — https://${DOMAIN}/api/health"
+else
+  echo "   WARN: HTTPS probe failed from this server — check firewall / DNS externally."
+fi
 
 echo ""
 cat <<EOF
