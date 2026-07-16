@@ -65,8 +65,8 @@ async function main(): Promise<void> {
     refresh_token: tokens.refresh_token,
     access_token: tokens.access_token ?? undefined,
     expiry_date: tokens.expiry_date ?? undefined,
-    scope: tokens.scope,
-    token_type: tokens.token_type,
+    scope: tokens.scope ?? undefined,
+    token_type: tokens.token_type ?? undefined,
   };
 
   writeTokenFile(payload);

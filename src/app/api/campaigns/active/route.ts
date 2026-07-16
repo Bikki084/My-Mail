@@ -122,33 +122,29 @@ export async function GET() {
   let logsDegraded = false;
 
   try {
-    const [sentRes, failedRes] = await supabaseReadCircuit.execute(
-      () =>
+    if (!supabaseReadCircuit.isOpen()) {
+      const [sentRes, failedRes] = await supabaseReadCircuit.execute(() =>
         Promise.all([
           supabase
             .from("sending_logs")
             .select("id", { count: "exact", head: true })
-            .eq("campaign_id", row!.id)
+            .eq("campaign_id", row.id)
             .eq("status", "sent"),
           supabase
             .from("sending_logs")
             .select("id", { count: "exact", head: true })
-            .eq("campaign_id", row!.id)
+            .eq("campaign_id", row.id)
             .in("status", ["failed", "bounced"]),
         ]),
-      {
-        fallback: () =>
-          Promise.resolve([
-            { count: row!.sent_count ?? 0, error: null },
-            { count: row!.failed_count ?? 0, error: null },
-          ] as const),
-      },
-    );
-    if (sentRes.error || failedRes.error) {
-      logsDegraded = true;
+      );
+      if (sentRes.error || failedRes.error) {
+        logsDegraded = true;
+      } else {
+        sentSoFar = Number(sentRes.count ?? row.sent_count ?? 0);
+        failedSoFar = Number(failedRes.count ?? row.failed_count ?? 0);
+      }
     } else {
-      sentSoFar = Number(sentRes.count ?? row.sent_count ?? 0);
-      failedSoFar = Number(failedRes.count ?? row.failed_count ?? 0);
+      logsDegraded = true;
     }
   } catch {
     logsDegraded = true;
