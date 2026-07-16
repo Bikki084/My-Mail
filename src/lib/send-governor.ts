@@ -2,6 +2,7 @@ import "server-only";
 
 import IORedis from "ioredis";
 import { parsePositiveIntEnv } from "@/lib/async-pool";
+import { isRedisCircuitOpen } from "@/lib/circuit-breaker";
 import {
   ensureLightsailEgressIpForSend,
   ensureLightsailPrimaryStaticIpAttached,
@@ -38,9 +39,13 @@ export function isSendGovernorEnabled(): boolean {
 
 let redis: IORedis | null = null;
 
+function shouldUseRedisGovernor(): boolean {
+  return Boolean(process.env.REDIS_URL?.trim()) && !isRedisCircuitOpen();
+}
+
 function getRedis(): IORedis | null {
-  const url = process.env.REDIS_URL?.trim();
-  if (!url) return null;
+  if (!shouldUseRedisGovernor()) return null;
+  const url = process.env.REDIS_URL!.trim();
   if (!redis) {
     redis = new IORedis(url, {
       maxRetriesPerRequest: 3,

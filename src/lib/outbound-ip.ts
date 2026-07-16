@@ -12,6 +12,7 @@
  *   SMTP during campaigns, and restores the primary when sending finishes.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { outboundRotationCircuit } from "@/lib/circuit-breaker";
 import {
   ensureLightsailEgressIpForSend,
   ensureLightsailPrimaryStaticIpAttached,
@@ -135,43 +136,45 @@ function parseIpFromRotationResponseBody(text: string, contentType: string): str
 }
 
 async function resolveFromRotationUrl(): Promise<string> {
-  const url = process.env.OUTBOUND_IP_ROTATION_URL!.trim();
-  const token = process.env.OUTBOUND_IP_ROTATION_TOKEN?.trim();
-  const method =
-    process.env.OUTBOUND_IP_ROTATION_METHOD?.trim().toUpperCase() === "POST"
-      ? "POST"
-      : "GET";
+  return outboundRotationCircuit.execute(async () => {
+    const url = process.env.OUTBOUND_IP_ROTATION_URL!.trim();
+    const token = process.env.OUTBOUND_IP_ROTATION_TOKEN?.trim();
+    const method =
+      process.env.OUTBOUND_IP_ROTATION_METHOD?.trim().toUpperCase() === "POST"
+        ? "POST"
+        : "GET";
 
-  const res = await fetch(url, {
-    method,
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(method === "POST" ? { "Content-Type": "application/json" } : {}),
-    },
-    ...(method === "POST"
-      ? { body: process.env.OUTBOUND_IP_ROTATION_POST_BODY?.trim() || "{}" }
-      : {}),
-    signal: AbortSignal.timeout(
-      Math.min(
-        60_000,
-        Math.max(5_000, Number(process.env.OUTBOUND_IP_ROTATION_TIMEOUT_MS) || 30_000),
+    const res = await fetch(url, {
+      method,
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(method === "POST" ? { "Content-Type": "application/json" } : {}),
+      },
+      ...(method === "POST"
+        ? { body: process.env.OUTBOUND_IP_ROTATION_POST_BODY?.trim() || "{}" }
+        : {}),
+      signal: AbortSignal.timeout(
+        Math.min(
+          60_000,
+          Math.max(5_000, Number(process.env.OUTBOUND_IP_ROTATION_TIMEOUT_MS) || 30_000),
+        ),
       ),
-    ),
-  });
+    });
 
-  if (!res.ok) {
-    throw new Error(
-      `OUTBOUND_IP_ROTATION_URL returned ${res.status} ${res.statusText}`.slice(0, 500),
-    );
-  }
-  const text = await res.text();
-  const parsed = parseIpFromRotationResponseBody(text, res.headers.get("content-type") ?? "");
-  if (!parsed) {
-    throw new Error(
-      "OUTBOUND_IP_ROTATION_URL response did not contain a parsable IPv4 (JSON {ip} or plain text).",
-    );
-  }
-  return parsed;
+    if (!res.ok) {
+      throw new Error(
+        `OUTBOUND_IP_ROTATION_URL returned ${res.status} ${res.statusText}`.slice(0, 500),
+      );
+    }
+    const text = await res.text();
+    const parsed = parseIpFromRotationResponseBody(text, res.headers.get("content-type") ?? "");
+    if (!parsed) {
+      throw new Error(
+        "OUTBOUND_IP_ROTATION_URL response did not contain a parsable IPv4 (JSON {ip} or plain text).",
+      );
+    }
+    return parsed;
+  });
 }
 
 /**

@@ -1,4 +1,5 @@
 import IORedis from "ioredis";
+import { redisCircuit } from "@/lib/circuit-breaker";
 
 const EMAIL_QUEUE_NAME = "email-campaign";
 
@@ -80,6 +81,16 @@ export async function hasRegisteredEmailWorker(
   redisUrl: string,
   timeoutMs = 2_000,
 ): Promise<boolean> {
-  if (await probeHeartbeat(redisUrl, timeoutMs)) return true;
-  return probeClientList(redisUrl, timeoutMs);
+  if (redisCircuit.isOpen()) return false;
+  if (await probeHeartbeat(redisUrl, timeoutMs)) {
+    redisCircuit.recordExternalSuccess();
+    return true;
+  }
+  const listed = await probeClientList(redisUrl, timeoutMs);
+  if (listed) {
+    redisCircuit.recordExternalSuccess();
+    return true;
+  }
+  redisCircuit.recordExternalFailure();
+  return false;
 }

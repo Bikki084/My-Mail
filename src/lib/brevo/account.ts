@@ -1,4 +1,5 @@
 import "server-only";
+import { brevoCircuit } from "@/lib/circuit-breaker";
 
 /** Brevo free plan daily email cap (transactional + marketing share this pool). */
 export const BREVO_FREE_DAILY_LIMIT = 300;
@@ -136,63 +137,96 @@ export async function fetchBrevoQuota(options?: {
   const fetchedAt = new Date().toISOString();
 
   try {
-    const res = await fetch(BREVO_ACCOUNT_URL, {
-      method: "GET",
-      headers: {
-        accept: "application/json",
-        "api-key": apiKey,
+    const snap = await brevoCircuit.execute(
+      async () => {
+        const res = await fetch(BREVO_ACCOUNT_URL, {
+          method: "GET",
+          headers: {
+            accept: "application/json",
+            "api-key": apiKey,
+          },
+          cache: "no-store",
+          signal: AbortSignal.timeout(12_000),
+        });
+
+        if (!res.ok) {
+          const body = await res.text().catch(() => "");
+          const errSnap: BrevoQuotaSnapshot = {
+            configured: true,
+            live: false,
+            error: `Brevo API ${res.status}${body ? `: ${body.slice(0, 120)}` : ""}`,
+            fetchedAt,
+          };
+          cache = { at: now, data: errSnap };
+          throw new Error(errSnap.error ?? `Brevo API ${res.status}`);
+        }
+
+        const data = (await res.json()) as BrevoAccountResponse;
+        const parsed = parseEmailSendPlan(data);
+
+        if (!parsed) {
+          const errSnap: BrevoQuotaSnapshot = {
+            configured: true,
+            live: false,
+            error: "Could not read email quota from Brevo account response.",
+            accountEmail: data.email,
+            fetchedAt,
+          };
+          cache = { at: now, data: errSnap };
+          throw new Error(errSnap.error ?? "Could not read Brevo quota");
+        }
+
+        const used =
+          parsed.limit != null
+            ? Math.max(0, parsed.limit - parsed.remaining)
+            : undefined;
+
+        const okSnap: BrevoQuotaSnapshot = {
+          configured: true,
+          live: true,
+          planType: parsed.planType,
+          planLabel: parsed.planLabel,
+          remaining: parsed.remaining,
+          limit: parsed.limit,
+          used,
+          period: parsed.period,
+          accountEmail: data.email,
+          fetchedAt,
+        };
+        cache = { at: now, data: okSnap };
+        return okSnap;
       },
-      cache: "no-store",
-      signal: AbortSignal.timeout(12_000),
-    });
-
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      const snap: BrevoQuotaSnapshot = {
-        configured: true,
-        live: false,
-        error: `Brevo API ${res.status}${body ? `: ${body.slice(0, 120)}` : ""}`,
-        fetchedAt,
-      };
-      cache = { at: now, data: snap };
-      return snap;
-    }
-
-    const data = (await res.json()) as BrevoAccountResponse;
-    const parsed = parseEmailSendPlan(data);
-
-    if (!parsed) {
-      const snap: BrevoQuotaSnapshot = {
-        configured: true,
-        live: false,
-        error: "Could not read email quota from Brevo account response.",
-        accountEmail: data.email,
-        fetchedAt,
-      };
-      cache = { at: now, data: snap };
-      return snap;
-    }
-
-    const used =
-      parsed.limit != null
-        ? Math.max(0, parsed.limit - parsed.remaining)
-        : undefined;
-
-    const snap: BrevoQuotaSnapshot = {
-      configured: true,
-      live: true,
-      planType: parsed.planType,
-      planLabel: parsed.planLabel,
-      remaining: parsed.remaining,
-      limit: parsed.limit,
-      used,
-      period: parsed.period,
-      accountEmail: data.email,
-      fetchedAt,
-    };
-    cache = { at: now, data: snap };
+      {
+        fallback: () => {
+          if (cache?.data.live) {
+            return {
+              ...cache.data,
+              error: "Brevo API temporarily unavailable — showing last known quota.",
+              fetchedAt,
+            };
+          }
+          return {
+            configured: true,
+            live: false,
+            error: "Brevo API temporarily unavailable (circuit open). Try again shortly.",
+            fetchedAt,
+          };
+        },
+      },
+    );
     return snap;
   } catch (err) {
+    if (cache?.data) {
+      return {
+        ...cache.data,
+        live: false,
+        error:
+          err instanceof Error
+            ? err.message
+            : "Brevo API request failed.",
+        fetchedAt,
+      };
+    }
     const snap: BrevoQuotaSnapshot = {
       configured: true,
       live: false,

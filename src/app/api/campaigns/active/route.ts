@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { supabaseReadCircuit } from "@/lib/circuit-breaker";
 
 /**
  * Lightweight feed for the in-app progress monitor. Returns the user's most
@@ -116,18 +117,42 @@ export async function GET() {
   // Fetch live counts from `sending_logs`. While `status='sending'` the
   // `sent_count`/`failed_count` columns aren't bumped per message, so the
   // accurate progress for the modal comes from a count query against the log.
-  const [sentRes, failedRes] = await Promise.all([
-    supabase
-      .from("sending_logs")
-      .select("id", { count: "exact", head: true })
-      .eq("campaign_id", row.id)
-      .eq("status", "sent"),
-    supabase
-      .from("sending_logs")
-      .select("id", { count: "exact", head: true })
-      .eq("campaign_id", row.id)
-      .in("status", ["failed", "bounced"]),
-  ]);
+  let sentSoFar = Number(row.sent_count ?? 0);
+  let failedSoFar = Number(row.failed_count ?? 0);
+  let logsDegraded = false;
+
+  try {
+    const [sentRes, failedRes] = await supabaseReadCircuit.execute(
+      () =>
+        Promise.all([
+          supabase
+            .from("sending_logs")
+            .select("id", { count: "exact", head: true })
+            .eq("campaign_id", row!.id)
+            .eq("status", "sent"),
+          supabase
+            .from("sending_logs")
+            .select("id", { count: "exact", head: true })
+            .eq("campaign_id", row!.id)
+            .in("status", ["failed", "bounced"]),
+        ]),
+      {
+        fallback: () =>
+          Promise.resolve([
+            { count: row!.sent_count ?? 0, error: null },
+            { count: row!.failed_count ?? 0, error: null },
+          ] as const),
+      },
+    );
+    if (sentRes.error || failedRes.error) {
+      logsDegraded = true;
+    } else {
+      sentSoFar = Number(sentRes.count ?? row.sent_count ?? 0);
+      failedSoFar = Number(failedRes.count ?? row.failed_count ?? 0);
+    }
+  } catch {
+    logsDegraded = true;
+  }
 
   const ipThresholdRaw = row.ip_rotation_threshold;
   const payload: ApiCampaign = {
@@ -137,8 +162,8 @@ export async function GET() {
     totalEmails: Number(row.total_emails ?? 0),
     sentCount: Number(row.sent_count ?? 0),
     failedCount: Number(row.failed_count ?? 0),
-    sentSoFar: Number(sentRes.count ?? row.sent_count ?? 0),
-    failedSoFar: Number(failedRes.count ?? row.failed_count ?? 0),
+    sentSoFar,
+    failedSoFar,
     currentOutboundIp: row.current_outbound_ip ?? null,
     ipRotationThreshold:
       typeof ipThresholdRaw === "number" && Number.isFinite(ipThresholdRaw)
@@ -153,5 +178,6 @@ export async function GET() {
   return NextResponse.json({
     campaign: payload,
     ...(degradedReason ? { schemaError: degradedReason } : {}),
+    ...(logsDegraded ? { logsDegraded: true } : {}),
   });
 }

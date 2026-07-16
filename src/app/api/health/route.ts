@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isQueueConfigured, pingRedis } from "@/lib/queue/email-queue";
 import { hasRegisteredEmailWorker } from "@/lib/queue/worker-presence";
+import { listCircuitBreakerSnapshots } from "@/lib/circuit-breaker";
 
 /** Lightweight probe for Nginx / uptime checks — includes Redis + worker status. */
 export async function GET() {
@@ -26,6 +27,7 @@ export async function GET() {
       redisLive,
       workerConnected,
       sendReady: ok,
+      circuits: listCircuitBreakerSnapshots(),
     },
     { status: ok ? 200 : 503 },
   );

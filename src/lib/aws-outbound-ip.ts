@@ -1,5 +1,7 @@
 import "server-only";
 
+import { lightsailCircuit } from "@/lib/circuit-breaker";
+
 /**
  * AWS egress IP helpers for Lightsail / EC2 deployments.
  *
@@ -115,7 +117,7 @@ async function runLightsailApi<T>(label: string, fn: () => Promise<T>): Promise<
     const waitMs = Math.max(0, LIGHTSAIL_API_MIN_INTERVAL_MS - (Date.now() - lastLightsailApiAt));
     if (waitMs > 0) await sleep(waitMs);
     lastLightsailApiAt = Date.now();
-    return retryLightsailApi(fn, label);
+    return lightsailCircuit.execute(() => retryLightsailApi(fn, label));
   };
   const chained = lightsailApiChain.then(task, task);
   lightsailApiChain = chained.then(

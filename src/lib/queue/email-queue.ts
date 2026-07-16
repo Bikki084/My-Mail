@@ -1,5 +1,6 @@
 import { Queue } from "bullmq";
 import IORedis from "ioredis";
+import { redisCircuit } from "@/lib/circuit-breaker";
 
 export type EmailJobPayload = {
   campaignId: string;
@@ -93,6 +94,11 @@ export async function pingRedis(timeoutMs = 1_500): Promise<boolean> {
   if (inflightProbe) return inflightProbe;
 
   inflightProbe = (async () => {
+    if (redisCircuit.isOpen()) {
+      probeCache = { value: false, expiresAt: Date.now() + PROBE_CACHE_MS, url };
+      return false;
+    }
+
     const probe = new IORedis(url, {
       lazyConnect: true,
       maxRetriesPerRequest: 1,
@@ -121,6 +127,11 @@ export async function pingRedis(timeoutMs = 1_500): Promise<boolean> {
       }
     }
     probeCache = { value: result, expiresAt: Date.now() + PROBE_CACHE_MS, url };
+    if (result) {
+      redisCircuit.recordExternalSuccess();
+    } else {
+      redisCircuit.recordExternalFailure();
+    }
     return result;
   })().finally(() => {
     inflightProbe = null;

@@ -9,6 +9,7 @@ import {
   hasNonExpiredActivePlan,
 } from "@/lib/active-plan-guard";
 import { maxSyncCampaignRecipients } from "@/lib/campaign-sync-limits";
+import { redisCircuit } from "@/lib/circuit-breaker";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -115,19 +116,23 @@ export async function POST(_req: Request, { params }: Params) {
 
     const QUEUE_ADD_MS = 18_000;
     try {
-      await Promise.race([
-        queue.add(
-          "send-campaign",
-          { campaignId, userId: user.id },
-          { removeOnComplete: true },
-        ),
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new Error("QUEUE_ADD_TIMEOUT")),
-            QUEUE_ADD_MS,
-          ),
-        ),
-      ]);
+      await redisCircuit.execute(
+        () =>
+          Promise.race([
+            queue.add(
+              "send-campaign",
+              { campaignId, userId: user.id },
+              { removeOnComplete: true },
+            ),
+            new Promise<never>((_, reject) =>
+              setTimeout(
+                () => reject(new Error("QUEUE_ADD_TIMEOUT")),
+                QUEUE_ADD_MS,
+              ),
+            ),
+          ]),
+        { timeoutMs: QUEUE_ADD_MS },
+      );
     } catch (e) {
       const reverted = new Date().toISOString();
       await supabase
