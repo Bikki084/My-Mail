@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { toastOptimisticRollback } from "@/lib/optimistic-ui";
 import {
   createClientUser,
   updateClientUserEmail,
@@ -181,13 +182,21 @@ export function UsersClient({ initialRows }: { initialRows: AdminClientUserRow[]
     }
 
     startEditTransition(async () => {
+      const previousRows = rows;
+      const previousEdit = edit;
+      setRows((prev) =>
+        prev.map((r) => (r.id === edit.user.id ? { ...r, email: nextEmail } : r)),
+      );
+      setEdit(null);
+
       const result = await updateClientUserEmail({
         userId: edit.user.id,
         email: nextEmail,
       });
       if (!result.ok) {
-        toast.error("Could not update email.", { description: result.error });
-        setEdit((prev) => (prev ? { ...prev, error: result.error } : prev));
+        setRows(previousRows);
+        setEdit(previousEdit);
+        toastOptimisticRollback("Update email", result.error);
         return;
       }
       const updated = result.data!;
@@ -195,7 +204,6 @@ export function UsersClient({ initialRows }: { initialRows: AdminClientUserRow[]
       toast.success("Email updated.", {
         description: `${edit.user.email} → ${updated.email}`,
       });
-      setEdit(null);
     });
   }
 
@@ -204,30 +212,51 @@ export function UsersClient({ initialRows }: { initialRows: AdminClientUserRow[]
     if (!validateAll()) return;
 
     startTransition(async () => {
-      const result = await createClientUser({
-        organizationName: form.organizationName.trim(),
-        email: form.email.trim().toLowerCase(),
-        password: form.password,
-      });
-
-      if (!result.ok) {
-        toast.error("Could not create user.", { description: result.error });
-        return;
-      }
-
+      const orgName = form.organizationName.trim();
+      const email = form.email.trim().toLowerCase();
+      const password = form.password;
+      const confirmPassword = form.confirmPassword;
       const newRow: AdminClientUserRow = {
-        id: result.data!.userId,
-        email: form.email.trim().toLowerCase(),
-        full_name: form.organizationName.trim(),
+        id: `pending-${Date.now()}`,
+        email,
+        full_name: orgName,
         status: "active",
         created_at: new Date().toISOString(),
       };
+      const previousRows = rows;
       setRows((prev) => [newRow, ...prev]);
-      toast.success("Client user created.", {
-        description: `${newRow.email} can now sign in at /login.`,
-      });
       setOpen(false);
       resetForm();
+
+      const result = await createClientUser({
+        organizationName: orgName,
+        email,
+        password,
+      });
+
+      if (!result.ok) {
+        setRows(previousRows);
+        setOpen(true);
+        setForm({
+          organizationName: orgName,
+          email,
+          password,
+          confirmPassword,
+        });
+        toastOptimisticRollback("Create user", result.error);
+        return;
+      }
+
+      const confirmed: AdminClientUserRow = {
+        ...newRow,
+        id: result.data!.userId,
+      };
+      setRows((prev) =>
+        prev.map((r) => (r.id === newRow.id ? confirmed : r)),
+      );
+      toast.success("Client user created.", {
+        description: `${confirmed.email} can now sign in at /login.`,
+      });
     });
   }
 

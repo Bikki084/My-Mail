@@ -14,6 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { rotateServerIpAction } from "@/app/actions/server-ip";
+import { toastOptimisticRollback } from "@/lib/optimistic-ui";
 
 /**
  * Polled view of the user's most-recent in-flight / paused / recently
@@ -241,6 +242,8 @@ export function CampaignProgressMonitor({
 
   async function handleStopSend() {
     if (!active || !canStop) return;
+    const previous = active;
+    setActive({ ...active, status: "cancelled" });
     setStopping(true);
     try {
       const res = await fetch(`/api/campaigns/${active.id}/cancel`, {
@@ -252,18 +255,22 @@ export function CampaignProgressMonitor({
         error?: string;
       };
       if (!res.ok || !body.ok) {
-        toast.error("Could not stop send", {
-          description: typeof body.error === "string" ? body.error : "Unknown error",
-        });
+        setActive(previous);
+        toastOptimisticRollback(
+          "Stop send",
+          typeof body.error === "string" ? body.error : "Unknown error",
+        );
         return;
       }
       toast.success("Send stopped", {
         description: "No further emails will be sent for this campaign.",
       });
     } catch (e) {
-      toast.error("Could not stop send", {
-        description: e instanceof Error ? e.message : String(e),
-      });
+      setActive(previous);
+      toastOptimisticRollback(
+        "Stop send",
+        e instanceof Error ? e.message : String(e),
+      );
     } finally {
       setStopping(false);
     }

@@ -22,6 +22,7 @@ import {
   setRotationThresholdAction,
   type ServerIpSnapshot,
 } from "@/app/actions/server-ip";
+import { toastOptimisticRollback } from "@/lib/optimistic-ui";
 import { useWalletState } from "./wallet-state-context";
 
 function modeLabel(mode: AwsOutboundIpMode): string {
@@ -150,6 +151,18 @@ export function ServerIpPanel({
       return;
     }
     setRotating(true);
+    const previousSnapshot = snapshot;
+    if (snapshot) {
+      const optimistic: ServerIpSnapshot = {
+        ...snapshot,
+        sendPoolIndex:
+          snapshot.sendPoolIndex != null && snapshot.sendPoolSize != null
+            ? (snapshot.sendPoolIndex % snapshot.sendPoolSize) + 1
+            : snapshot.sendPoolIndex,
+      };
+      setSnapshot(optimistic);
+      onSnapshotChange?.(optimistic);
+    }
     try {
       const res = await Promise.race([
         rotateServerIpAction(),
@@ -166,7 +179,9 @@ export function ServerIpPanel({
         }),
       ]);
       if (!res.ok) {
-        toast.error("Could not rotate outbound IP", { description: res.error });
+        setSnapshot(previousSnapshot);
+        if (previousSnapshot) onSnapshotChange?.(previousSnapshot);
+        toastOptimisticRollback("Rotate IP", res.error);
         return;
       }
       setSnapshot(res.data);
@@ -198,10 +213,17 @@ export function ServerIpPanel({
       return;
     }
     setSavingThreshold(true);
+    const previousSnapshot = snapshot;
+    const previousDraft = thresholdDraft;
+    setSnapshot((prev) =>
+      prev ? { ...prev, rotationThreshold: n } : prev,
+    );
     const res = await setRotationThresholdAction(n);
     setSavingThreshold(false);
     if (!res.ok) {
-      toast.error("Could not save rotation threshold", { description: res.error });
+      setSnapshot(previousSnapshot);
+      setThresholdDraft(previousDraft);
+      toastOptimisticRollback("Save rotation threshold", res.error);
       return;
     }
     setSnapshot((prev) =>

@@ -52,6 +52,7 @@ import {
   type SmtpFormInput,
   type SmtpProvider,
 } from "@/app/actions/smtp";
+import { toastOptimisticRollback } from "@/lib/optimistic-ui";
 import { getServerIpAction, type ServerIpSnapshot } from "@/app/actions/server-ip";
 import type { SmtpPlanCapacity } from "@/lib/smtp-plan-limit";
 import { useWalletState } from "./wallet-state-context";
@@ -573,17 +574,35 @@ export function SmtpForm({
       toast.error(missing);
       return;
     }
+    const input = currentInput();
+    const pendingId = `pending-${Date.now()}`;
+    const optimisticRow: SavedSmtpRow = {
+      id: pendingId,
+      label: input.label ?? `${input.provider} — ${input.username}`,
+      provider: input.provider ?? "custom",
+      host: input.host,
+      port: Number(input.port),
+      username: input.username,
+      secure: input.secure,
+      created_at: new Date().toISOString(),
+    };
+    const previousRows = savedRows;
+    setSavedRows((rows) => [optimisticRow, ...rows]);
     setSaving(true);
-    const res = await saveSmtpServer(currentInput());
+    const res = await saveSmtpServer(input);
     setSaving(false);
-    if (res.ok) {
+    if (res.ok && res.data) {
+      setSavedRows((rows) =>
+        rows.map((r) => (r.id === pendingId ? res.data! : r)),
+      );
       toast.success("SMTP saved.", {
         description: "Credentials encrypted at rest. Ready to use in campaigns.",
       });
       setSmtpPassword("");
-      void refreshSaved();
+      void refreshPlanCapacity();
     } else {
-      toast.error("Could not save SMTP.", { description: res.error });
+      setSavedRows(previousRows);
+      toastOptimisticRollback("Save SMTP", res.ok ? undefined : res.error);
     }
   }
 
@@ -592,14 +611,17 @@ export function SmtpForm({
       const name = label || "this SMTP";
       if (!window.confirm(`Delete ${name}? This cannot be undone.`)) return;
     }
+    const previousRows = savedRows;
+    setSavedRows((rows) => rows.filter((r) => r.id !== id));
     setRowBusyId(id);
     const res = await deleteSmtpServer(id);
     setRowBusyId(null);
     if (res.ok) {
       toast.success("SMTP deleted.");
-      await refreshSaved();
+      void refreshPlanCapacity();
     } else {
-      toast.error("Could not delete.", { description: res.error });
+      setSavedRows(previousRows);
+      toastOptimisticRollback("Delete SMTP", res.error);
     }
   }
 

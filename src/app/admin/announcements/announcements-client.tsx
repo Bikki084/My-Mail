@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { toastOptimisticRollback } from "@/lib/optimistic-ui";
 import { createAnnouncement, deleteAnnouncement, type AdminAnnouncementRow } from "./actions";
 
 type Props = {
@@ -36,6 +37,13 @@ export function AnnouncementsClient({ rows, fetchError }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [deletingId, startDeleteTransition] = useTransition();
   const [pendingId, setPendingId] = useState<string | null>(null);
+  const [displayRows, setDisplayRows] = useState(rows);
+
+  const [lastRows, setLastRows] = useState(rows);
+  if (lastRows !== rows) {
+    setLastRows(rows);
+    setDisplayRows(rows);
+  }
 
   const titleTrim = title.trim();
   const bodyTrim = body.trim();
@@ -47,18 +55,35 @@ export function AnnouncementsClient({ rows, fetchError }: Props) {
       else if (!bodyTrim) toast.error("Message is required.");
       return;
     }
+    const tempId = `pending-${Date.now()}`;
+    const optimistic: AdminAnnouncementRow = {
+      id: tempId,
+      title: titleTrim,
+      body: bodyTrim,
+      created_at: new Date().toISOString(),
+    };
+    const previousRows = displayRows;
+    setDisplayRows((r) => [optimistic, ...r]);
+    setTitle("");
+    setBody("");
     setSubmitting(true);
     const res = await createAnnouncement({ title: titleTrim, body: bodyTrim });
     setSubmitting(false);
     if (!res.ok) {
-      toast.error("Could not publish announcement.", { description: res.error });
+      setDisplayRows(previousRows);
+      setTitle(titleTrim);
+      setBody(bodyTrim);
+      toastOptimisticRollback("Publish announcement", res.error);
       return;
+    }
+    if (res.data?.id) {
+      setDisplayRows((r) =>
+        r.map((row) => (row.id === tempId ? { ...row, id: res.data!.id } : row)),
+      );
     }
     toast.success("Announcement published.", {
       description: "Clients will see it on their next sign-in.",
     });
-    setTitle("");
-    setBody("");
     router.refresh();
   }
 
@@ -66,12 +91,15 @@ export function AnnouncementsClient({ rows, fetchError }: Props) {
     if (typeof window !== "undefined") {
       if (!window.confirm("Delete this announcement? Clients will no longer see it.")) return;
     }
+    const previousRows = displayRows;
+    setDisplayRows((r) => r.filter((a) => a.id !== id));
     setPendingId(id);
     startDeleteTransition(async () => {
       const res = await deleteAnnouncement(id);
       setPendingId(null);
       if (!res.ok) {
-        toast.error("Could not delete announcement.", { description: res.error });
+        setDisplayRows(previousRows);
+        toastOptimisticRollback("Delete announcement", res.error);
         return;
       }
       toast.success("Announcement deleted.");
@@ -132,7 +160,7 @@ export function AnnouncementsClient({ rows, fetchError }: Props) {
           </div>
           <Button
             className="bg-indigo-600 hover:bg-indigo-500"
-            onClick={onPublish}
+            onClick={() => void onPublish()}
             disabled={!canSubmit}
           >
             {submitting && <Loader2 className="mr-2 size-4 animate-spin" />}
@@ -143,7 +171,7 @@ export function AnnouncementsClient({ rows, fetchError }: Props) {
         <div className="rounded-lg border border-emerald-900/35 bg-zinc-900/75 backdrop-blur-sm p-6">
           <h2 className="text-lg font-semibold text-zinc-50">Recent</h2>
           <p className="mb-4 text-sm text-gray-500">Latest announcements (newest first).</p>
-          {rows.length === 0 ? (
+          {displayRows.length === 0 ? (
             <div className="rounded-md border border-dashed border-gray-800 px-4 py-8 text-center">
               <p className="text-sm text-zinc-400">No announcements yet.</p>
               <p className="mt-1 text-xs text-gray-500">
@@ -152,7 +180,7 @@ export function AnnouncementsClient({ rows, fetchError }: Props) {
             </div>
           ) : (
             <ul className="space-y-0">
-              {rows.map((a, i) => {
+              {displayRows.map((a, i) => {
                 const isDeleting = pendingId === a.id && deletingId;
                 return (
                   <li

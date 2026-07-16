@@ -37,6 +37,7 @@ import {
   type WalletState,
 } from "@/app/actions/wallet";
 import { useWalletState } from "@/components/client/email-campaign/wallet-state-context";
+import { toastOptimisticRollback } from "@/lib/optimistic-ui";
 
 export type WalletPlanTabProps = {
   /** When true, the activation button is hidden (no Supabase configured). */
@@ -116,25 +117,53 @@ export function WalletPlanTab({
       return;
     }
     startActivation(async () => {
-      const res = await activatePlan(selectedPlan.id);
+      const previousState = state;
+      const plan = selectedPlan;
+      const startedAt = new Date().toISOString();
+      const expiresAt = new Date(
+        Date.now() + plan.durationHours * 60 * 60 * 1000,
+      ).toISOString();
+      setState({
+        balance: state.balance - plan.cost,
+        activePlan: {
+          planId: plan.id,
+          serversAllowed: plan.serversAllowed,
+          startedAt,
+          expiresAt,
+          expired: false,
+        },
+      });
+      setSelectedPlanId(null);
+
+      const res = await activatePlan(plan.id);
       if (!res.ok) {
-        toast.error("Could not activate plan.", { description: res.error });
+        setState(previousState);
+        setSelectedPlanId(plan.id);
+        toastOptimisticRollback("Activate plan", res.error);
         return;
       }
       if (res.data) {
         setState(res.data);
       }
-      setSelectedPlanId(null);
-      toast.success(`Activated ${selectedPlan.label}.`);
+      toast.success(`Activated ${plan.label}.`);
     });
   }
 
   function handleCancelPlan() {
     if (previewMode) return;
     startCancellation(async () => {
+      const previousState = state;
+      setState({
+        balance: state.balance,
+        activePlan: null,
+      });
+      setCancelDialogOpen(false);
+
       const res = await cancelActivePlan();
       if (!res.ok) {
-        toast.error("Could not cancel plan.", { description: res.error });
+        setState(previousState);
+        setCancelDialogOpen(true);
+        toastOptimisticRollback("Cancel plan", res.error);
         return;
       }
       if (res.data) {
@@ -143,7 +172,6 @@ export function WalletPlanTab({
           activePlan: res.data.activePlan,
         });
       }
-      setCancelDialogOpen(false);
       const stopped = res.data?.cancelledCampaigns ?? 0;
       toast.success(
         stopped > 0

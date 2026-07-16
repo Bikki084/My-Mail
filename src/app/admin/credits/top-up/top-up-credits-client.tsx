@@ -21,6 +21,7 @@ import {
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getWalletBalanceFor, topUpWallet } from "./actions";
+import { toastOptimisticRollback } from "@/lib/optimistic-ui";
 
 type TopUpCreditsClientProps = {
   initialUsers: AdminClientUserRow[];
@@ -157,18 +158,26 @@ export function TopUpCreditsClient({
     const numericAmount = Math.floor(Number(amount.trim()));
 
     startApplyTransition(async () => {
-      const res = await topUpWallet({ userId, amount: numericAmount });
+      const previousBalance = balance;
+      const appliedAmount = numericAmount;
+      if (previousBalance != null) {
+        setBalance(previousBalance + appliedAmount);
+      }
+      setAmount("");
+
+      const res = await topUpWallet({ userId, amount: appliedAmount });
       if (!res.ok) {
-        toast.error("Top-up failed.", { description: res.error });
+        setBalance(previousBalance);
+        setAmount(String(appliedAmount));
+        toastOptimisticRollback("Top-up credits", res.error);
         return;
       }
       const newBalance = res.data?.balance ?? null;
       setBalance(newBalance);
-      setAmount("");
       toast.success(
         newBalance !== null
-          ? `Added ${formatCredits(numericAmount)} credits. New balance: ${formatCredits(newBalance)}.`
-          : `Added ${formatCredits(numericAmount)} credits.`,
+          ? `Added ${formatCredits(appliedAmount)} credits. New balance: ${formatCredits(newBalance)}.`
+          : `Added ${formatCredits(appliedAmount)} credits.`,
       );
     });
   }
