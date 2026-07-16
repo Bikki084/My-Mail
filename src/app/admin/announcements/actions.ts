@@ -3,6 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/admin";
+import { resolveCacheLocale } from "@/lib/cache/render-cache";
+import { invalidateAnnouncementsCache } from "@/lib/cache/invalidate";
+import { getCachedAnnouncementsList } from "@/lib/cache/shared-queries";
 import {
   parseStrict,
   announcementCreateSchema,
@@ -73,6 +76,7 @@ export async function createAnnouncement(input: {
 
   revalidatePath("/admin/announcements");
   revalidatePath("/client");
+  invalidateAnnouncementsCache();
   return { ok: true, data: { id: data.id } };
 }
 
@@ -80,14 +84,9 @@ export async function listAnnouncements(): Promise<ActionResult<AdminAnnouncemen
   const guard = await assertAdmin();
   if (!guard.ok) return guard;
 
-  const supabase = await createServerSupabase();
-  const { data, error } = await supabase
-    .from("announcements")
-    .select("id, title, body, created_at")
-    .order("created_at", { ascending: false });
-
-  if (error) return { ok: false, error: error.message };
-  return { ok: true, data: (data ?? []) as AdminAnnouncementRow[] };
+  const locale = await resolveCacheLocale();
+  const data = await getCachedAnnouncementsList(locale);
+  return { ok: true, data };
 }
 
 export async function deleteAnnouncement(id: string): Promise<ActionResult> {
@@ -105,5 +104,6 @@ export async function deleteAnnouncement(id: string): Promise<ActionResult> {
 
   revalidatePath("/admin/announcements");
   revalidatePath("/client");
+  invalidateAnnouncementsCache();
   return { ok: true };
 }

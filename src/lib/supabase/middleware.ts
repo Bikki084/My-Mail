@@ -12,6 +12,21 @@ function applyNoStoreHeaders(response: NextResponse): NextResponse {
   return response;
 }
 
+/** Help pages with mostly static RSC output — allow private stale-while-revalidate. */
+const CLIENT_STATIC_HELP_PREFIXES = ["/client/recipients", "/client/deliverability"];
+
+function applyAppShellCacheHeaders(response: NextResponse, path: string): NextResponse {
+  if (CLIENT_STATIC_HELP_PREFIXES.some((p) => path === p || path.startsWith(`${p}/`))) {
+    response.headers.set("Cache-Control", "private, max-age=0, stale-while-revalidate=3600");
+    return response;
+  }
+  if (path === "/admin" || path.startsWith("/admin/announcements")) {
+    response.headers.set("Cache-Control", "private, max-age=0, stale-while-revalidate=60");
+    return response;
+  }
+  return applyNoStoreHeaders(response);
+}
+
 export async function updateSession(request: NextRequest) {
   const path = request.nextUrl.pathname;
 
@@ -124,7 +139,7 @@ export async function updateSession(request: NextRequest) {
   }
 
   if (path.startsWith("/admin") || path.startsWith("/client")) {
-    return applyNoStoreHeaders(supabaseResponse);
+    return applyAppShellCacheHeaders(supabaseResponse, path);
   }
 
   return supabaseResponse;

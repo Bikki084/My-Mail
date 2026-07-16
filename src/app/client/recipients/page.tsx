@@ -9,6 +9,9 @@ import { buttonVariants } from "@/components/ui/button";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 
+/** Static help content — safe to cache the RSC payload for all authenticated clients. */
+export const revalidate = 3600;
+
 export default function RecipientsHelpPage() {
   return (
     <div className="space-y-6">

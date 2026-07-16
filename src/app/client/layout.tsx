@@ -3,6 +3,8 @@ import { isClientDashboardPreviewMode } from "@/lib/auth-config";
 import { createClient } from "@/lib/supabase/server";
 import { ClientConsoleShell } from "@/components/client/client-console-shell";
 import type { AnnouncementItem } from "@/app/actions/announcements";
+import { resolveCacheLocale } from "@/lib/cache/render-cache";
+import { getCachedGlobalAnnouncements } from "@/lib/cache/shared-queries";
 
 const UNDEFINED_TABLE_CODE = "42P01";
 const POSTGREST_SCHEMA_CACHE_CODE = "PGRST205";
@@ -22,19 +24,11 @@ function isMissingReadsTable(err: {
 async function loadAnnouncements(
   userId: string,
 ): Promise<{ all: AnnouncementItem[]; unread: AnnouncementItem[] }> {
-  const supabase = await createClient();
-  const { data: ann, error } = await supabase
-    .from("announcements")
-    .select("id, title, body, created_at")
-    .order("created_at", { ascending: false });
-  if (error) {
-    console.error("[announcements] SSR fetch failed:", error.message);
-    return { all: [], unread: [] };
-  }
-
-  const all = (ann ?? []) as AnnouncementItem[];
+  const locale = await resolveCacheLocale();
+  const all = await getCachedGlobalAnnouncements(locale);
   if (all.length === 0) return { all: [], unread: [] };
 
+  const supabase = await createClient();
   const { data: reads, error: rErr } = await supabase
     .from("announcement_reads")
     .select("announcement_id")

@@ -3,15 +3,21 @@ import { BrevoQuotaPanel } from "@/components/admin/brevo-quota-panel";
 import { UserEmailsTodayCards } from "@/components/admin/user-emails-today-cards";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getBrevoQuotaForAdmin } from "@/app/admin/brevo-quota-actions";
-import { getDashboardStats, getPerUserEmailsToday } from "./actions";
+import { resolveCacheLocale } from "@/lib/cache/render-cache";
+import {
+  getCachedAdminDashboardStats,
+  getCachedPerUserEmailsToday,
+} from "@/lib/cache/shared-queries";
 
-export const dynamic = "force-dynamic";
+/** Tenant-wide stats fragment; invalidated via `admin-stats` tag on writes. */
+export const revalidate = 45;
 
 export default async function AdminDashboardPage() {
+  const locale = await resolveCacheLocale();
   const [s, brevo, perUser] = await Promise.all([
-    getDashboardStats(),
+    getCachedAdminDashboardStats(locale),
     getBrevoQuotaForAdmin(),
-    getPerUserEmailsToday(),
+    getCachedPerUserEmailsToday(locale),
   ]);
   return (
     <>

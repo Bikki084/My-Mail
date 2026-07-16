@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/admin";
+import { invalidateAdminStatsCache } from "@/lib/cache/invalidate";
 import { parseStrict, createClientUserSchema, updateClientUserEmailSchema } from "@/lib/validation";
 
 export type CreateClientUserInput = {
@@ -95,6 +96,7 @@ export async function createClientUser(
 
   revalidatePath("/admin/users");
   revalidatePath("/admin/credits/top-up");
+  invalidateAdminStatsCache();
   return { ok: true, data: { userId } };
 }
 
@@ -199,6 +201,7 @@ export async function updateClientUserEmail(
 
   revalidatePath("/admin/users");
   revalidatePath("/admin/credits/top-up");
+  invalidateAdminStatsCache();
   return { ok: true, data: profileRow as AdminClientUserRow };
 }
 

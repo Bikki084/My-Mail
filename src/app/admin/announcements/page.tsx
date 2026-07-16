@@ -1,7 +1,8 @@
 import { listAnnouncements } from "./actions";
 import { AnnouncementsClient } from "./announcements-client";
 
-export const dynamic = "force-dynamic";
+/** Shared announcement list is Data Cache tagged; auth still runs per request. */
+export const revalidate = 60;
 
 export default async function AnnouncementsPage() {
   const result = await listAnnouncements();

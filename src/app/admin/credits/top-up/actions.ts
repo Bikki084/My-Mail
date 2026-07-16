@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/admin";
+import { invalidateAdminStatsCache } from "@/lib/cache/invalidate";
 import { parseStrict, walletTopUpSchema } from "@/lib/validation";
 
 export type ActionResult<T = undefined> =
@@ -183,6 +184,7 @@ export async function topUpWallet(input: {
   revalidatePath("/admin/reports");
   revalidatePath("/client");
   revalidatePath("/client/overview");
+  invalidateAdminStatsCache();
 
   return { ok: true, data: { balance: newBalance } };
 }
