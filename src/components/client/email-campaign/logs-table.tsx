@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { ChevronLeft, ChevronRight, Loader2, RefreshCw } from "lucide-react";
+import { ChevronLeft, ChevronRight, Loader2, RefreshCw, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 import {
   Table,
   TableBody,
@@ -11,7 +12,18 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { createClient } from "@/lib/supabase/client";
+import {
+  countSendingLogsInDateRange,
+  deleteSendingLogsInDateRange,
+} from "@/app/actions/sending-logs";
+import {
+  endOfLocalDayIso,
+  startOfLocalDayIso,
+  todayYmdLocal,
+} from "@/lib/sending-log-dates";
 import {
   Card,
   CardContent,
@@ -49,6 +61,16 @@ function startOfTodayIso(): string {
   const d = new Date();
   d.setHours(0, 0, 0, 0);
   return d.toISOString();
+}
+
+type DateRangeFilter = { from: string; to: string };
+
+function formatRangeLabel(range: DateRangeFilter): string {
+  const fmt = (ymd: string) =>
+    new Date(`${ymd}T12:00:00`).toLocaleDateString(undefined, {
+      dateStyle: "medium",
+    });
+  return `${fmt(range.from)} – ${fmt(range.to)}`;
 }
 
 const MOCK_LOGS: LogRow[] = [
@@ -143,6 +165,12 @@ export function SendingLogsTab({ previewMode = false }: { previewMode?: boolean 
   const [page, setPage] = React.useState(1);
   const [initialLoading, setInitialLoading] = React.useState(true);
   const [refreshKey, setRefreshKey] = React.useState(0);
+  const [draftDateFrom, setDraftDateFrom] = React.useState("");
+  const [draftDateTo, setDraftDateTo] = React.useState(todayYmdLocal());
+  const [appliedDateRange, setAppliedDateRange] = React.useState<DateRangeFilter | null>(
+    null,
+  );
+  const [deleting, setDeleting] = React.useState(false);
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
   const fetchBatchInfo = React.useCallback(async (): Promise<BatchInfo | null> => {
@@ -263,35 +291,39 @@ export function SendingLogsTab({ previewMode = false }: { previewMode?: boolean 
         })
         .order("sent_at", { ascending: true, nullsFirst: false });
 
+      if (appliedDateRange) {
+        pageQuery = pageQuery
+          .gte("sent_at", startOfLocalDayIso(appliedDateRange.from))
+          .lte("sent_at", endOfLocalDayIso(appliedDateRange.to));
+      }
+
       if (batchMode && batchCampaignId) {
         pageQuery = pageQuery.eq("campaign_id", batchCampaignId);
       }
 
+      const countQuery = (statusFilter?: "sent" | "failed") => {
+        let q = supabase.from("sending_logs").select("id", { count: "exact", head: true });
+        if (appliedDateRange) {
+          q = q
+            .gte("sent_at", startOfLocalDayIso(appliedDateRange.from))
+            .lte("sent_at", endOfLocalDayIso(appliedDateRange.to));
+        }
+        if (batchMode && batchCampaignId) {
+          q = q.eq("campaign_id", batchCampaignId);
+        }
+        if (statusFilter === "sent") {
+          q = q.eq("status", "sent");
+        } else if (statusFilter === "failed") {
+          q = q.in("status", ["failed", "bounced"]);
+        }
+        return q;
+      };
+
       const [pageRes, sentRes, failedRes, allTimeTotalRes] = await Promise.all([
         pageQuery.range(from, to),
-        batchMode && batchCampaignId
-          ? supabase
-              .from("sending_logs")
-              .select("id", { count: "exact", head: true })
-              .eq("campaign_id", batchCampaignId)
-              .eq("status", "sent")
-          : supabase
-              .from("sending_logs")
-              .select("id", { count: "exact", head: true })
-              .eq("status", "sent"),
-        batchMode && batchCampaignId
-          ? supabase
-              .from("sending_logs")
-              .select("id", { count: "exact", head: true })
-              .eq("campaign_id", batchCampaignId)
-              .in("status", ["failed", "bounced"])
-          : supabase
-              .from("sending_logs")
-              .select("id", { count: "exact", head: true })
-              .in("status", ["failed", "bounced"]),
-        supabase
-          .from("sending_logs")
-          .select("id", { count: "exact", head: true }),
+        countQuery("sent"),
+        countQuery("failed"),
+        supabase.from("sending_logs").select("id", { count: "exact", head: true }),
       ]);
 
       if (pageRes.error) {
@@ -338,13 +370,13 @@ export function SendingLogsTab({ previewMode = false }: { previewMode?: boolean 
               }
             : prev,
         );
-      } else {
+      } else if (!appliedDateRange) {
         setSentTotal(sentRes.count ?? 0);
         setFailedTotal(failedRes.count ?? 0);
       }
       setInitialLoading(false);
     },
-    [previewMode, statsScope, batchInfo?.id],
+    [previewMode, statsScope, batchInfo?.id, appliedDateRange],
   );
 
   React.useEffect(() => {
@@ -437,6 +469,78 @@ export function SendingLogsTab({ previewMode = false }: { previewMode?: boolean 
     if (next === statsScope) return;
     setStatsScope(next);
     setPage(1);
+  }
+
+  function handleApplyDateRange() {
+    if (!draftDateFrom.trim() || !draftDateTo.trim()) {
+      toast.error("Choose both a start and end date.");
+      return;
+    }
+    if (draftDateFrom > draftDateTo) {
+      toast.error("Start date must be on or before end date.");
+      return;
+    }
+    setAppliedDateRange({ from: draftDateFrom, to: draftDateTo });
+    setPage(1);
+  }
+
+  function handleClearDateRange() {
+    setAppliedDateRange(null);
+    setDraftDateFrom("");
+    setDraftDateTo(todayYmdLocal());
+    setPage(1);
+  }
+
+  async function handleDeleteInRange() {
+    if (previewMode) return;
+    if (!appliedDateRange) {
+      toast.error("Apply a date range first, then delete.");
+      return;
+    }
+
+    setDeleting(true);
+    try {
+      const countRes = await countSendingLogsInDateRange({
+        from: appliedDateRange.from,
+        to: appliedDateRange.to,
+        campaignId: batchMode && batchInfo?.id ? batchInfo.id : undefined,
+      });
+      if (!countRes.ok) {
+        toast.error(countRes.error);
+        return;
+      }
+      const n = countRes.data?.count ?? 0;
+      if (n === 0) {
+        toast.message("No log rows in this date range.");
+        return;
+      }
+
+      const scopeNote =
+        batchMode && batchInfo
+          ? " (current batch only)"
+          : " (all campaigns in range)";
+      const ok = window.confirm(
+        `Delete ${n.toLocaleString()} delivery log row${n === 1 ? "" : "s"} from ${formatRangeLabel(appliedDateRange)}${scopeNote}? This cannot be undone.`,
+      );
+      if (!ok) return;
+
+      const delRes = await deleteSendingLogsInDateRange({
+        from: appliedDateRange.from,
+        to: appliedDateRange.to,
+        campaignId: batchMode && batchInfo?.id ? batchInfo.id : undefined,
+      });
+      if (!delRes.ok) {
+        toast.error(delRes.error);
+        return;
+      }
+      toast.success(
+        `Deleted ${(delRes.data?.deleted ?? 0).toLocaleString()} log row${(delRes.data?.deleted ?? 0) === 1 ? "" : "s"}.`,
+      );
+      setPage(1);
+      setRefreshKey((k) => k + 1);
+    } finally {
+      setDeleting(false);
+    }
   }
 
   const tableLoading = initialLoading && rows.length === 0;
@@ -556,78 +660,171 @@ export function SendingLogsTab({ previewMode = false }: { previewMode?: boolean 
       </Card>
 
       <Card className="border-zinc-800 bg-zinc-900/40 ring-zinc-800">
-        <CardHeader className="flex flex-col gap-4 space-y-0 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0">
-            <CardTitle className="text-zinc-100">Delivery log</CardTitle>
-            <CardDescription>
-              {previewMode
-                ? "Mock data — connect Supabase to see real deliveries."
-                : batchMode && !batchInfo
-                  ? "No batch started today — switch to All time to see every delivery."
-                  : totalCount === 0
-                    ? batchMode
-                      ? "No rows for this batch yet."
-                      : "No deliveries logged yet."
-                    : batchMode
-                      ? `Rows ${showingFrom}–${showingTo} of ${totalCount} (this batch, # starts at 1).`
-                      : `Rows ${showingFrom}–${showingTo} of ${totalCount} (all time, oldest first).`}
-            </CardDescription>
-          </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
-            <span className="tabular-nums text-sm text-zinc-400">
-              Page {page} of {totalPages}
-            </span>
-            <div className="flex items-center gap-1">
+        <CardHeader className="space-y-4">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0 flex-1">
+              <CardTitle className="text-zinc-100">Delivery log</CardTitle>
+              <CardDescription>
+                {previewMode
+                  ? "Mock data — connect Supabase to see real deliveries."
+                  : batchMode && !batchInfo
+                    ? "No batch started today — switch to All time to see every delivery."
+                    : totalCount === 0
+                      ? batchMode
+                        ? appliedDateRange
+                          ? "No rows for this batch in the selected date range."
+                          : "No rows for this batch yet."
+                        : appliedDateRange
+                          ? "No deliveries in the selected date range."
+                          : "No deliveries logged yet."
+                      : batchMode
+                        ? appliedDateRange
+                          ? `Rows ${showingFrom}–${showingTo} of ${totalCount} (batch, ${formatRangeLabel(appliedDateRange)}).`
+                          : `Rows ${showingFrom}–${showingTo} of ${totalCount} (this batch, # starts at 1).`
+                        : appliedDateRange
+                          ? `Rows ${showingFrom}–${showingTo} of ${totalCount} (${formatRangeLabel(appliedDateRange)}).`
+                          : `Rows ${showingFrom}–${showingTo} of ${totalCount} (all time, oldest first).`}
+              </CardDescription>
+            </div>
+            <div className="flex shrink-0 flex-wrap items-center gap-2 lg:justify-end">
+              <span className="tabular-nums text-sm text-zinc-400">
+                Page {page} of {totalPages}
+              </span>
+              <div className="flex items-center gap-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="border-zinc-700"
+                  disabled={page <= 1 || tableLoading || previewMode}
+                  onClick={() => goToPage(page - 1)}
+                  aria-label="Previous page"
+                >
+                  <ChevronLeft className="size-4" />
+                  Previous
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="border-zinc-700"
+                  disabled={page >= totalPages || tableLoading || previewMode}
+                  onClick={() => goToPage(page + 1)}
+                  aria-label="Next page"
+                >
+                  Next
+                  <ChevronRight className="size-4" />
+                </Button>
+              </div>
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
                 className="border-zinc-700"
-                disabled={page <= 1 || tableLoading || previewMode}
-                onClick={() => goToPage(page - 1)}
-                aria-label="Previous page"
+                disabled={tableLoading || previewMode || totalCount === 0}
+                onClick={handleGoToLatest}
               >
-                <ChevronLeft className="size-4" />
-                Previous
+                Latest
               </Button>
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
-                className="border-zinc-700"
-                disabled={page >= totalPages || tableLoading || previewMode}
-                onClick={() => goToPage(page + 1)}
-                aria-label="Next page"
+                className="inline-flex border-zinc-700"
+                disabled={tableLoading || previewMode}
+                onClick={handleRefreshSamePage}
               >
-                Next
-                <ChevronRight className="size-4" />
+                {tableLoading ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="size-4" />
+                )}
+                Refresh
               </Button>
             </div>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="border-zinc-700"
-              disabled={tableLoading || previewMode || totalCount === 0}
-              onClick={handleGoToLatest}
-            >
-              Latest
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="inline-flex border-zinc-700"
-              disabled={tableLoading || previewMode}
-              onClick={handleRefreshSamePage}
-            >
-              {tableLoading ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <RefreshCw className="size-4" />
-              )}
-              Refresh
-            </Button>
+          </div>
+          <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-3">
+            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">
+              Date range
+            </p>
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
+              <div className="grid flex-1 gap-2 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <Label htmlFor="log-date-from" className="text-xs text-zinc-400">
+                    From
+                  </Label>
+                  <Input
+                    id="log-date-from"
+                    type="date"
+                    className="border-zinc-700 bg-zinc-950/50"
+                    value={draftDateFrom}
+                    disabled={previewMode}
+                    onChange={(e) => setDraftDateFrom(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="log-date-to" className="text-xs text-zinc-400">
+                    To
+                  </Label>
+                  <Input
+                    id="log-date-to"
+                    type="date"
+                    className="border-zinc-700 bg-zinc-950/50"
+                    value={draftDateTo}
+                    disabled={previewMode}
+                    onChange={(e) => setDraftDateTo(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="bg-zinc-800 text-zinc-100"
+                  disabled={previewMode}
+                  onClick={handleApplyDateRange}
+                >
+                  Apply range
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="border-zinc-700"
+                  disabled={previewMode || !appliedDateRange}
+                  onClick={handleClearDateRange}
+                >
+                  Clear
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="border-red-900/60 text-red-300 hover:bg-red-950/40"
+                  disabled={previewMode || !appliedDateRange || deleting}
+                  onClick={() => void handleDeleteInRange()}
+                >
+                  {deleting ? (
+                    <Loader2 className="mr-2 size-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="mr-2 size-4" />
+                  )}
+                  Delete in range
+                </Button>
+              </div>
+            </div>
+            {appliedDateRange ? (
+              <p className="mt-2 text-xs text-emerald-400/90">
+                Filtering: {formatRangeLabel(appliedDateRange)}
+                {batchMode && batchInfo ? " · this batch only" : ""}
+              </p>
+            ) : (
+              <p className="mt-2 text-xs text-zinc-500">
+                Pick dates and apply to filter the table. Delete removes your log rows in that
+                range (cannot be undone).
+              </p>
+            )}
           </div>
         </CardHeader>
         <CardContent className="overflow-x-auto">
