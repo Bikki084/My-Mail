@@ -133,7 +133,9 @@ export function BrevoQuotaPanel({ initial }: { initial: BrevoQuotaSnapshot }) {
             {hasUsageBar && (
               <div>
                 <div className="mb-1 flex justify-between text-xs text-gray-400">
-                  <span>Daily usage (Free plan)</span>
+                  <span>
+                    {quota.period === "month" ? "Plan usage" : "Daily usage (Free plan)"}
+                  </span>
                   <span className="tabular-nums">
                     {quota.used!.toLocaleString()} / {quota.limit!.toLocaleString()}
                   </span>
@@ -151,11 +153,37 @@ export function BrevoQuotaPanel({ initial }: { initial: BrevoQuotaSnapshot }) {
 
             {quota.live && quota.period === "month" && quota.remaining != null && (
               <p className="text-xs text-gray-500">
-                Paid Brevo plans use a monthly email pool. Remaining:{" "}
-                <span className="tabular-nums text-gray-300">
-                  {quota.remaining.toLocaleString()}
-                </span>{" "}
-                emails this month.
+                {quota.limit != null ? (
+                  <>
+                    <span className="tabular-nums text-gray-300">
+                      {quota.remaining.toLocaleString()}
+                    </span>{" "}
+                    left out of{" "}
+                    <span className="tabular-nums text-gray-300">
+                      {quota.limit.toLocaleString()}
+                    </span>
+                    {quota.periodEndsAt ? (
+                      <>
+                        {" "}
+                        until{" "}
+                        {new Date(`${quota.periodEndsAt}T00:00:00`).toLocaleDateString(undefined, {
+                          day: "2-digit",
+                          month: "2-digit",
+                          year: "numeric",
+                        })}
+                      </>
+                    ) : null}
+                    .
+                  </>
+                ) : (
+                  <>
+                    Paid Brevo plans use a monthly email pool. Remaining:{" "}
+                    <span className="tabular-nums text-gray-300">
+                      {quota.remaining.toLocaleString()}
+                    </span>{" "}
+                    emails this month.
+                  </>
+                )}
               </p>
             )}
           </>
