@@ -40,6 +40,9 @@ fi
 
 echo ""
 echo "3) Write nginx site config..."
+# Ensure hardened proxy snippet exists before referencing it.
+bash "${SCRIPT_DIR}/harden-nginx-proxy.sh" || true
+
 cat > "${NGINX_SITE}" <<EOF
 # ${DOMAIN} — managed by scripts/setup-https.sh
 server {
