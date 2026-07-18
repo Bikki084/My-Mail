@@ -8,8 +8,22 @@ import { WalletPlanTab } from "./wallet-plan-tab";
 import type { WalletState } from "@/app/actions/wallet";
 import { CsvRecipientsTab } from "./csv-table";
 import { SmtpForm } from "./smtp-form";
-import { EmailEditor } from "./email-editor";
+import dynamic from "next/dynamic";
 import { SendingLogsTab } from "./logs-table";
+
+/** Lazy-load composer so Monaco never lands in the initial /client bundle. */
+const EmailEditor = dynamic(
+  () =>
+    import("./email-editor").then((m) => ({ default: m.EmailEditor })),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 px-4 py-10 text-center text-sm text-zinc-500">
+        Loading Email Composer…
+      </div>
+    ),
+  },
+);
 import { UserProfile } from "./user-profile";
 import { AnnouncementBell } from "@/components/client/announcements/announcement-bell";
 import { useAnnouncementsSnapshot } from "@/components/client/announcements/announcements-context";
@@ -126,7 +140,12 @@ export function EmailCampaignConsole({
         </TabsContent>
 
         <TabsContent value="composer" className="mt-0 outline-none">
-          <EmailEditor previewMode={previewMode} isComposerActive={activeTab === "composer"} />
+          {activeTab === "composer" ? (
+            <EmailEditor
+              previewMode={previewMode}
+              isComposerActive={activeTab === "composer"}
+            />
+          ) : null}
         </TabsContent>
 
         <TabsContent value="logs" className="mt-0 outline-none">

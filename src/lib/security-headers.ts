@@ -17,7 +17,13 @@ function supabaseConnectSources(): string {
 /** Content-Security-Policy tuned for this Next.js + Supabase app without breaking UI. */
 export function buildContentSecurityPolicy(): string {
   const supabase = supabaseConnectSources();
-  const connectParts = ["'self'", "blob:", "https://*.supabase.co", "wss://*.supabase.co"];
+  const connectParts = [
+    "'self'",
+    "blob:",
+    "https://cdn.jsdelivr.net",
+    "https://*.supabase.co",
+    "wss://*.supabase.co",
+  ];
   if (supabase) connectParts.push(supabase.trim());
   const connectSrc = connectParts.join(" ");
 
@@ -28,12 +34,13 @@ export function buildContentSecurityPolicy(): string {
     "frame-ancestors 'self'",
     "object-src 'none'",
     // Next.js hydration and RSC need inline/eval in this stack.
+    // Monaco Editor assets load from jsDelivr CDN (not bundled into the page).
     "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net",
-    "style-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
     "img-src 'self' data: blob: https:",
     "font-src 'self' data: https://cdn.jsdelivr.net",
     `connect-src ${connectSrc}`,
-    "worker-src 'self' blob: https://cdn.jsdelivr.net",
+    "worker-src 'self' blob: data: https://cdn.jsdelivr.net",
     "manifest-src 'self'",
     "upgrade-insecure-requests",
   ].join("; ");

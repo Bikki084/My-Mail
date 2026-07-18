@@ -7,47 +7,40 @@ import {
 import { BULKFIRE_MONACO_THEME, bulkfireMonacoTheme } from "./bulkfire-theme";
 
 const MONACO_VERSION = "0.55.1";
-/** CDN fallback for Monaco web workers when bundled worker URLs are unavailable. */
 export const MONACO_CDN_BASE = `https://cdn.jsdelivr.net/npm/monaco-editor@${MONACO_VERSION}/min/vs`;
 
 let themeRegistered = false;
 let loaderConfigured = false;
 let workersConfigured = false;
 
-export function configureMonacoLoader(loader: {
-  config: (options: {
-    paths?: { vs: string };
-    monaco?: unknown | (() => Promise<unknown>);
-  }) => void;
-}) {
+type MonacoLoader = {
+  config: (options: { paths?: { vs: string } }) => void;
+};
+
+/** Load Monaco from CDN — never bundle monaco-editor into the app chunk. */
+export function configureMonacoLoader(loader: MonacoLoader) {
   if (loaderConfigured) return;
-  loader.config({
-    monaco: () => import("monaco-editor"),
-  });
+  loader.config({ paths: { vs: MONACO_CDN_BASE } });
   loaderConfigured = true;
 }
 
-/** Configure Monaco language workers (required for HTML/CSS token colors). */
+/**
+ * Cross-origin CDN workers must be loaded via a same-origin blob script.
+ * Direct `new Worker(cdnUrl)` is blocked by browsers and can crash the editor.
+ */
 export function configureMonacoWorkers() {
   if (typeof window === "undefined" || workersConfigured) return;
   workersConfigured = true;
 
-  const base = MONACO_CDN_BASE;
+  const base = `${MONACO_CDN_BASE}/`;
   window.MonacoEnvironment = {
-    getWorker(_workerId, label) {
-      if (label === "json") {
-        return new Worker(`${base}/language/json/json.worker.js`, { type: "classic" });
-      }
-      if (label === "css" || label === "scss" || label === "less") {
-        return new Worker(`${base}/language/css/css.worker.js`, { type: "classic" });
-      }
-      if (label === "html" || label === "handlebars" || label === "razor") {
-        return new Worker(`${base}/language/html/html.worker.js`, { type: "classic" });
-      }
-      if (label === "typescript" || label === "javascript") {
-        return new Worker(`${base}/language/typescript/ts.worker.js`, { type: "classic" });
-      }
-      return new Worker(`${base}/editor/editor.worker.js`, { type: "classic" });
+    getWorkerUrl() {
+      const js = [
+        `self.MonacoEnvironment={baseUrl:${JSON.stringify(base)}};`,
+        `importScripts(${JSON.stringify(`${MONACO_CDN_BASE}/base/worker/workerMain.js`)});`,
+      ].join("");
+      const blob = new Blob([js], { type: "text/javascript" });
+      return URL.createObjectURL(blob);
     },
   };
 }
@@ -55,23 +48,27 @@ export function configureMonacoWorkers() {
 export function registerBulkfireMonacoTheme(monaco: Monaco) {
   if (themeRegistered) return;
   monaco.editor.defineTheme(BULKFIRE_MONACO_THEME, bulkfireMonacoTheme);
-  monaco.languages.html.htmlDefaults.setOptions({
-    autoClosingTags: true,
-    format: {
-      tabSize: 2,
-      insertSpaces: true,
-      wrapLineLength: 120,
-      unformatted: "",
-      contentUnformatted: "pre,code,textarea",
-      indentInnerHtml: true,
-      preserveNewLines: true,
-      maxPreserveNewLines: null,
-      indentHandlebars: false,
-      endWithNewline: false,
-      extraLiners: "",
-      wrapAttributes: "auto",
-    },
-  });
+  try {
+    monaco.languages.html.htmlDefaults.setOptions({
+      autoClosingTags: true,
+      format: {
+        tabSize: 2,
+        insertSpaces: true,
+        wrapLineLength: 120,
+        unformatted: "",
+        contentUnformatted: "pre,code,textarea",
+        indentInnerHtml: true,
+        preserveNewLines: true,
+        maxPreserveNewLines: null,
+        indentHandlebars: false,
+        endWithNewline: false,
+        extraLiners: "",
+        wrapAttributes: "auto",
+      },
+    });
+  } catch {
+    // HTML language defaults may be unavailable until CDN workers load.
+  }
   themeRegistered = true;
 }
 

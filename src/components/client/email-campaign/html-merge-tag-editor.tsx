@@ -1,8 +1,6 @@
 "use client";
 
 import * as React from "react";
-import type { Monaco } from "@monaco-editor/react";
-import type { editor } from "monaco-editor";
 import {
   CodeEditor,
   type CodeEditorHandle,
@@ -41,7 +39,9 @@ export const HtmlMergeTagEditor = React.forwardRef<
   ref,
 ) {
   const editorRef = React.useRef<CodeEditorHandle>(null);
-  const monacoRef = React.useRef<Monaco | null>(null);
+  const monacoRef = React.useRef<Parameters<
+    typeof registerMergeTagCompletionProvider
+  >[0] | null>(null);
   const completionDisposableRef = React.useRef<{ dispose: () => void } | null>(
     null,
   );
@@ -59,7 +59,7 @@ export const HtmlMergeTagEditor = React.forwardRef<
   }));
 
   const registerCompletions = React.useCallback(
-    (monaco: Monaco) => {
+    (monaco: Parameters<typeof registerMergeTagCompletionProvider>[0]) => {
       completionDisposableRef.current?.dispose();
       completionDisposableRef.current = registerMergeTagCompletionProvider(
         monaco,
@@ -70,9 +70,12 @@ export const HtmlMergeTagEditor = React.forwardRef<
   );
 
   const handleMount = React.useCallback(
-    (_editor: editor.IStandaloneCodeEditor, monaco: Monaco) => {
-      monacoRef.current = monaco;
-      registerCompletions(monaco);
+    (_editor: unknown, monaco: unknown) => {
+      const monacoApi = monaco as Parameters<
+        typeof registerMergeTagCompletionProvider
+      >[0];
+      monacoRef.current = monacoApi;
+      registerCompletions(monacoApi);
     },
     [registerCompletions],
   );
