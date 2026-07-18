@@ -8,12 +8,22 @@ export async function runAsyncPool<T>(
   if (items.length === 0) return;
 
   let nextIndex = 0;
+
   async function runOne(): Promise<void> {
     for (;;) {
       const i = nextIndex;
       nextIndex += 1;
       if (i >= items.length) return;
-      await worker(items[i]!, i);
+      try {
+        await worker(items[i]!, i);
+      } catch (err) {
+        // Keep draining the queue so one throw does not strand remaining items
+        // (e.g. unlogged recipients after a partial batch).
+        console.error(
+          `[async-pool] worker item ${i} failed:`,
+          err instanceof Error ? err.message : err,
+        );
+      }
     }
   }
 

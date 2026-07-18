@@ -242,10 +242,12 @@ export async function deliverCampaignInParallel(
   shared.liveFailed = existingFailedRes.count ?? 0;
 
   async function flushCampaignProgress(force = false): Promise<void> {
+    // Always persist buffered sending_logs first so failed rows are never lost
+    // if a worker throws before the final flush.
+    await sendingLogBatcher.flush();
     const now = Date.now();
     if (!force && now - shared.lastProgressFlushAt < 400) return;
     shared.lastProgressFlushAt = now;
-    await sendingLogBatcher.flush();
     await supabase
       .from("campaigns")
       .update({
@@ -381,12 +383,13 @@ export async function deliverCampaignInParallel(
           smtp_used: smtpLabel,
           status: "failed",
           error_message: errMsg,
+          sent_at: new Date().toISOString(),
         });
         shared.liveFailed += 1;
       }
       if (failureLogs.length > 0) {
         await sendingLogBatcher.pushMany(failureLogs);
-        void flushCampaignProgress();
+        await flushCampaignProgress(true);
       }
       return;
     }
@@ -424,7 +427,30 @@ export async function deliverCampaignInParallel(
       return transportState.transporter;
     }
 
+    async function logFailedRecipient(
+      recipient: RecipientRow,
+      emailKey: string,
+      errorMessage: string,
+      smtpUsed: string | null = smtpLabel,
+    ): Promise<void> {
+      shared.alreadySent.add(emailKey);
+      await recordFailedSend();
+      await sendingLogBatcher.push({
+        campaign_id: campaignId,
+        user_id: userId,
+        recipient_email: recipient.email,
+        smtp_used: smtpUsed,
+        status: "failed",
+        error_message: errorMessage.slice(0, 2000),
+        sent_at: new Date().toISOString(),
+      });
+      shared.liveFailed += 1;
+      void flushCampaignProgress();
+    }
+
     async function sendOne({ recipient }: { recipient: RecipientRow }): Promise<void> {
+      // Pause/cancel leaves remaining recipients for a later resume — do not
+      // invent failure rows for unattempted addresses.
       if (shared.pausedForRotation) return;
       if (shouldAbort && (await shouldAbort())) return;
 
@@ -432,72 +458,68 @@ export async function deliverCampaignInParallel(
       if (shared.alreadySent.has(emailKey)) return;
 
       if (suppressed.has(emailKey)) {
-        shared.alreadySent.add(emailKey);
-        await recordFailedSend();
-        await sendingLogBatcher.push({
-          campaign_id: campaignId,
-          user_id: userId,
-          recipient_email: recipient.email,
-          smtp_used: null,
-          status: "failed",
-          error_message: "Recipient previously unsubscribed (skipped).",
-        });
-        shared.liveFailed += 1;
-        void flushCampaignProgress();
+        await logFailedRecipient(
+          recipient,
+          emailKey,
+          "Recipient previously unsubscribed (skipped).",
+          null,
+        );
         return;
       }
 
-      const subj = applyMergeTags(
-        (campaign.subject as string | null) ?? "No subject",
-        recipient,
-        { missingFormat: "plain" },
-      );
-      const sourceHtml = (campaign.body_html as string | null) ?? "";
-      const safeHtml = sourceHtml ? sanitizeEmailHtml(sourceHtml) : "";
-      const html = applyMergeTags(safeHtml, recipient, { missingFormat: "html" });
-      const text = htmlToPlainText(html);
-      const from = `${senderName} <${resolveSmtpFromAddress(smtp.username, smtp.host)}>`;
-
-      const dynamicAttachments: Attachment[] = [];
-      if (renderBrowser && htmlAttSpec) {
-        const mergedAttachHtml = applyMergeTags(
-          sanitizeAttachmentRenderHtml(htmlAttSpec.html),
-          recipient,
-          { missingFormat: "html" },
-        );
-        const render = async () => {
-          const buf =
-            htmlAttSpec.kind === "pdf"
-              ? await renderHtmlToPdfBuffer(renderBrowser, mergedAttachHtml)
-              : htmlAttSpec.kind === "jpeg"
-                ? await renderHtmlToJpegBuffer(renderBrowser, mergedAttachHtml)
-                : await renderHtmlToPngBuffer(renderBrowser, mergedAttachHtml);
-          if (buf.length > GENERATED_ATTACH_MAX_BYTES) {
-            throw new Error("Generated attachment is too large (max 8 MB).");
-          }
-          const meta = htmlAttachmentMeta(htmlAttSpec.kind);
-          dynamicAttachments.push({
-            filename: meta.filename,
-            content: buf,
-            contentType: meta.contentType,
-          });
-        };
-        if (renderSemaphore) {
-          await renderSemaphore.run(render);
-        } else {
-          await render();
-        }
-      }
-
-      const allAttachments = [...staticAttachments, ...dynamicAttachments];
-      const attachCount = allAttachments.length;
-      const mimeEnc = resolveMailEncoding(
-        (campaign.encoding as string | null) ?? "auto",
-        { isHtml: safeHtml.trim().length > 0 },
-        attachCount,
-      );
-
+      // Entire send pipeline must be caught — merge/sanitize/attachment render
+      // used to throw outside the SMTP try/catch and never write a failed log.
       try {
+        const subj = applyMergeTags(
+          (campaign.subject as string | null) ?? "No subject",
+          recipient,
+          { missingFormat: "plain" },
+        );
+        const sourceHtml = (campaign.body_html as string | null) ?? "";
+        const safeHtml = sourceHtml ? sanitizeEmailHtml(sourceHtml) : "";
+        const html = applyMergeTags(safeHtml, recipient, { missingFormat: "html" });
+        const text = htmlToPlainText(html);
+        const from = `${senderName} <${resolveSmtpFromAddress(smtp.username, smtp.host)}>`;
+
+        const dynamicAttachments: Attachment[] = [];
+        if (renderBrowser && htmlAttSpec) {
+          const mergedAttachHtml = applyMergeTags(
+            sanitizeAttachmentRenderHtml(htmlAttSpec.html),
+            recipient,
+            { missingFormat: "html" },
+          );
+          const render = async () => {
+            const buf =
+              htmlAttSpec.kind === "pdf"
+                ? await renderHtmlToPdfBuffer(renderBrowser, mergedAttachHtml)
+                : htmlAttSpec.kind === "jpeg"
+                  ? await renderHtmlToJpegBuffer(renderBrowser, mergedAttachHtml)
+                  : await renderHtmlToPngBuffer(renderBrowser, mergedAttachHtml);
+            if (buf.length > GENERATED_ATTACH_MAX_BYTES) {
+              throw new Error("Generated attachment is too large (max 8 MB).");
+            }
+            const meta = htmlAttachmentMeta(htmlAttSpec.kind);
+            dynamicAttachments.push({
+              filename: meta.filename,
+              content: buf,
+              contentType: meta.contentType,
+            });
+          };
+          if (renderSemaphore) {
+            await renderSemaphore.run(render);
+          } else {
+            await render();
+          }
+        }
+
+        const allAttachments = [...staticAttachments, ...dynamicAttachments];
+        const attachCount = allAttachments.length;
+        const mimeEnc = resolveMailEncoding(
+          (campaign.encoding as string | null) ?? "auto",
+          { isHtml: safeHtml.trim().length > 0 },
+          attachCount,
+        );
+
         let htmlPart = html.trim();
         const textPart = text.trim();
         if (!htmlPart && !allAttachments.length) {
@@ -508,7 +530,9 @@ export async function deliverCampaignInParallel(
         }
         const fallbackText =
           textPart ||
-          (allAttachments.length && !html.trim() ? "Please see the attached file(s)." : "");
+          (allAttachments.length && !html.trim()
+            ? "Please see the attached file(s)."
+            : "");
         const textBody = fallbackText.trim();
 
         const delivery = buildDeliverabilityHeaders({
@@ -586,18 +610,7 @@ export async function deliverCampaignInParallel(
           await sleep(SMTP_INTER_SEND_MS);
         }
       } catch (e) {
-        shared.alreadySent.add(emailKey);
-        await recordFailedSend();
-        await sendingLogBatcher.push({
-          campaign_id: campaignId,
-          user_id: userId,
-          recipient_email: recipient.email,
-          smtp_used: smtpLabel,
-          status: "failed",
-          error_message: friendlyErr(e).slice(0, 2000),
-        });
-        shared.liveFailed += 1;
-        void flushCampaignProgress();
+        await logFailedRecipient(recipient, emailKey, friendlyErr(e));
       }
     }
 
@@ -615,12 +628,16 @@ export async function deliverCampaignInParallel(
     console.log(`[campaign-delivery] worker done smtp=${smtpLabel}`);
   }
 
-  await Promise.all(
-    smtpList.map((smtp, smtpIndex) => runSmtpWorker(smtpIndex, smtp)),
-  );
-
-  await sendingLogBatcher.flush();
-  await flushCampaignProgress(true);
+  try {
+    await Promise.all(
+      smtpList.map((smtp, smtpIndex) => runSmtpWorker(smtpIndex, smtp)),
+    );
+  } finally {
+    // Always flush buffered logs — even when a worker throws — so failed rows
+    // appear in Sending & Logs with their error messages.
+    await sendingLogBatcher.flush();
+    await flushCampaignProgress(true);
+  }
 
   return {
     failed: shared.failed,

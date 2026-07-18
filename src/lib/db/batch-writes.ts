@@ -127,10 +127,22 @@ export class SendingLogBatcher {
     if (this.buffer.length === 0) return;
     const chunk = this.buffer.splice(0, this.chunkSize);
     const { error } = await this.supabase.from("sending_logs").insert(chunk);
-    if (error) {
-      console.warn(
-        `[campaign-delivery] sending_logs batch insert failed (${chunk.length} rows): ${error.message}`,
-      );
+    if (!error) return;
+
+    console.warn(
+      `[campaign-delivery] sending_logs batch insert failed (${chunk.length} rows): ${error.message}. Falling back to per-row inserts.`,
+    );
+
+    // Never drop failed/sent rows silently — retry one-by-one so the UI can show them.
+    for (const row of chunk) {
+      const { error: rowError } = await this.supabase
+        .from("sending_logs")
+        .insert(row);
+      if (rowError) {
+        console.error(
+          `[campaign-delivery] sending_logs row insert failed for ${row.recipient_email} (${row.status}): ${rowError.message}`,
+        );
+      }
     }
   }
 }
