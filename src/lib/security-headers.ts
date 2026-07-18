@@ -28,12 +28,12 @@ export function buildContentSecurityPolicy(): string {
     "frame-ancestors 'self'",
     "object-src 'none'",
     // Next.js hydration and RSC need inline/eval in this stack.
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https:",
-    "font-src 'self' data:",
+    "font-src 'self' data: https://cdn.jsdelivr.net",
     `connect-src ${connectSrc}`,
-    "worker-src 'self' blob:",
+    "worker-src 'self' blob: https://cdn.jsdelivr.net",
     "manifest-src 'self'",
     "upgrade-insecure-requests",
   ].join("; ");

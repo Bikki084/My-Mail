@@ -35,6 +35,7 @@ import { applyMergePreview, buildPreviewRecipient, htmlToPlainText } from "@/lib
 import { randomId } from "@/lib/random-id";
 import { useEmailCampaign } from "./email-campaign-context";
 import { MergeTagAutocompleteField } from "./merge-tag-autocomplete-field";
+import { HtmlMergeTagEditor, type HtmlMergeTagEditorHandle } from "./html-merge-tag-editor";
 import { MergeTagInsertMenu } from "./merge-tag-insert";
 import { mergeTagKeysForAutocomplete } from "@/lib/merge-tags";
 import {
@@ -74,6 +75,7 @@ export function EmailEditor({
   ]);
   const { attachmentKind, attachmentHtml } = composerUi;
   const [previewOpen, setPreviewOpen] = React.useState(false);
+  const attachmentEditorRef = React.useRef<HtmlMergeTagEditorHandle>(null);
   const [previewLoading, setPreviewLoading] = React.useState(false);
   const [previewHtmlMerged, setPreviewHtmlMerged] = React.useState<string | null>(null);
   const [previewMeta, setPreviewMeta] = React.useState<{
@@ -490,11 +492,10 @@ export function EmailEditor({
           </div>
           <div className="space-y-2">
             <Label htmlFor="body-html">Email Content (HTML)</Label>
-            <MergeTagAutocompleteField
+            <HtmlMergeTagEditor
               id="body-html"
-              multiline
               placeholder="Write your HTML email here"
-              className="min-h-40"
+              height={500}
               tagKeys={autocompleteTagKeys}
               value={composeDraft.html}
               onChange={(html) => updateCompose({ html })}
@@ -513,6 +514,7 @@ export function EmailEditor({
               readOnly
               aria-readonly="true"
               tabIndex={-1}
+              spellCheck={false}
               className="min-h-28 cursor-not-allowed select-text bg-zinc-950/70 font-mono text-sm text-zinc-300"
               placeholder="Will be generated from the HTML above"
               value={autoPlainText}
@@ -668,15 +670,13 @@ export function EmailEditor({
                 <MergeTagInsertMenu
                   lastParsedCsv={lastParsedCsv}
                   builtInMergeTags={builtInMergeTags}
-                  onInsert={(tag) =>
-                    updateComposerUi({ attachmentHtml: `${attachmentHtml}${tag}` })
-                  }
+                  onInsert={(tag) => attachmentEditorRef.current?.insertText(tag)}
                 />
               </div>
-              <MergeTagAutocompleteField
+              <HtmlMergeTagEditor
+                ref={attachmentEditorRef}
                 id="attachment-html"
-                multiline
-                className="field-sizing-fixed h-64 max-h-64 min-h-0 resize-none overflow-auto"
+                height={500}
                 placeholder={
                   attachmentKind === "pdf" || attachmentKind === "pdf_image"
                     ? "<div><h1>Invoice</h1><p>City: {{{city}}}</p></div>"
@@ -684,7 +684,7 @@ export function EmailEditor({
                 }
                 tagKeys={autocompleteTagKeys}
                 value={attachmentHtml}
-                onChange={(attachmentHtml) => updateComposerUi({ attachmentHtml })}
+                onChange={(nextHtml) => updateComposerUi({ attachmentHtml: nextHtml })}
               />
               {attachmentKind === "jpeg" ? (
                 <p className="text-xs text-zinc-500">

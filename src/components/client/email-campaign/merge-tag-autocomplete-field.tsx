@@ -133,6 +133,9 @@ export function MergeTagAutocompleteField({
     placeholder,
     disabled,
     autoComplete: "off" as const,
+    spellCheck: false,
+    autoCorrect: "off" as const,
+    autoCapitalize: "off" as const,
     "aria-autocomplete": "list" as const,
     "aria-expanded": open,
   };
