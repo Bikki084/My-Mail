@@ -132,8 +132,20 @@ done
 rm -rf "${BACKUP_DIR}"
 
 echo ""
+echo "7) Ensure nginx can still reload (skip if nginx absent)..."
+if command -v nginx >/dev/null 2>&1; then
+  if sudo nginx -t 2>/dev/null; then
+    sudo systemctl reload nginx 2>/dev/null || true
+  else
+    echo "   WARN: nginx -t failed — run: sudo bash scripts/harden-nginx-proxy.sh"
+  fi
+fi
+
+echo ""
 pm2 status
 echo ""
 echo "=== Deploy complete — https://bulkfirepro.com ==="
 echo "If browser shows http only, run once: sudo bash scripts/setup-https.sh"
+echo "If 502s return randomly, run once: bash scripts/install-site-reliability.sh"
 echo ""
+
