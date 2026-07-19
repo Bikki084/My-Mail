@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Eye, EyeOff, Mail } from "lucide-react";
+import { Eye, EyeOff, Loader2, Mail } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { isSupabaseAuthConfigured } from "@/lib/auth-config";
 import { Input } from "@/components/ui/input";
@@ -23,6 +23,7 @@ import {
   authToggleButtonClass,
 } from "@/components/auth/auth-styles";
 import { AuthPageShell } from "@/components/auth/auth-page-shell";
+import { AuthLoadingOverlay } from "@/components/auth/auth-loading-overlay";
 import { clearTabSession, markTabSessionActive } from "@/lib/auth/tab-session";
 import {
   AUTH_EMAIL_MAX_LENGTH,
@@ -74,13 +75,14 @@ export function SignInForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [authInProgress, setAuthInProgress] = useState(false);
   const [sessionCleared, setSessionCleared] = useState(false);
   const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
   const [formError, setFormError] = useState<FormError | null>(null);
   const [lockoutSecondsLeft, setLockoutSecondsLeft] = useState(0);
   const failedAttemptsRef = useRef(0);
   const submitInFlightRef = useRef(false);
+  const pendingAfterOverlayRef = useRef<(() => void) | null>(null);
   const resetToastShown = useRef(false);
   const authGateToastShown = useRef(false);
 
@@ -155,6 +157,24 @@ export function SignInForm() {
     );
   }, [lockoutSecondsLeft]);
 
+  function finishAuthAttempt(afterOverlay?: () => void) {
+    if (afterOverlay) {
+      pendingAfterOverlayRef.current = afterOverlay;
+    }
+    setAuthInProgress(false);
+  }
+
+  function handleOverlayExitComplete() {
+    const next = pendingAfterOverlayRef.current;
+    pendingAfterOverlayRef.current = null;
+    submitInFlightRef.current = false;
+    next?.();
+  }
+
+  function abortAuthAttempt() {
+    finishAuthAttempt();
+  }
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!sessionCleared || lockoutSecondsLeft > 0 || submitInFlightRef.current) return;
@@ -194,114 +214,123 @@ export function SignInForm() {
       return;
     }
 
-    setLoading(true);
-    const supabase = createClient();
-    const { data, error: signError } = await supabase.auth.signInWithPassword({
-      email: trimmedEmail,
-      password,
-    });
+    setAuthInProgress(true);
 
-    if (process.env.NODE_ENV !== "production") {
-      console.log("[signin] response", { data, error: signError });
-    }
+    try {
+      const supabase = createClient();
+      const { data, error: signError } = await supabase.auth.signInWithPassword({
+        email: trimmedEmail,
+        password,
+      });
 
-    if (signError) {
-      setLoading(false);
-      const err = friendlyAuthError(signError.message);
+      if (process.env.NODE_ENV !== "production") {
+        console.log("[signin] response", { data, error: signError });
+      }
 
-      if (isInvalidCredentialsError(signError.message)) {
-        const result = recordFailedLoginAttempt(failedAttemptsRef.current);
-        if (result.locked) {
-          failedAttemptsRef.current = 0;
-          setLockoutSecondsLeft(result.lockoutSeconds);
-          setFormError({ title: "Too many failed attempts." });
-          submitInFlightRef.current = false;
+      if (signError) {
+        const err = friendlyAuthError(signError.message);
+
+        if (isInvalidCredentialsError(signError.message)) {
+          const result = recordFailedLoginAttempt(failedAttemptsRef.current);
+          if (result.locked) {
+            failedAttemptsRef.current = 0;
+            setLockoutSecondsLeft(result.lockoutSeconds);
+            setFormError({ title: "Too many failed attempts." });
+            abortAuthAttempt();
+            return;
+          }
+
+          failedAttemptsRef.current = result.attemptNumber;
+          setFormError({
+            title: err.title,
+            description: failedAttemptLabel(result.attemptNumber),
+          });
+          abortAuthAttempt();
           return;
         }
 
-        failedAttemptsRef.current = result.attemptNumber;
-        const withAttempts: FormError = {
-          title: err.title,
-          description: failedAttemptLabel(result.attemptNumber),
-        };
-        setFormError(withAttempts);
-        submitInFlightRef.current = false;
+        setFormError(err);
+        abortAuthAttempt();
         return;
       }
 
-      setFormError(err);
-      submitInFlightRef.current = false;
-      return;
+      const user = data.user;
+      if (!user) {
+        setFormError({ title: "Could not load your session." });
+        abortAuthAttempt();
+        return;
+      }
+
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      if (process.env.NODE_ENV !== "production") {
+        console.log("[signin] profile", { profile, profileError });
+      }
+
+      if (profileError) {
+        setFormError({
+          title: "Could not read your profile.",
+          description: profileError.message,
+        });
+        abortAuthAttempt();
+        return;
+      }
+
+      const metaRole = (user.user_metadata as { role?: string } | null)?.role ?? null;
+      const role = profile?.role ?? metaRole ?? null;
+
+      if (!role) {
+        await supabase.auth.signOut();
+        setFormError({
+          title: "No account profile found.",
+          description: "Your account must be created by an administrator.",
+        });
+        abortAuthAttempt();
+        return;
+      }
+
+      clearLoginAttemptLockout();
+      failedAttemptsRef.current = 0;
+      markTabSessionActive();
+
+      const nextParam = searchParams.get("next");
+      const safeNext =
+        nextParam?.startsWith("/") && !nextParam.startsWith("//") ? nextParam : null;
+
+      const destination =
+        role === "admin"
+          ? safeNext?.startsWith("/admin")
+            ? safeNext
+            : "/admin"
+          : safeNext?.startsWith("/client")
+            ? safeNext
+            : "/client";
+
+      finishAuthAttempt(() => {
+        router.replace(destination);
+        router.refresh();
+      });
+    } catch {
+      setFormError({
+        title: "Something went wrong.",
+        description: "Please check your connection and try again.",
+      });
+      abortAuthAttempt();
     }
-
-    const user = data.user;
-    if (!user) {
-      setLoading(false);
-      const err: FormError = { title: "Could not load your session." };
-      setFormError(err);
-      submitInFlightRef.current = false;
-      return;
-    }
-
-    const { data: profile, error: profileError } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("id", user.id)
-      .maybeSingle();
-
-    if (process.env.NODE_ENV !== "production") {
-      console.log("[signin] profile", { profile, profileError });
-    }
-
-    if (profileError) {
-      setLoading(false);
-      const err: FormError = {
-        title: "Could not read your profile.",
-        description: profileError.message,
-      };
-      setFormError(err);
-      submitInFlightRef.current = false;
-      return;
-    }
-
-    const metaRole = (user.user_metadata as { role?: string } | null)?.role ?? null;
-    const role = profile?.role ?? metaRole ?? null;
-
-    if (!role) {
-      await supabase.auth.signOut();
-      setLoading(false);
-      const err: FormError = {
-        title: "No account profile found.",
-        description: "Your account must be created by an administrator.",
-      };
-      setFormError(err);
-      submitInFlightRef.current = false;
-      return;
-    }
-
-    // Login is audited by `LoginEventBootstrap` once the authenticated shell
-    // mounts, so we skip awaiting it here to keep sign-in fast.
-
-    setLoading(false);
-    clearLoginAttemptLockout();
-    failedAttemptsRef.current = 0;
-    markTabSessionActive();
-
-    const nextParam = searchParams.get("next");
-    const safeNext =
-      nextParam?.startsWith("/") && !nextParam.startsWith("//") ? nextParam : null;
-
-    if (role === "admin") {
-      router.replace(safeNext?.startsWith("/admin") ? safeNext : "/admin");
-    } else {
-      router.replace(safeNext?.startsWith("/client") ? safeNext : "/client");
-    }
-    router.refresh();
-    submitInFlightRef.current = false;
   }
+
+  const fieldsDisabled = authInProgress || lockoutSecondsLeft > 0;
 
   return (
     <AuthPageShell>
+      <AuthLoadingOverlay
+        visible={authInProgress}
+        onExitComplete={handleOverlayExitComplete}
+      />
       <div className={authCardClass}>
         <div className="mb-8 flex justify-center">
           <div className={authIconClass} aria-hidden>
@@ -353,7 +382,7 @@ export function SignInForm() {
                 setEmail(clampToMaxLength(e.target.value, AUTH_EMAIL_MAX_LENGTH));
                 if (errors.email) setErrors((s) => ({ ...s, email: undefined }));
               }}
-              disabled={lockoutSecondsLeft > 0}
+              disabled={fieldsDisabled}
               className={authFieldClass}
               placeholder="you@company.com"
               aria-invalid={Boolean(errors.email)}
@@ -387,7 +416,7 @@ export function SignInForm() {
                   setPassword(clampToMaxLength(e.target.value, AUTH_PASSWORD_MAX_LENGTH));
                   if (errors.password) setErrors((s) => ({ ...s, password: undefined }));
                 }}
-                disabled={lockoutSecondsLeft > 0}
+                disabled={fieldsDisabled}
                 className={`${authFieldClass} pr-[40px]`}
                 aria-invalid={Boolean(errors.password)}
                 aria-describedby={errors.password ? "password-error" : undefined}
@@ -395,6 +424,7 @@ export function SignInForm() {
               <button
                 type="button"
                 className={authToggleButtonClass}
+                disabled={fieldsDisabled}
                 onClick={() => setShowPassword((v) => !v)}
                 aria-label={showPassword ? "Hide password" : "Show password"}
               >
@@ -414,16 +444,25 @@ export function SignInForm() {
 
           <button
             type="submit"
-            disabled={loading || !sessionCleared || lockoutSecondsLeft > 0}
-            className={authSubmitClass}
+            disabled={authInProgress || !sessionCleared || lockoutSecondsLeft > 0}
+            className={`${authSubmitClass} gap-2`}
           >
-            {!sessionCleared
-              ? "Preparing sign in…"
-              : lockoutSecondsLeft > 0
-                ? `Wait ${lockoutSecondsLeft}s…`
-                : loading
-                  ? "Signing in…"
-                  : "Sign in"}
+            {!sessionCleared ? (
+              "Preparing sign in…"
+            ) : lockoutSecondsLeft > 0 ? (
+              `Wait ${lockoutSecondsLeft}s…`
+            ) : authInProgress ? (
+              <>
+                <Loader2
+                  className="size-[18px] shrink-0 animate-spin text-white"
+                  strokeWidth={2.5}
+                  aria-hidden
+                />
+                <span>Signing in...</span>
+              </>
+            ) : (
+              "Sign In"
+            )}
           </button>
         </form>
 
