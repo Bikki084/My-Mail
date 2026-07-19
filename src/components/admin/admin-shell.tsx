@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { AuthTransitionOverlay } from "@/components/auth/auth-transition-overlay";
 import { LoginEventBootstrap } from "@/components/auth/login-event-bootstrap";
 import { TabSessionGuard } from "@/components/auth/tab-session-guard";
 import { performClientSignOut } from "@/lib/auth/tab-session";
@@ -65,6 +66,7 @@ export function AdminShell({
 
   return (
     <SidebarProvider>
+      <AuthTransitionOverlay />
       <TabSessionGuard />
       <LoginEventBootstrap />
       <Sidebar collapsible="icon" className="border-r border-gray-800 bg-[#111827] text-gray-100">

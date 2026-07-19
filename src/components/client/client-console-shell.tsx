@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Mail } from "lucide-react";
 import { UserProfile } from "@/components/client/email-campaign/user-profile";
+import { AuthTransitionOverlay } from "@/components/auth/auth-transition-overlay";
 import { LoginEventBootstrap } from "@/components/auth/login-event-bootstrap";
 import { TabSessionGuard } from "@/components/auth/tab-session-guard";
 import { AnnouncementBell } from "@/components/client/announcements/announcement-bell";
@@ -82,6 +83,7 @@ export function ClientConsoleShell({
       }}
     >
       <div className="flex min-h-svh flex-col bg-zinc-950">
+        {!previewMode && <AuthTransitionOverlay />}
         {!previewMode && <TabSessionGuard />}
         {!previewMode && <LoginEventBootstrap />}
         {previewMode && (

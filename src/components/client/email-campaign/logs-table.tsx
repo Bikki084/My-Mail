@@ -1,7 +1,14 @@
 "use client";
 
 import * as React from "react";
-import { ChevronLeft, ChevronRight, Loader2, RefreshCw, Trash2 } from "lucide-react";
+import {
+  Calendar,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  RefreshCw,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
 import {
   Table,
@@ -47,9 +54,49 @@ export type LogRow = {
 /** Page size for the delivery log table — keep small enough that the table fits on screen without an inner scrollbar. */
 const PAGE_SIZE = 25;
 
-/** White calendar icon on dark `<input type="date">` fields (WebKit + Firefox). */
+/**
+ * Native date picker: hide the browser's dark calendar glyph and keep the click
+ * target; a white Lucide icon is drawn on top (see LogDateField).
+ */
 const logDateInputClass =
-  "border-zinc-700 bg-zinc-950/50 text-zinc-100 [color-scheme:dark] [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:invert [&::-webkit-calendar-picker-indicator]:opacity-90";
+  "relative z-10 border-zinc-700 bg-zinc-950/50 pr-9 text-zinc-100 [color-scheme:dark] [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:inset-y-0 [&::-webkit-calendar-picker-indicator]:right-0 [&::-webkit-calendar-picker-indicator]:h-full [&::-webkit-calendar-picker-indicator]:w-9 [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-0 [&::-moz-calendar-picker-indicator]:cursor-pointer [&::-moz-calendar-picker-indicator]:opacity-0";
+
+function LogDateField({
+  id,
+  label,
+  value,
+  disabled,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="space-y-1">
+      <Label htmlFor={id} className="text-xs text-zinc-400">
+        {label}
+      </Label>
+      <div className="relative">
+        <Input
+          id={id}
+          type="date"
+          className={logDateInputClass}
+          value={value}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.value)}
+        />
+        <Calendar
+          className="pointer-events-none absolute right-2.5 top-1/2 z-0 size-4 -translate-y-1/2 text-white"
+          strokeWidth={2}
+          aria-hidden
+        />
+      </div>
+    </div>
+  );
+}
 
 type StatsScope = "all" | "batch";
 
@@ -760,32 +807,20 @@ export function SendingLogsTab({ previewMode = false }: { previewMode?: boolean 
             </p>
             <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
               <div className="grid flex-1 gap-2 sm:grid-cols-2">
-                <div className="space-y-1">
-                  <Label htmlFor="log-date-from" className="text-xs text-zinc-400">
-                    From
-                  </Label>
-                  <Input
-                    id="log-date-from"
-                    type="date"
-                    className={logDateInputClass}
-                    value={draftDateFrom}
-                    disabled={previewMode}
-                    onChange={(e) => setDraftDateFrom(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="log-date-to" className="text-xs text-zinc-400">
-                    To
-                  </Label>
-                  <Input
-                    id="log-date-to"
-                    type="date"
-                    className={logDateInputClass}
-                    value={draftDateTo}
-                    disabled={previewMode}
-                    onChange={(e) => setDraftDateTo(e.target.value)}
-                  />
-                </div>
+                <LogDateField
+                  id="log-date-from"
+                  label="From"
+                  value={draftDateFrom}
+                  disabled={previewMode}
+                  onChange={setDraftDateFrom}
+                />
+                <LogDateField
+                  id="log-date-to"
+                  label="To"
+                  value={draftDateTo}
+                  disabled={previewMode}
+                  onChange={setDraftDateTo}
+                />
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <Button

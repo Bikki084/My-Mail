@@ -24,7 +24,11 @@ import {
 } from "@/components/auth/auth-styles";
 import { AuthPageShell } from "@/components/auth/auth-page-shell";
 import { AuthLoadingOverlay } from "@/components/auth/auth-loading-overlay";
-import { clearTabSession, markTabSessionActive } from "@/lib/auth/tab-session";
+import {
+  clearTabSession,
+  markAuthTransitionPending,
+  markTabSessionActive,
+} from "@/lib/auth/tab-session";
 import {
   AUTH_EMAIL_MAX_LENGTH,
   AUTH_PASSWORD_MAX_LENGTH,
@@ -82,7 +86,6 @@ export function SignInForm() {
   const [lockoutSecondsLeft, setLockoutSecondsLeft] = useState(0);
   const failedAttemptsRef = useRef(0);
   const submitInFlightRef = useRef(false);
-  const pendingAfterOverlayRef = useRef<(() => void) | null>(null);
   const resetToastShown = useRef(false);
   const authGateToastShown = useRef(false);
 
@@ -157,22 +160,13 @@ export function SignInForm() {
     );
   }, [lockoutSecondsLeft]);
 
-  function finishAuthAttempt(afterOverlay?: () => void) {
-    if (afterOverlay) {
-      pendingAfterOverlayRef.current = afterOverlay;
-    }
+  function abortAuthAttempt() {
     setAuthInProgress(false);
+    submitInFlightRef.current = false;
   }
 
   function handleOverlayExitComplete() {
-    const next = pendingAfterOverlayRef.current;
-    pendingAfterOverlayRef.current = null;
     submitInFlightRef.current = false;
-    next?.();
-  }
-
-  function abortAuthAttempt() {
-    finishAuthAttempt();
   }
 
   async function onSubmit(e: React.FormEvent) {
@@ -296,6 +290,7 @@ export function SignInForm() {
       clearLoginAttemptLockout();
       failedAttemptsRef.current = 0;
       markTabSessionActive();
+      markAuthTransitionPending();
 
       const nextParam = searchParams.get("next");
       const safeNext =
@@ -310,10 +305,10 @@ export function SignInForm() {
             ? safeNext
             : "/client";
 
-      finishAuthAttempt(() => {
-        router.replace(destination);
-        router.refresh();
-      });
+      // Keep the login overlay mounted (authInProgress stays true) while the
+      // destination route takes over via AuthTransitionOverlay.
+      router.replace(destination);
+      router.refresh();
     } catch {
       setFormError({
         title: "Something went wrong.",
@@ -330,6 +325,7 @@ export function SignInForm() {
       <AuthLoadingOverlay
         visible={authInProgress}
         onExitComplete={handleOverlayExitComplete}
+        subtitle="Verifying your credentials and loading your workspace..."
       />
       <div className={authCardClass}>
         <div className="mb-8 flex justify-center">
