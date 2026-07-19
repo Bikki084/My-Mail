@@ -47,6 +47,10 @@ export type LogRow = {
 /** Page size for the delivery log table — keep small enough that the table fits on screen without an inner scrollbar. */
 const PAGE_SIZE = 25;
 
+/** White calendar icon on dark `<input type="date">` fields (WebKit + Firefox). */
+const logDateInputClass =
+  "border-zinc-700 bg-zinc-950/50 text-zinc-100 [color-scheme:dark] [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:invert [&::-webkit-calendar-picker-indicator]:opacity-90";
+
 type StatsScope = "all" | "batch";
 
 type BatchInfo = {
@@ -491,6 +495,16 @@ export function SendingLogsTab({ previewMode = false }: { previewMode?: boolean 
     setPage(1);
   }
 
+  function logRangePayload(range: DateRangeFilter) {
+    return {
+      from: range.from,
+      to: range.to,
+      startIso: startOfLocalDayIso(range.from),
+      endIso: endOfLocalDayIso(range.to),
+      campaignId: batchMode && batchInfo?.id ? batchInfo.id : undefined,
+    };
+  }
+
   async function handleDeleteInRange() {
     if (previewMode) return;
     if (!appliedDateRange) {
@@ -500,11 +514,7 @@ export function SendingLogsTab({ previewMode = false }: { previewMode?: boolean 
 
     setDeleting(true);
     try {
-      const countRes = await countSendingLogsInDateRange({
-        from: appliedDateRange.from,
-        to: appliedDateRange.to,
-        campaignId: batchMode && batchInfo?.id ? batchInfo.id : undefined,
-      });
+      const countRes = await countSendingLogsInDateRange(logRangePayload(appliedDateRange));
       if (!countRes.ok) {
         toast.error(countRes.error);
         return;
@@ -524,17 +534,18 @@ export function SendingLogsTab({ previewMode = false }: { previewMode?: boolean 
       );
       if (!ok) return;
 
-      const delRes = await deleteSendingLogsInDateRange({
-        from: appliedDateRange.from,
-        to: appliedDateRange.to,
-        campaignId: batchMode && batchInfo?.id ? batchInfo.id : undefined,
-      });
+      const delRes = await deleteSendingLogsInDateRange(logRangePayload(appliedDateRange));
       if (!delRes.ok) {
         toast.error(delRes.error);
         return;
       }
+      const deleted = delRes.data?.deleted ?? 0;
+      if (deleted === 0) {
+        toast.error("No rows were deleted. Try refreshing and apply the range again.");
+        return;
+      }
       toast.success(
-        `Deleted ${(delRes.data?.deleted ?? 0).toLocaleString()} log row${(delRes.data?.deleted ?? 0) === 1 ? "" : "s"}.`,
+        `Deleted ${deleted.toLocaleString()} log row${deleted === 1 ? "" : "s"}.`,
       );
       setPage(1);
       setRefreshKey((k) => k + 1);
@@ -756,7 +767,7 @@ export function SendingLogsTab({ previewMode = false }: { previewMode?: boolean 
                   <Input
                     id="log-date-from"
                     type="date"
-                    className="border-zinc-700 bg-zinc-950/50"
+                    className={logDateInputClass}
                     value={draftDateFrom}
                     disabled={previewMode}
                     onChange={(e) => setDraftDateFrom(e.target.value)}
@@ -769,7 +780,7 @@ export function SendingLogsTab({ previewMode = false }: { previewMode?: boolean 
                   <Input
                     id="log-date-to"
                     type="date"
-                    className="border-zinc-700 bg-zinc-950/50"
+                    className={logDateInputClass}
                     value={draftDateTo}
                     disabled={previewMode}
                     onChange={(e) => setDraftDateTo(e.target.value)}

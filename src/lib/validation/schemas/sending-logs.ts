@@ -9,6 +9,9 @@ export const sendingLogsDateRangeSchema = z
     from: isoDate,
     to: isoDate,
     campaignId: z.string().uuid().optional(),
+    /** Inclusive bounds from the browser (matches table filter exactly). */
+    startIso: z.string().datetime({ offset: true }).optional(),
+    endIso: z.string().datetime({ offset: true }).optional(),
   })
   .refine((data) => data.from <= data.to, {
     message: "Start date must be on or before end date.",
