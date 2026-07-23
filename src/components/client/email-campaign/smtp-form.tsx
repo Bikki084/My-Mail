@@ -36,7 +36,7 @@ import {
   DUPLICATE_SMTP_MESSAGE,
   smtpIdentityKey,
 } from "@/lib/smtp-identity";
-import { isSesSmtpHost } from "@/lib/smtp/from-address";
+import { isResendSmtpHost, isSesSmtpHost } from "@/lib/smtp/from-address";
 import { cn } from "@/lib/utils";
 import { ServerIpPanel } from "./server-ip-panel";
 import {
@@ -1048,18 +1048,26 @@ export function SmtpForm({
               <Label htmlFor="smtp-user">
                 {isSesSmtpHost(smtpHost)
                   ? "SMTP username (from AWS SES)"
-                  : "Username (email)"}
+                  : isResendSmtpHost(smtpHost)
+                    ? "SMTP username (Resend)"
+                    : "Username (email)"}
               </Label>
               <Input
                 id="smtp-user"
-                type={isSesSmtpHost(smtpHost) ? "text" : "email"}
+                type={
+                  isSesSmtpHost(smtpHost) || isResendSmtpHost(smtpHost)
+                    ? "text"
+                    : "email"
+                }
                 autoComplete="username"
                 placeholder={
                   isSesSmtpHost(smtpHost)
                     ? "AKIA… (SES SMTP credentials)"
-                    : activePreset?.id === "gmail"
-                      ? "you@gmail.com"
-                      : "you@example.com"
+                    : isResendSmtpHost(smtpHost)
+                      ? "resend"
+                      : activePreset?.id === "gmail"
+                        ? "you@gmail.com"
+                        : "you@example.com"
                 }
                 className="bg-zinc-950/50 font-mono"
                 value={smtpUsername}
@@ -1073,10 +1081,23 @@ export function SmtpForm({
                   server.
                 </p>
               ) : null}
+              {isResendSmtpHost(smtpHost) ? (
+                <p className="text-xs text-zinc-500">
+                  Username must be exactly <code className="text-emerald-400">resend</code>. Password
+                  is your Resend API key (<code className="text-emerald-400">re_…</code>). From
+                  becomes <strong>noreply@bulkfirepro.com</strong> when{" "}
+                  <code className="text-emerald-400">DKIM_DOMAIN=bulkfirepro.com</code> is set on the
+                  server. Use port <strong>465</strong> with Secure <strong>ON</strong>.
+                </p>
+              ) : null}
             </div>
             <div className="space-y-2">
               <Label htmlFor="smtp-pass">
-                {activePreset ? "App Password" : "Password"}
+                {isResendSmtpHost(smtpHost)
+                  ? "API key (password)"
+                  : activePreset
+                    ? "App Password"
+                    : "Password"}
               </Label>
               <Input
                 id="smtp-pass"

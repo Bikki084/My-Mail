@@ -13,6 +13,20 @@ export function isBrevoSmtpHost(host: string): boolean {
   return h === "smtp-relay.brevo.com" || h === "smtp-relay.sendinblue.com";
 }
 
+/** Mailgun relay — SMTP login is often postmaster@…; From uses verified domain. */
+export function isMailgunSmtpHost(host: string): boolean {
+  const h = host.trim().toLowerCase();
+  return h === "smtp.mailgun.org" || h === "smtp.eu.mailgun.org";
+}
+
+/**
+ * Resend SMTP — username is the literal string `resend`, password is the API key.
+ * From must be an address on the verified domain (see DKIM_DOMAIN).
+ */
+export function isResendSmtpHost(host: string): boolean {
+  return host.trim().toLowerCase() === "smtp.resend.com";
+}
+
 /** Zoho Mail SMTP (personal smtp.zoho.* or org smtppro.zoho.*). */
 export function isZohoSmtpHost(host: string): boolean {
   const h = host.trim().toLowerCase();
@@ -35,7 +49,10 @@ export function resolveSmtpFromAddress(username: string, host: string): string {
     isSesSmtpUsername(user) ||
     isSesSmtpHost(host) ||
     isBrevoSmtpHost(host) ||
-    isZohoSmtpHost(host)
+    isMailgunSmtpHost(host) ||
+    isResendSmtpHost(host) ||
+    isZohoSmtpHost(host) ||
+    user.toLowerCase() === "resend"
   ) {
     const domain = domainFromAddressFromEnv();
     if (domain) return `noreply@${domain}`;
