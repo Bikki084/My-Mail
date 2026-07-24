@@ -27,6 +27,20 @@ export function isResendSmtpHost(host: string): boolean {
   return host.trim().toLowerCase() === "smtp.resend.com";
 }
 
+/**
+ * Mailercloud SMTP — login is often the account email (e.g. Gmail), but From must be
+ * a verified Sender ID on the authenticated domain (see DKIM_DOMAIN).
+ */
+export function isMailercloudSmtpHost(host: string): boolean {
+  const h = host.trim().toLowerCase();
+  return (
+    h === "smtp-prod.mailrcld.com" ||
+    h === "smtp.mailrcld.com" ||
+    h.endsWith(".mailrcld.com") ||
+    h.endsWith(".mailercloud.com")
+  );
+}
+
 /** Zoho Mail SMTP (personal smtp.zoho.* or org smtppro.zoho.*). */
 export function isZohoSmtpHost(host: string): boolean {
   const h = host.trim().toLowerCase();
@@ -51,6 +65,7 @@ export function resolveSmtpFromAddress(username: string, host: string): string {
     isBrevoSmtpHost(host) ||
     isMailgunSmtpHost(host) ||
     isResendSmtpHost(host) ||
+    isMailercloudSmtpHost(host) ||
     isZohoSmtpHost(host) ||
     user.toLowerCase() === "resend"
   ) {

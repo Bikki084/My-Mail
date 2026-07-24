@@ -36,7 +36,7 @@ import {
   DUPLICATE_SMTP_MESSAGE,
   smtpIdentityKey,
 } from "@/lib/smtp-identity";
-import { isResendSmtpHost, isSesSmtpHost } from "@/lib/smtp/from-address";
+import { isMailercloudSmtpHost, isResendSmtpHost, isSesSmtpHost } from "@/lib/smtp/from-address";
 import { cn } from "@/lib/utils";
 import { ServerIpPanel } from "./server-ip-panel";
 import {
@@ -1088,6 +1088,16 @@ export function SmtpForm({
                   becomes <strong>noreply@bulkfirepro.com</strong> when{" "}
                   <code className="text-emerald-400">DKIM_DOMAIN=bulkfirepro.com</code> is set on the
                   server. Use port <strong>465</strong> with Secure <strong>ON</strong>.
+                </p>
+              ) : null}
+              {isMailercloudSmtpHost(smtpHost) ? (
+                <p className="text-xs text-zinc-500">
+                  SMTP username can be your Mailercloud login email. Campaigns send From{" "}
+                  <strong>noreply@bulkfirepro.com</strong> when{" "}
+                  <code className="text-emerald-400">DKIM_DOMAIN=bulkfirepro.com</code> is set.
+                  Authenticate <code className="text-emerald-400">bulkfirepro.com</code> and add that
+                  address under <strong>Sender management</strong> in Mailercloud. Port{" "}
+                  <strong>587</strong>, Secure <strong>OFF</strong> (STARTTLS).
                 </p>
               ) : null}
             </div>
