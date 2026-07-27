@@ -38,6 +38,7 @@ import {
 } from "@/lib/smtp-identity";
 import { isMailercloudSmtpHost, isResendSmtpHost, isSesSmtpHost } from "@/lib/smtp/from-address";
 import { cn } from "@/lib/utils";
+import { APP_BRAND_NAME, APP_DOMAIN, APP_NOREPLY_EMAIL } from "@/lib/brand";
 import { ServerIpPanel } from "./server-ip-panel";
 import {
   deleteSmtpServer,
@@ -480,7 +481,7 @@ export function SmtpForm({
 
   function applySesDefaults() {
     setPreset(null);
-    setSmtpLabel("BulkFire Pro SES");
+    setSmtpLabel(`${APP_BRAND_NAME} SES`);
     setSmtpHost("email-smtp.ap-south-1.amazonaws.com");
     setSmtpPort("587");
     setSmtpUsername("");
@@ -493,10 +494,10 @@ export function SmtpForm({
 
   function applyLocalPostfixDefaults() {
     setPreset(null);
-    setSmtpLabel("BulkFire Pro");
+    setSmtpLabel(APP_BRAND_NAME);
     setSmtpHost("127.0.0.1");
     setSmtpPort("25");
-    setSmtpUsername("noreply@bulkfirepro.com");
+    setSmtpUsername(APP_NOREPLY_EMAIL);
     setSmtpPassword("local");
     setSecure(false);
     toast.message("Local Postfix defaults filled", {
@@ -988,7 +989,7 @@ export function SmtpForm({
                 className="border-emerald-700/50 text-emerald-200"
                 onClick={applySesDefaults}
               >
-                Use Amazon SES (bulkfirepro.com)
+                Use Amazon SES ({APP_DOMAIN})
               </Button>
               <Button
                 type="button"
@@ -1076,8 +1077,8 @@ export function SmtpForm({
               {isSesSmtpHost(smtpHost) ? (
                 <p className="text-xs text-zinc-500">
                   Paste the <strong>SMTP username</strong> from AWS (starts with AKIA). Campaigns
-                  send From <strong>noreply@bulkfirepro.com</strong> automatically when{" "}
-                  <code className="text-emerald-400">DKIM_DOMAIN=bulkfirepro.com</code> is set on the
+                  send From <strong>{APP_NOREPLY_EMAIL}</strong> automatically when{" "}
+                  <code className="text-emerald-400">DKIM_DOMAIN={APP_DOMAIN}</code> is set on the
                   server.
                 </p>
               ) : null}
@@ -1085,17 +1086,17 @@ export function SmtpForm({
                 <p className="text-xs text-zinc-500">
                   Username must be exactly <code className="text-emerald-400">resend</code>. Password
                   is your Resend API key (<code className="text-emerald-400">re_…</code>). From
-                  becomes <strong>noreply@bulkfirepro.com</strong> when{" "}
-                  <code className="text-emerald-400">DKIM_DOMAIN=bulkfirepro.com</code> is set on the
+                  becomes <strong>{APP_NOREPLY_EMAIL}</strong> when{" "}
+                  <code className="text-emerald-400">DKIM_DOMAIN={APP_DOMAIN}</code> is set on the
                   server. Use port <strong>465</strong> with Secure <strong>ON</strong>.
                 </p>
               ) : null}
               {isMailercloudSmtpHost(smtpHost) ? (
                 <p className="text-xs text-zinc-500">
                   SMTP username can be your Mailercloud login email. Campaigns send From{" "}
-                  <strong>noreply@bulkfirepro.com</strong> when{" "}
-                  <code className="text-emerald-400">DKIM_DOMAIN=bulkfirepro.com</code> is set.
-                  Authenticate <code className="text-emerald-400">bulkfirepro.com</code> and add that
+                  <strong>{APP_NOREPLY_EMAIL}</strong> when{" "}
+                  <code className="text-emerald-400">DKIM_DOMAIN={APP_DOMAIN}</code> is set.
+                  Authenticate <code className="text-emerald-400">{APP_DOMAIN}</code> and add that
                   address under <strong>Sender management</strong> in Mailercloud. Port{" "}
                   <strong>587</strong>, Secure <strong>OFF</strong> (STARTTLS).
                 </p>

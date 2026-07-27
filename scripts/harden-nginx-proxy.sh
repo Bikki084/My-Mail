@@ -15,8 +15,8 @@ if [[ "$(id -u)" -ne 0 ]]; then
   exit 1
 fi
 
-PROXY_SNIPPET="/etc/nginx/snippets/bulkfirepro-proxy.conf"
-GZIP_CONF="/etc/nginx/conf.d/bulkfirepro-compression.conf"
+PROXY_SNIPPET="/etc/nginx/snippets/bulkprofire-proxy.conf"
+GZIP_CONF="/etc/nginx/conf.d/bulkprofire-compression.conf"
 
 echo ""
 echo "=== Harden nginx proxy (anti-502) ==="
@@ -25,7 +25,7 @@ echo ""
 mkdir -p /etc/nginx/snippets
 
 cat > "${PROXY_SNIPPET}" <<'EOF'
-# Shared upstream settings for Next.js on :3000 (BulkFirePro)
+# Shared upstream settings for Next.js on :3000 (BulkProFire)
 proxy_pass http://127.0.0.1:3000;
 proxy_http_version 1.1;
 proxy_set_header Upgrade $http_upgrade;
@@ -104,7 +104,9 @@ PY
 }
 
 echo "3) Patching site configs..."
-for site in /etc/nginx/sites-available/bulkfirepro /etc/nginx/sites-available/bulkfirepro.com; do
+for site in \
+  /etc/nginx/sites-available/bulkprofire \
+  /etc/nginx/sites-available/bulkprofire.com; do
   patch_site "$site"
 done
 
@@ -115,5 +117,5 @@ systemctl reload nginx
 
 echo ""
 echo "=== nginx hardened ==="
-echo "Probe: curl -I https://bulkfirepro.com/"
+echo "Probe: curl -I https://bulkprofire.com/"
 echo ""

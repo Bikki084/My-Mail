@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run ON the Lightsail server (SSH) when bulkfirepro.com / :3000 times out.
+# Run ON the Lightsail server (SSH) when bulkprofire.com / :3000 times out.
 #   chmod +x scripts/recover-site.sh && ./scripts/recover-site.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -54,7 +54,7 @@ echo ""
 echo "5) Nginx (if installed)..."
 if command -v nginx >/dev/null 2>&1; then
   sudo nginx -t 2>&1 && sudo systemctl reload nginx 2>/dev/null || sudo service nginx reload 2>/dev/null || true
-  if curl -sf --connect-timeout 5 -H "Host: bulkfirepro.com" http://127.0.0.1/api/health >/dev/null 2>&1; then
+  if curl -sf --connect-timeout 5 -H "Host: bulkprofire.com" http://127.0.0.1/api/health >/dev/null 2>&1; then
     echo "   OK — nginx → app proxy works"
   else
     echo "   WARN — nginx up but proxy may not reach :3000 (502 in browser). Check: sudo nginx -T | grep proxy_pass"

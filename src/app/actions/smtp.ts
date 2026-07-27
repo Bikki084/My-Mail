@@ -17,7 +17,7 @@ import {
 } from "@/lib/smtp-identity";
 import { smtpAuthOptions, smtpConnectionExtras, resolveSmtpImplicitTls, isLocalSmtpHost } from "@/lib/smtp/transport";
 import { resolveSmtpFromAddress } from "@/lib/smtp/from-address";
-import { APP_BRAND_NAME } from "@/lib/brand";
+import { APP_BRAND_NAME, APP_DOMAIN } from "@/lib/brand";
 import { evaluateMailServicePlan } from "@/lib/active-plan-guard";
 import {
   evaluateSmtpInsertCapacity,
@@ -172,7 +172,7 @@ function friendlySmtpError(err: unknown, hostHint?: string): string {
     if (/not verified|554|553|501|invalid.*from|sender.*reject/i.test(`${resp} ${msg}`)) {
       return (
         `Amazon SES rejected the sender or recipient. For SES SMTP the login is AKIA… but the From address must be ` +
-        `noreply@your-verified-domain (set DKIM_DOMAIN=bulkfirepro.com in server .env.local and redeploy). ` +
+        `noreply@your-verified-domain (set DKIM_DOMAIN=${APP_DOMAIN} in server .env.local and redeploy). ` +
         `In sandbox mode you can only send to verified addresses. Server said: ${resp || msg}`
       );
     }

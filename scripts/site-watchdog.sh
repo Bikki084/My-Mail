@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Keep bulkfirepro.com online: if the app is down, restart PM2 (+ optional IP restore).
+# Keep bulkprofire.com online: if the app is down, restart PM2 (+ optional IP restore).
 # Installed as a cron job by scripts/install-site-reliability.sh
 #
 # Safe to run repeatedly. Logs to ~/mymail/logs/site-watchdog.log
@@ -13,7 +13,7 @@ mkdir -p "$LOG_DIR"
 LOG_FILE="${LOG_DIR}/site-watchdog.log"
 LOCK_FILE="${LOG_DIR}/site-watchdog.lock"
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:3000/api/health}"
-PUBLIC_URL="${PUBLIC_URL:-https://bulkfirepro.com/api/health}"
+PUBLIC_URL="${PUBLIC_URL:-https://bulkprofire.com/api/health}"
 
 log() {
   echo "$(date -u +'%Y-%m-%dT%H:%M:%SZ') $*" >>"$LOG_FILE"

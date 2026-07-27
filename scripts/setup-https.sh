@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Enable HTTPS (Let's Encrypt) for bulkfirepro.com on Ubuntu Lightsail + nginx.
+# Enable HTTPS (Let's Encrypt) for bulkprofire.com on Ubuntu Lightsail + nginx.
 # Run ON the server (once, or after nginx breaks):
 #   cd ~/mymail && git pull && sudo bash scripts/setup-https.sh
 #
-# Requires: DNS A record for bulkfirepro.com → this server's public IP, port 80 open.
+# Requires: DNS A record for bulkprofire.com → this server's public IP, port 80 open.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "${SCRIPT_DIR}/.."
 
-DOMAIN="${BULK_DOMAIN:-bulkfirepro.com}"
+DOMAIN="${BULK_DOMAIN:-bulkprofire.com}"
 WWW_DOMAIN="www.${DOMAIN}"
 EMAIL="${CERTBOT_EMAIL:-}"
 APP_PORT="${APP_PORT:-3000}"
@@ -53,20 +53,34 @@ server {
     location / {
         # Shared hardened proxy settings (buffers, timeouts, retry).
         # Re-run: sudo bash scripts/harden-nginx-proxy.sh after Certbot edits.
-        include /etc/nginx/snippets/bulkfirepro-proxy.conf;
+        include /etc/nginx/snippets/bulkprofire-proxy.conf;
     }
 }
 EOF
 
 ln -sf "${NGINX_SITE}" "${NGINX_ENABLED}"
 rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
+
+# Disable old-domain vhosts so certbot/nginx don't serve bulkfirepro.com for bulkprofire.com.
+for old in bulkfirepro bulkfirepro.com; do
+  rm -f "/etc/nginx/sites-enabled/${old}" 2>/dev/null || true
+done
+
 nginx -t
 systemctl enable nginx
 systemctl reload nginx
 
 echo ""
 echo "4) Obtain / renew Let's Encrypt certificate..."
-CERTBOT_ARGS=(-d "${DOMAIN}" -d "${WWW_DOMAIN}" --nginx --redirect --agree-tos --non-interactive)
+CERTBOT_ARGS=(-d "${DOMAIN}" --nginx --redirect --agree-tos --non-interactive)
+WWW_IP="$(dig +short "${WWW_DOMAIN}" A 2>/dev/null | grep -E '^[0-9.]+$' | head -1 || true)"
+SERVER_IP="$(curl -sf --connect-timeout 3 https://checkip.amazonaws.com 2>/dev/null | tr -d '[:space:]' || true)"
+if [[ -n "${WWW_IP}" && -n "${SERVER_IP}" && "${WWW_IP}" != "${SERVER_IP}" ]]; then
+  echo "   WARN: ${WWW_DOMAIN} → ${WWW_IP} but this server is ${SERVER_IP}; cert for apex only."
+  echo "         Fix DNS: CNAME www → ${DOMAIN} in Lightsail, then expand cert later."
+else
+  CERTBOT_ARGS=(-d "${DOMAIN}" -d "${WWW_DOMAIN}" --nginx --redirect --agree-tos --non-interactive)
+fi
 if [[ -n "${EMAIL}" ]]; then
   CERTBOT_ARGS+=(--email "${EMAIL}")
 else

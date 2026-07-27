@@ -11,10 +11,10 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-DOMAIN="${BULK_DOMAIN:-bulkfirepro.com}"
+DOMAIN="${BULK_DOMAIN:-bulkprofire.com}"
 NGINX_SITE="/etc/nginx/sites-available/${DOMAIN}"
-GZIP_CONF="/etc/nginx/conf.d/bulkfirepro-compression.conf"
-BROTLI_CONF="/etc/nginx/conf.d/bulkfirepro-compression-brotli.conf"
+GZIP_CONF="/etc/nginx/conf.d/bulkprofire-compression.conf"
+BROTLI_CONF="/etc/nginx/conf.d/bulkprofire-compression-brotli.conf"
 
 if [[ "$(id -u)" -ne 0 ]]; then
   echo "ERROR: run with sudo: sudo bash scripts/enable-nginx-compression.sh"

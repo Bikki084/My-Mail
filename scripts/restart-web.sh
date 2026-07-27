@@ -86,5 +86,5 @@ done
 echo ""
 pm2 status
 echo ""
-echo "=== Done — https://bulkfirepro.com ==="
+echo "=== Done — https://bulkprofire.com ==="
 echo ""

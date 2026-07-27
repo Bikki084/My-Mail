@@ -1,7 +1,7 @@
 /**
  * SMTP login username vs From header. Gmail/Yahoo use the same email for both;
  * Amazon SES uses an IAM access-key-style SMTP user (AKIA…) while From must be
- * @your verified domain (e.g. noreply@bulkfirepro.com).
+ * @your verified domain (e.g. noreply@bulkprofire.com — see APP_DOMAIN in brand.ts).
  */
 export function isSesSmtpHost(host: string): boolean {
   return /email-smtp\.[a-z0-9-]+\.amazonaws\.com$/i.test(host.trim());

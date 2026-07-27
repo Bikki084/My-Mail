@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { isClientDashboardPreviewMode } from "@/lib/auth-config";
+import { APP_NOREPLY_EMAIL } from "@/lib/brand";
 import { SmtpForm } from "@/components/client/email-campaign/smtp-form";
 
 export default function ClientSmtpPage() {
@@ -12,7 +13,7 @@ export default function ClientSmtpPage() {
         <p className="text-muted-foreground">
           Add Gmail, Yahoo, Outlook, or a custom relay (e.g. Postfix on this VPS at{" "}
           <code className="text-sm">127.0.0.1:25</code> with{" "}
-          <code className="text-sm">noreply@bulkfirepro.com</code>). Saved accounts rotate
+          <code className="text-sm">{APP_NOREPLY_EMAIL}</code>). Saved accounts rotate
           per campaign. For the full send flow, open{" "}
           <Link href="/client" className="text-emerald-400 underline underline-offset-2">
             Email Campaign

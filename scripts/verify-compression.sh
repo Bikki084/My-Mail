@@ -2,10 +2,10 @@
 # Verify gzip/brotli negotiation for JSON API responses.
 # Usage:
 #   bash scripts/verify-compression.sh
-#   bash scripts/verify-compression.sh https://bulkfirepro.com/api/health
+#   bash scripts/verify-compression.sh https://bulkprofire.com/api/health
 set -euo pipefail
 
-URL="${1:-https://bulkfirepro.com/api/health}"
+URL="${1:-https://bulkprofire.com/api/health}"
 
 echo ""
 echo "=== Compression verify: ${URL} ==="
