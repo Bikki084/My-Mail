@@ -15,6 +15,18 @@ export function isBrevoSmtpHost(host: string): boolean {
   return h === "smtp-relay.brevo.com" || h === "smtp-relay.sendinblue.com";
 }
 
+/** Mailjet relay — SMTP login is API key + secret; From uses verified domain. */
+export function isMailjetSmtpHost(host: string): boolean {
+  return /\.mailjet\.com$/i.test(host.trim()) || host.trim().toLowerCase() === "in.mailjet.com";
+}
+
+/** True when SMTP username is an API-style key, not an email mailbox. */
+export function isApiKeySmtpUsername(username: string): boolean {
+  const u = username.trim();
+  if (!u || u.includes("@")) return false;
+  return /^[a-f0-9]{20,}$/i.test(u) || /^xkeysib-/i.test(u) || u.toLowerCase() === "resend";
+}
+
 /** Mailgun relay — SMTP login is often postmaster@…; From uses verified domain. */
 export function isMailgunSmtpHost(host: string): boolean {
   const h = host.trim().toLowerCase();
@@ -59,11 +71,12 @@ export function resolveSmtpFromAddress(username: string, host: string): string {
     isSesSmtpUsername(user) ||
     isSesSmtpHost(host) ||
     isBrevoSmtpHost(host) ||
+    isMailjetSmtpHost(host) ||
     isMailgunSmtpHost(host) ||
     isResendSmtpHost(host) ||
     isMailercloudSmtpHost(host) ||
     isZohoSmtpHost(host) ||
-    user.toLowerCase() === "resend"
+    isApiKeySmtpUsername(user)
   ) {
     return `noreply@${resolveSendingDomain()}`;
   }
