@@ -1,3 +1,5 @@
+import { resolveSendingDomain } from "@/lib/sending-domain";
+
 /**
  * SMTP login username vs From header. Gmail/Yahoo use the same email for both;
  * Amazon SES uses an IAM access-key-style SMTP user (AKIA…) while From must be
@@ -51,12 +53,6 @@ export function isSesSmtpUsername(username: string): boolean {
   return /^AKIA[0-9A-Z]{16}$/i.test(username.trim());
 }
 
-function domainFromAddressFromEnv(): string | null {
-  const domain = process.env.DKIM_DOMAIN?.trim().replace(/\.$/, "").replace(/^@/, "");
-  if (domain && !domain.includes("@")) return domain;
-  return null;
-}
-
 export function resolveSmtpFromAddress(username: string, host: string): string {
   const user = username.trim();
   if (
@@ -69,8 +65,7 @@ export function resolveSmtpFromAddress(username: string, host: string): string {
     isZohoSmtpHost(host) ||
     user.toLowerCase() === "resend"
   ) {
-    const domain = domainFromAddressFromEnv();
-    if (domain) return `noreply@${domain}`;
+    return `noreply@${resolveSendingDomain()}`;
   }
   return user;
 }

@@ -1,9 +1,14 @@
+import { APP_PUBLIC_URL } from "@/lib/brand";
+
 /**
  * Public HTTPS origin for List-Unsubscribe one-click (RFC 8058).
- * Only explicit MAILER_PUBLIC_URL is used — do not guess from APP_URL (often wrong).
+ * Prefer MAILER_PUBLIC_URL; fall back to APP_PUBLIC_URL from brand.ts in production.
  */
 export function resolveMailerPublicBaseUrl(): string | null {
-  const explicit = process.env.MAILER_PUBLIC_URL?.trim().replace(/\/+$/, "");
+  const explicit =
+    process.env.MAILER_PUBLIC_URL?.trim().replace(/\/+$/, "") ||
+    process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/+$/, "") ||
+    APP_PUBLIC_URL;
   if (!explicit) return null;
   if (!/^https:\/\//i.test(explicit)) {
     console.warn(

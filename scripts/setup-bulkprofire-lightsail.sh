@@ -89,6 +89,11 @@ Supabase → Authentication → URL Configuration:
   Site URL: https://${BULK_DOMAIN}
   Redirect: https://${BULK_DOMAIN}/auth/update-password
 
+Brevo DNS (Lightsail → ${BULK_DOMAIN}) — required for inbox:
+  TXT  @    v=spf1 include:spf.brevo.com ~all   (keep brevo-code TXT too)
+  CNAME mail, r.mail, img.mail → copy from Brevo Domains page
+  Run: bash scripts/fix-bulkprofire-deliverability.sh  (checks DNS + redeploys)
+
 Open: https://${BULK_DOMAIN}/login
 ============================================================
 EOF

@@ -10,9 +10,12 @@ import { fetchLightsailPoolIpv4List, isAwsLightsailRotationConfigured } from "@/
 import { getDkimConfigFromEnv } from "@/lib/deliverability";
 import { domainOfEmail, isFreeMailDomain } from "@/lib/mailbox-domains";
 import { parseStrict, deliverabilityDnsSchema } from "@/lib/validation";
+import { APP_DOMAIN } from "@/lib/brand";
+
+import { resolveMailerPublicBaseUrl } from "@/lib/mailer-public-url";
 
 function mailerPublicUrl(): string | null {
-  return process.env.MAILER_PUBLIC_URL?.trim().replace(/\/+$/, "") || null;
+  return resolveMailerPublicBaseUrl();
 }
 
 export type ActionResult<T = undefined> =
@@ -81,9 +84,12 @@ export async function getDeliverabilityStatusAction(): Promise<
   }
   if (!publicUrl) {
     recommendations.push(
-      "Optional: set MAILER_PUBLIC_URL (HTTPS) for one-click unsubscribe links.",
+      "Set MAILER_PUBLIC_URL (HTTPS) on the server for one-click unsubscribe — required by Gmail/Yahoo bulk rules.",
     );
   }
+  recommendations.push(
+    `Add SPF TXT on @ for ${APP_DOMAIN}: v=spf1 include:spf.brevo.com ~all (required when using Brevo SMTP).`,
+  );
   if (sendingIpv4.length > 0) {
     recommendations.push(
       `Add all ${sendingIpv4.length} sending IP(s) to your SPF record (generated below).`,

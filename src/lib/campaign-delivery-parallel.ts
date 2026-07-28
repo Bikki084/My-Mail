@@ -34,6 +34,7 @@ import { isAwsLightsailRotationConfigured } from "@/lib/aws-outbound-ip";
 import { usesProxyEgress } from "@/lib/egress-mode";
 import { resolveSmtpEgressUrl } from "@/lib/smtp-egress-proxy";
 import { resolveSmtpFromAddress } from "@/lib/smtp/from-address";
+import { resolveMailerPublicBaseUrl } from "@/lib/mailer-public-url";
 import {
   appendUnsubscribeFooter,
   buildDeliverabilityHeaders,
@@ -541,7 +542,7 @@ export async function deliverCampaignInParallel(
           streamName: (campaign.stream_name as string | null) ?? null,
           recipientEmail: recipient.email,
           fromAddress: from,
-          publicBaseUrl: process.env.MAILER_PUBLIC_URL?.trim() || null,
+          publicBaseUrl: resolveMailerPublicBaseUrl(),
           unsubscribeMailbox:
             process.env.MAILER_UNSUBSCRIBE_MAILBOX?.trim() || null,
         });
