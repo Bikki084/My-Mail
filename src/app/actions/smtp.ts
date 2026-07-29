@@ -149,7 +149,9 @@ function friendlySmtpError(err: unknown, hostHint?: string): string {
         ? " For 127.0.0.1:25, install and start Postfix on this server (sudo systemctl status postfix)."
         : host.includes("brevo.com")
           ? " For Brevo: confirm your server IP is in Brevo → SMTP & API → Authorized IPs, then retry."
-          : "";
+          : host.includes("sendgrid.net")
+            ? " For SendGrid: use port 587 (not 25 — blocked on AWS), authenticate bulkprofire.com in SendGrid, and redeploy the app."
+            : "";
     return `Could not reach ${host} — connection timed out. Check host, port, firewall, and authorized IPs (${msg}).${localHint}`;
   }
   if (code === "ECONNECTION" || code === "ECONNREFUSED") {
@@ -176,6 +178,20 @@ function friendlySmtpError(err: unknown, hostHint?: string): string {
         `In sandbox mode you can only send to verified addresses. Server said: ${resp || msg}`
       );
     }
+  }
+  if (/550/.test(resp) && /sendgrid\.net/i.test(hostHint ?? "")) {
+    return (
+      `SendGrid rejected the From address. Authenticate bulkprofire.com under SendGrid → Settings → ` +
+      `Sender Authentication, redeploy the app (git pull), then send from noreply@bulkprofire.com. ` +
+      `Server said: ${resp || msg}`
+    );
+  }
+  if (/550/.test(`${resp} ${msg}`) && /from/i.test(`${resp} ${msg}`)) {
+    return (
+      `The SMTP server rejected the From address. Use a verified sender on your domain ` +
+      `(e.g. noreply@${APP_DOMAIN}) and complete domain authentication in your email provider. ` +
+      `Server said: ${resp || msg}`
+    );
   }
   return msg;
 }

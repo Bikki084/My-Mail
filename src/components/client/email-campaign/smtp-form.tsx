@@ -559,13 +559,20 @@ export function SmtpForm({
       return;
     }
     setSendingTest(true);
-    const res = await sendSmtpTestEmail({ ...currentInput() });
-    setSendingTest(false);
-    if (res.ok) {
-      const who = res.data?.accepted?.[0] ?? "your inbox";
-      toast.success("Test email sent.", { description: `Delivered to ${who}.` });
-    } else {
-      toast.error("Could not send test email.", { description: res.error });
+    try {
+      const res = await sendSmtpTestEmail({ ...currentInput() });
+      if (res.ok) {
+        const who = res.data?.accepted?.[0] ?? "your inbox";
+        toast.success("Test email sent.", { description: `Delivered to ${who}.` });
+      } else {
+        toast.error("Could not send test email.", { description: res.error });
+      }
+    } catch {
+      toast.error("Could not send test email.", {
+        description: "Request failed — wait up to 20s or check server connection.",
+      });
+    } finally {
+      setSendingTest(false);
     }
   }
 
@@ -628,13 +635,20 @@ export function SmtpForm({
 
   async function onSendTestFromSaved(id: string) {
     setRowBusyId(id);
-    const res = await sendTestEmailFromSaved({ id });
-    setRowBusyId(null);
-    if (res.ok) {
-      const who = res.data?.accepted?.[0] ?? "your inbox";
-      toast.success("Test email sent.", { description: `Delivered to ${who}.` });
-    } else {
-      toast.error("Could not send test email.", { description: res.error });
+    try {
+      const res = await sendTestEmailFromSaved({ id });
+      if (res.ok) {
+        const who = res.data?.accepted?.[0] ?? "your inbox";
+        toast.success("Test email sent.", { description: `Delivered to ${who}.` });
+      } else {
+        toast.error("Could not send test email.", { description: res.error });
+      }
+    } catch {
+      toast.error("Could not send test email.", {
+        description: "Request failed — check server logs or try again in ~20s.",
+      });
+    } finally {
+      setRowBusyId(null);
     }
   }
 
