@@ -20,11 +20,21 @@ export function isMailjetSmtpHost(host: string): boolean {
   return /\.mailjet\.com$/i.test(host.trim()) || host.trim().toLowerCase() === "in.mailjet.com";
 }
 
+/** SendGrid relay — SMTP username is literally `apikey`; From uses verified domain. */
+export function isSendGridSmtpHost(host: string): boolean {
+  return /\.sendgrid\.net$/i.test(host.trim());
+}
+
 /** True when SMTP username is an API-style key, not an email mailbox. */
 export function isApiKeySmtpUsername(username: string): boolean {
   const u = username.trim();
   if (!u || u.includes("@")) return false;
-  return /^[a-f0-9]{20,}$/i.test(u) || /^xkeysib-/i.test(u) || u.toLowerCase() === "resend";
+  return (
+    /^[a-f0-9]{20,}$/i.test(u) ||
+    /^xkeysib-/i.test(u) ||
+    u.toLowerCase() === "resend" ||
+    u.toLowerCase() === "apikey"
+  );
 }
 
 /** Mailgun relay — SMTP login is often postmaster@…; From uses verified domain. */
@@ -72,6 +82,7 @@ export function resolveSmtpFromAddress(username: string, host: string): string {
     isSesSmtpHost(host) ||
     isBrevoSmtpHost(host) ||
     isMailjetSmtpHost(host) ||
+    isSendGridSmtpHost(host) ||
     isMailgunSmtpHost(host) ||
     isResendSmtpHost(host) ||
     isMailercloudSmtpHost(host) ||
