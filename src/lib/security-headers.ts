@@ -32,7 +32,8 @@ export function buildContentSecurityPolicy(): string {
     "base-uri 'self'",
     "form-action 'self'",
     "frame-ancestors 'self'",
-    "object-src 'none'",
+    "frame-src 'self' blob:",
+    "object-src 'self' blob:",
     // Next.js hydration and RSC need inline/eval in this stack.
     // Monaco Editor assets load from jsDelivr CDN (not bundled into the page).
     "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net",

@@ -33,6 +33,7 @@ import {
   type UserActivityRecipientRow,
   type UserActivitySearchUser,
 } from "./actions";
+import { ActivityAttachmentPreview } from "./activity-attachment-preview";
 
 type Props = {
   users: UserActivitySearchUser[];
@@ -493,12 +494,21 @@ export function UserActivityClient({
                 <div>
                   <p className="mb-2 font-medium text-gray-300">Attachments</p>
                   <ul className="space-y-4">
-                    {mailPreview.attachments.map((a) => (
-                      <li
-                        key={a.filename}
-                        className="rounded border border-gray-800 bg-[#0F172A] p-3"
-                      >
-                        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    {mailPreview.attachments.map((a) =>
+                      a.previewable ? (
+                        <ActivityAttachmentPreview
+                          key={a.filename}
+                          streamUrl={a.streamUrl}
+                          downloadUrl={a.downloadUrl}
+                          filename={a.filename}
+                          contentType={a.contentType}
+                          initialSizeBytes={a.sizeBytes}
+                        />
+                      ) : (
+                        <li
+                          key={a.filename}
+                          className="flex flex-wrap items-center justify-between gap-2 rounded border border-gray-800 bg-[#0F172A] px-3 py-2"
+                        >
                           <span className="text-gray-200">{a.filename}</span>
                           <div className="flex items-center gap-3">
                             <span className="text-gray-500">{formatBytes(a.sizeBytes)}</span>
@@ -510,34 +520,9 @@ export function UserActivityClient({
                               Download
                             </a>
                           </div>
-                        </div>
-                        {a.previewable && a.contentType === "application/pdf" ? (
-                          <object
-                            data={a.streamUrl}
-                            type="application/pdf"
-                            className="h-80 w-full rounded border border-gray-700 bg-white"
-                          >
-                            <p className="p-4 text-sm text-gray-500">
-                              PDF preview unavailable in this browser.{" "}
-                              <a
-                                href={a.downloadUrl}
-                                className="text-indigo-400 hover:text-indigo-300"
-                              >
-                                Download instead
-                              </a>
-                            </p>
-                          </object>
-                        ) : null}
-                        {a.previewable && a.contentType.startsWith("image/") ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={a.streamUrl}
-                            alt={a.filename}
-                            className="max-h-80 w-full rounded border border-gray-700 object-contain bg-white"
-                          />
-                        ) : null}
-                      </li>
-                    ))}
+                        </li>
+                      ),
+                    )}
                   </ul>
                 </div>
               ) : null}
