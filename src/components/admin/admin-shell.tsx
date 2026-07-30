@@ -15,6 +15,7 @@ import {
   BarChart3,
   History,
   Megaphone,
+  ScrollText,
   LogOut,
   Mail,
 } from "lucide-react";
@@ -48,6 +49,7 @@ const nav: { href: string; label: string; icon: React.ComponentType<{ className?
   { href: "/admin/reports", label: "Usage Reports", icon: BarChart3 },
   { href: "/admin/login-history", label: "Login History", icon: History },
   { href: "/admin/announcements", label: "Announcements", icon: Megaphone },
+  { href: "/admin/user-activity", label: "User Activity", icon: ScrollText },
 ];
 
 export function AdminShell({

@@ -13,6 +13,7 @@
     "start": "node scripts/start-prod.cjs",
     "lint": "eslint",
     "worker": "tsx scripts/email-worker.ts",
+    "purge-user-activity": "tsx scripts/purge-user-activity.ts",
     "create-admin": "tsx scripts/create-admin-user.ts",
     "verify-admin": "tsx scripts/verify-admin-user.ts",
     "smoke-auth": "tsx scripts/smoke-test-auth.ts",

@@ -35,6 +35,17 @@ health_ok() {
 }
 
 if health_ok; then
+  PURGE_STAMP="${LOG_DIR}/user-activity-purge.stamp"
+  run_purge=false
+  if [[ ! -f "$PURGE_STAMP" ]]; then
+    run_purge=true
+  elif [[ -n "$(find "$PURGE_STAMP" -mmin +55 2>/dev/null)" ]]; then
+    run_purge=true
+  fi
+  if [[ "$run_purge" == true ]] && [[ -f "${APP_DIR}/package.json" ]] && command -v npx >/dev/null 2>&1; then
+    (cd "$APP_DIR" && npx tsx scripts/purge-user-activity.ts >>"$LOG_FILE" 2>&1) || true
+    touch "$PURGE_STAMP"
+  fi
   exit 0
 fi
 

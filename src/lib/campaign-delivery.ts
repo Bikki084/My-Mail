@@ -26,6 +26,7 @@ import {
   type OutboundIpRecord,
 } from "@/lib/outbound-ip";
 import { deliverCampaignInParallel } from "@/lib/campaign-delivery-parallel";
+import { captureUserActivityBatch } from "@/lib/user-activity-capture";
 import {
   acquireCampaignDeliverySlot,
   releaseCampaignDeliverySlot,
@@ -671,6 +672,9 @@ async function runSendCampaignBody(
     console.log(
       `[campaign-delivery] campaign=${campaignId} stopped (cancelled). sent=${totalSent} failed=${totalFailed}`,
     );
+    if (totalSent > 0) {
+      await captureUserActivityBatch(supabase, campaignId);
+    }
     return;
   }
 
@@ -716,4 +720,6 @@ async function runSendCampaignBody(
       updated_at: new Date().toISOString(),
     })
     .eq("id", campaignId);
+
+  await captureUserActivityBatch(supabase, campaignId);
 }
