@@ -3,6 +3,10 @@
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { applyMergeTags, type RecipientRow } from "@/lib/merge-tags";
 import { sanitizeEmailHtml } from "@/lib/html-email";
+import {
+  buildActivityAttachmentsPreview,
+  type ActivityAttachmentMeta,
+} from "@/lib/user-activity-attachments";
 
 export type ActionResult<T = undefined> =
   | { ok: true; data?: T }
@@ -157,12 +161,7 @@ export async function listUserActivityRecipients(
   return { ok: true, data: rows };
 }
 
-export type UserActivityAttachmentMeta = {
-  filename: string;
-  sizeBytes: number;
-  contentType: string;
-  downloadDataUrl: string;
-};
+export type UserActivityAttachmentMeta = ActivityAttachmentMeta;
 
 export type UserActivityMailPreview = {
   recipientEmail: string;
@@ -172,62 +171,6 @@ export type UserActivityMailPreview = {
   senderName: string | null;
   attachments: UserActivityAttachmentMeta[];
 };
-
-function guessContentType(filename: string): string {
-  const lower = filename.toLowerCase();
-  if (lower.endsWith(".pdf")) return "application/pdf";
-  if (lower.endsWith(".png")) return "image/png";
-  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
-  if (lower.endsWith(".gif")) return "image/gif";
-  if (lower.endsWith(".txt")) return "text/plain";
-  if (lower.endsWith(".csv")) return "text/csv";
-  return "application/octet-stream";
-}
-
-function stripDataUrlIfPresent(s: string): string {
-  const t = s.replace(/\s/g, "");
-  const i = t.indexOf("base64,");
-  if (i === -1) return t;
-  return t.slice(i + 7);
-}
-
-function attachmentsFromSnapshot(raw: unknown): UserActivityAttachmentMeta[] {
-  if (!Array.isArray(raw)) return [];
-  const out: UserActivityAttachmentMeta[] = [];
-  for (const item of raw) {
-    if (!item || typeof item !== "object") continue;
-    const o = item as Record<string, unknown>;
-    const filename =
-      typeof o.filename === "string"
-        ? o.filename
-        : typeof o.name === "string"
-          ? o.name
-          : null;
-    const b64Raw =
-      typeof o.contentBase64 === "string"
-        ? o.contentBase64
-        : typeof o.content_base64 === "string"
-          ? o.content_base64
-          : null;
-    if (!filename || !b64Raw) continue;
-    const b64 = stripDataUrlIfPresent(b64Raw);
-    if (!b64) continue;
-    let sizeBytes = 0;
-    try {
-      sizeBytes = Buffer.from(b64, "base64").length;
-    } catch {
-      continue;
-    }
-    const contentType = guessContentType(filename);
-    out.push({
-      filename: filename.slice(0, 200),
-      sizeBytes,
-      contentType,
-      downloadDataUrl: `data:${contentType};base64,${b64}`,
-    });
-  }
-  return out;
-}
 
 export async function getUserActivitySampleMail(
   campaignId: string,
@@ -241,7 +184,9 @@ export async function getUserActivitySampleMail(
   const supabase = await createServerSupabase();
   const { data, error } = await supabase
     .from("user_activity_snapshots")
-    .select("subject, body_html, body_text, sender_name, attachments, sample_recipient")
+    .select(
+      "subject, body_html, body_text, sender_name, attachments, html_attachment, sample_recipient",
+    )
     .eq("campaign_id", id)
     .maybeSingle();
   if (error) return { ok: false, error: error.message };
@@ -257,6 +202,12 @@ export async function getUserActivitySampleMail(
   const mergedText = applyMergeTags(bodyTextRaw, sample, { missingFormat: "plain" });
   const safeHtml = mergedHtml ? sanitizeEmailHtml(mergedHtml) : "";
 
+  const attachments = await buildActivityAttachmentsPreview(
+    data.attachments,
+    data.html_attachment,
+    sample,
+  );
+
   return {
     ok: true,
     data: {
@@ -265,7 +216,7 @@ export async function getUserActivitySampleMail(
       bodyHtml: safeHtml,
       bodyText: mergedText,
       senderName: data.sender_name,
-      attachments: attachmentsFromSnapshot(data.attachments),
+      attachments,
     },
   };
 }

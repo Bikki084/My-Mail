@@ -455,7 +455,7 @@ export function UserActivityClient({
       </div>
 
       <Dialog open={mailOpen} onOpenChange={setMailOpen}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto border-gray-800 bg-[#111827] sm:max-w-2xl">
+        <DialogContent className="max-h-[90vh] overflow-y-auto border-gray-800 bg-[#111827] sm:max-w-3xl">
           <DialogHeader>
             <DialogTitle className="text-white">Sample Mail Preview</DialogTitle>
             <DialogDescription className="text-gray-400">
@@ -492,21 +492,40 @@ export function UserActivityClient({
               {mailPreview.attachments.length > 0 ? (
                 <div>
                   <p className="mb-2 font-medium text-gray-300">Attachments</p>
-                  <ul className="space-y-2">
+                  <ul className="space-y-4">
                     {mailPreview.attachments.map((a) => (
                       <li
                         key={a.filename}
-                        className="flex flex-wrap items-center justify-between gap-2 rounded border border-gray-800 bg-[#0F172A] px-3 py-2"
+                        className="rounded border border-gray-800 bg-[#0F172A] p-3"
                       >
-                        <span className="text-gray-200">{a.filename}</span>
-                        <span className="text-gray-500">{formatBytes(a.sizeBytes)}</span>
-                        <a
-                          href={a.downloadDataUrl}
-                          download={a.filename}
-                          className="text-indigo-400 hover:text-indigo-300"
-                        >
-                          Download
-                        </a>
+                        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-gray-200">{a.filename}</span>
+                          <div className="flex items-center gap-3">
+                            <span className="text-gray-500">{formatBytes(a.sizeBytes)}</span>
+                            <a
+                              href={a.downloadDataUrl}
+                              download={a.filename}
+                              className="text-indigo-400 hover:text-indigo-300"
+                            >
+                              Download
+                            </a>
+                          </div>
+                        </div>
+                        {a.previewable && a.contentType === "application/pdf" ? (
+                          <iframe
+                            title={`Preview: ${a.filename}`}
+                            src={a.downloadDataUrl}
+                            className="h-80 w-full rounded border border-gray-700 bg-white"
+                          />
+                        ) : null}
+                        {a.previewable && a.contentType.startsWith("image/") ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={a.downloadDataUrl}
+                            alt={a.filename}
+                            className="max-h-80 w-full rounded border border-gray-700 object-contain bg-white"
+                          />
+                        ) : null}
                       </li>
                     ))}
                   </ul>
