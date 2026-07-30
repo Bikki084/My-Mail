@@ -503,7 +503,7 @@ export function UserActivityClient({
                           <div className="flex items-center gap-3">
                             <span className="text-gray-500">{formatBytes(a.sizeBytes)}</span>
                             <a
-                              href={a.downloadDataUrl}
+                              href={a.downloadUrl}
                               download={a.filename}
                               className="text-indigo-400 hover:text-indigo-300"
                             >
@@ -512,16 +512,26 @@ export function UserActivityClient({
                           </div>
                         </div>
                         {a.previewable && a.contentType === "application/pdf" ? (
-                          <iframe
-                            title={`Preview: ${a.filename}`}
-                            src={a.downloadDataUrl}
+                          <object
+                            data={a.streamUrl}
+                            type="application/pdf"
                             className="h-80 w-full rounded border border-gray-700 bg-white"
-                          />
+                          >
+                            <p className="p-4 text-sm text-gray-500">
+                              PDF preview unavailable in this browser.{" "}
+                              <a
+                                href={a.downloadUrl}
+                                className="text-indigo-400 hover:text-indigo-300"
+                              >
+                                Download instead
+                              </a>
+                            </p>
+                          </object>
                         ) : null}
                         {a.previewable && a.contentType.startsWith("image/") ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img
-                            src={a.downloadDataUrl}
+                            src={a.streamUrl}
                             alt={a.filename}
                             className="max-h-80 w-full rounded border border-gray-700 object-contain bg-white"
                           />

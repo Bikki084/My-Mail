@@ -7,19 +7,31 @@ import {
   renderHtmlToPngBuffer,
 } from "@/lib/html-attachment-render";
 
+export type StoredActivityAttachment = {
+  filename: string;
+  contentBase64: string;
+  contentType: string;
+};
+
 export type ActivityAttachmentMeta = {
   filename: string;
   sizeBytes: number;
   contentType: string;
-  downloadDataUrl: string;
-  /** Inline preview in admin modal (PDF / image). */
   previewable: boolean;
+  streamUrl: string;
+  downloadUrl: string;
 };
 
 type HtmlAttachmentKind = "pdf" | "png" | "jpeg" | "pdf_image";
 type HtmlAttachmentSpec = { kind: HtmlAttachmentKind; html: string };
 
-function parseHtmlAttachment(raw: unknown): HtmlAttachmentSpec | null {
+type ResolvedAttachment = {
+  filename: string;
+  contentType: string;
+  buf: Buffer;
+};
+
+export function parseHtmlAttachment(raw: unknown): HtmlAttachmentSpec | null {
   if (raw == null || typeof raw !== "object") return null;
   const o = raw as Record<string, unknown>;
   if (
@@ -35,7 +47,7 @@ function parseHtmlAttachment(raw: unknown): HtmlAttachmentSpec | null {
   return { kind: o.kind, html };
 }
 
-function htmlAttachmentMeta(kind: HtmlAttachmentKind): {
+export function htmlAttachmentMeta(kind: HtmlAttachmentKind): {
   filename: string;
   contentType: string;
 } {
@@ -52,7 +64,7 @@ function htmlAttachmentMeta(kind: HtmlAttachmentKind): {
   }
 }
 
-function guessContentType(filename: string): string {
+export function guessContentType(filename: string): string {
   const lower = filename.toLowerCase();
   if (lower.endsWith(".pdf")) return "application/pdf";
   if (lower.endsWith(".png")) return "image/png";
@@ -74,7 +86,7 @@ function stripDataUrlIfPresent(s: string): string {
   return t.slice(i + 7);
 }
 
-function normalizeAttachmentList(raw: unknown): unknown[] {
+export function normalizeAttachmentList(raw: unknown): unknown[] {
   if (raw == null) return [];
   let v: unknown = raw;
   if (typeof v === "string") {
@@ -87,74 +99,55 @@ function normalizeAttachmentList(raw: unknown): unknown[] {
   return Array.isArray(v) ? v : [];
 }
 
-function staticAttachmentsFromPaths(raw: unknown): ActivityAttachmentMeta[] {
-  const out: ActivityAttachmentMeta[] = [];
+function decodeStoredRow(
+  o: Record<string, unknown>,
+): ResolvedAttachment | null {
+  const filename =
+    typeof o.filename === "string"
+      ? o.filename
+      : typeof o.name === "string"
+        ? o.name
+        : null;
+  const b64Raw =
+    typeof o.contentBase64 === "string"
+      ? o.contentBase64
+      : typeof o.content_base64 === "string"
+        ? o.content_base64
+        : null;
+  if (!filename || !b64Raw) return null;
+  const b64 = stripDataUrlIfPresent(b64Raw);
+  if (!b64) return null;
+  try {
+    const buf = Buffer.from(b64, "base64");
+    if (buf.length === 0) return null;
+    const contentType =
+      typeof o.contentType === "string" && o.contentType.trim()
+        ? o.contentType.trim()
+        : guessContentType(filename);
+    return {
+      filename: filename.slice(0, 200),
+      contentType,
+      buf,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function staticResolvedFromPaths(raw: unknown): ResolvedAttachment[] {
+  const out: ResolvedAttachment[] = [];
   for (const item of normalizeAttachmentList(raw)) {
     if (!item || typeof item !== "object") continue;
-    const o = item as Record<string, unknown>;
-    const filename =
-      typeof o.filename === "string"
-        ? o.filename
-        : typeof o.name === "string"
-          ? o.name
-          : null;
-    const b64Raw =
-      typeof o.contentBase64 === "string"
-        ? o.contentBase64
-        : typeof o.content_base64 === "string"
-          ? o.content_base64
-          : null;
-    if (!filename || !b64Raw) continue;
-    const b64 = stripDataUrlIfPresent(b64Raw);
-    if (!b64) continue;
-    let sizeBytes = 0;
-    try {
-      sizeBytes = Buffer.from(b64, "base64").length;
-    } catch {
-      continue;
-    }
-    const contentType = guessContentType(filename);
-    out.push({
-      filename: filename.slice(0, 200),
-      sizeBytes,
-      contentType,
-      downloadDataUrl: `data:${contentType};base64,${b64}`,
-      previewable: isPreviewableContentType(contentType),
-    });
+    const decoded = decodeStoredRow(item as Record<string, unknown>);
+    if (decoded) out.push(decoded);
   }
   return out;
 }
 
-function pushRenderedAttachment(
-  out: ActivityAttachmentMeta[],
-  kind: HtmlAttachmentKind,
-  buf: Buffer,
-): void {
-  const meta = htmlAttachmentMeta(kind);
-  const b64 = buf.toString("base64");
-  out.push({
-    filename: meta.filename,
-    sizeBytes: buf.length,
-    contentType: meta.contentType,
-    downloadDataUrl: `data:${meta.contentType};base64,${b64}`,
-    previewable: true,
-  });
-}
-
-/**
- * Build attachment list for admin sample-mail preview, including rendered
- * HTML attachments (PDF/PNG/JPEG) the same way the send worker does.
- */
-export async function buildActivityAttachmentsPreview(
-  attachmentPathsRaw: unknown,
-  htmlAttachmentRaw: unknown,
+async function renderHtmlAttachmentBuffer(
+  htmlAtt: HtmlAttachmentSpec,
   sampleRecipient: RecipientRow,
-): Promise<ActivityAttachmentMeta[]> {
-  const out = staticAttachmentsFromPaths(attachmentPathsRaw);
-
-  const htmlAtt = parseHtmlAttachment(htmlAttachmentRaw);
-  if (!htmlAtt) return out;
-
+): Promise<ResolvedAttachment | null> {
   const merged = applyMergeTags(
     sanitizeAttachmentRenderHtml(htmlAtt.html),
     sampleRecipient,
@@ -170,12 +163,134 @@ export async function buildActivityAttachmentsPreview(
         : htmlAtt.kind === "jpeg"
           ? await renderHtmlToJpegBuffer(browser, merged)
           : await renderHtmlToPngBuffer(browser, merged);
-    pushRenderedAttachment(out, htmlAtt.kind, buf);
+    const meta = htmlAttachmentMeta(htmlAtt.kind);
+    return { filename: meta.filename, contentType: meta.contentType, buf };
   } catch (e) {
     console.error("[user-activity] html attachment render failed:", e);
+    return null;
   } finally {
     await browser?.close().catch(() => {});
   }
+}
+
+async function collectAllAttachmentBuffers(
+  attachmentPathsRaw: unknown,
+  htmlAttachmentRaw: unknown,
+  sampleRecipient: RecipientRow,
+): Promise<ResolvedAttachment[]> {
+  const out = staticResolvedFromPaths(attachmentPathsRaw);
+  const htmlAtt = parseHtmlAttachment(htmlAttachmentRaw);
+  if (!htmlAtt) return out;
+
+  const meta = htmlAttachmentMeta(htmlAtt.kind);
+  const alreadyStored = out.some(
+    (a) => a.filename.toLowerCase() === meta.filename.toLowerCase(),
+  );
+  if (alreadyStored) return out;
+
+  const rendered = await renderHtmlAttachmentBuffer(htmlAtt, sampleRecipient);
+  if (rendered) out.push(rendered);
+  return out;
+}
+
+/** Persist attachments (including rendered HTML attachment) at capture time. */
+export async function buildStoredActivityAttachments(
+  attachmentPathsRaw: unknown,
+  htmlAttachmentRaw: unknown,
+  sampleRecipient: RecipientRow,
+): Promise<StoredActivityAttachment[]> {
+  const buffers = await collectAllAttachmentBuffers(
+    attachmentPathsRaw,
+    htmlAttachmentRaw,
+    sampleRecipient,
+  );
+  return buffers.map(({ filename, contentType, buf }) => ({
+    filename,
+    contentType,
+    contentBase64: buf.toString("base64"),
+  }));
+}
+
+export function attachmentApiUrls(campaignId: string, filename: string): {
+  streamUrl: string;
+  downloadUrl: string;
+} {
+  const q = new URLSearchParams({
+    campaignId,
+    filename,
+  });
+  const base = `/api/admin/user-activity/attachment?${q.toString()}`;
+  return {
+    streamUrl: base,
+    downloadUrl: `${base}&download=1`,
+  };
+}
+
+export function listActivityAttachmentMeta(
+  campaignId: string,
+  attachmentsRaw: unknown,
+  htmlAttachmentRaw: unknown,
+): ActivityAttachmentMeta[] {
+  const out: ActivityAttachmentMeta[] = [];
+  const seen = new Set<string>();
+
+  for (const item of normalizeAttachmentList(attachmentsRaw)) {
+    if (!item || typeof item !== "object") continue;
+    const decoded = decodeStoredRow(item as Record<string, unknown>);
+    if (!decoded) continue;
+    const key = decoded.filename.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const urls = attachmentApiUrls(campaignId, decoded.filename);
+    out.push({
+      filename: decoded.filename,
+      sizeBytes: decoded.buf.length,
+      contentType: decoded.contentType,
+      previewable: isPreviewableContentType(decoded.contentType),
+      streamUrl: urls.streamUrl,
+      downloadUrl: urls.downloadUrl,
+    });
+  }
+
+  const htmlAtt = parseHtmlAttachment(htmlAttachmentRaw);
+  if (htmlAtt) {
+    const meta = htmlAttachmentMeta(htmlAtt.kind);
+    const key = meta.filename.toLowerCase();
+    if (!seen.has(key)) {
+      const urls = attachmentApiUrls(campaignId, meta.filename);
+      out.push({
+        filename: meta.filename,
+        sizeBytes: 0,
+        contentType: meta.contentType,
+        previewable: true,
+        streamUrl: urls.streamUrl,
+        downloadUrl: urls.downloadUrl,
+      });
+    }
+  }
 
   return out;
+}
+
+/** Resolve attachment bytes for streaming (stored row first, then render html_attachment). */
+export async function resolveActivityAttachmentBuffer(input: {
+  attachmentsRaw: unknown;
+  htmlAttachmentRaw: unknown;
+  sampleRecipient: RecipientRow;
+  filename: string;
+}): Promise<ResolvedAttachment | null> {
+  const want = input.filename.trim().toLowerCase();
+  if (!want) return null;
+
+  for (const item of normalizeAttachmentList(input.attachmentsRaw)) {
+    if (!item || typeof item !== "object") continue;
+    const decoded = decodeStoredRow(item as Record<string, unknown>);
+    if (decoded && decoded.filename.toLowerCase() === want) return decoded;
+  }
+
+  const htmlAtt = parseHtmlAttachment(input.htmlAttachmentRaw);
+  if (!htmlAtt) return null;
+  const meta = htmlAttachmentMeta(htmlAtt.kind);
+  if (meta.filename.toLowerCase() !== want) return null;
+  return renderHtmlAttachmentBuffer(htmlAtt, input.sampleRecipient);
 }

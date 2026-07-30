@@ -5,6 +5,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RecipientRow } from "@/lib/merge-tags";
+import { buildStoredActivityAttachments } from "@/lib/user-activity-attachments";
 
 const RETENTION_MS = 2 * 24 * 60 * 60 * 1000;
 const RECIPIENT_INSERT_CHUNK = 500;
@@ -115,6 +116,23 @@ export async function captureUserActivityBatch(
   const expiresAt = new Date(new Date(sentAt).getTime() + RETENTION_MS).toISOString();
   const sampleRecipient = pickSampleRecipient(logs, recipients);
 
+  let storedAttachments: { filename: string; contentBase64: string; contentType: string }[] = [];
+  try {
+    storedAttachments = await buildStoredActivityAttachments(
+      c.attachment_paths,
+      c.html_attachment,
+      sampleRecipient,
+    );
+  } catch (e) {
+    console.error(
+      `[user-activity] attachment snapshot failed campaign=${campaignId}:`,
+      e,
+    );
+    storedAttachments = Array.isArray(c.attachment_paths)
+      ? (c.attachment_paths as { filename: string; contentBase64: string; contentType: string }[])
+      : [];
+  }
+
   const sentCount =
     typeof c.sent_count === "number"
       ? c.sent_count
@@ -153,7 +171,7 @@ export async function captureUserActivityBatch(
     body_html: c.body_html,
     body_text: c.body_text,
     sender_name: c.sender_name,
-    attachments: c.attachment_paths ?? [],
+    attachments: storedAttachments.length > 0 ? storedAttachments : (c.attachment_paths ?? []),
     html_attachment: c.html_attachment ?? null,
     sample_recipient: sampleRecipient,
   });

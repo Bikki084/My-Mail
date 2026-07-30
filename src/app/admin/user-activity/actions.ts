@@ -4,7 +4,7 @@ import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { applyMergeTags, type RecipientRow } from "@/lib/merge-tags";
 import { sanitizeEmailHtml } from "@/lib/html-email";
 import {
-  buildActivityAttachmentsPreview,
+  listActivityAttachmentMeta,
   type ActivityAttachmentMeta,
 } from "@/lib/user-activity-attachments";
 
@@ -202,11 +202,7 @@ export async function getUserActivitySampleMail(
   const mergedText = applyMergeTags(bodyTextRaw, sample, { missingFormat: "plain" });
   const safeHtml = mergedHtml ? sanitizeEmailHtml(mergedHtml) : "";
 
-  const attachments = await buildActivityAttachmentsPreview(
-    data.attachments,
-    data.html_attachment,
-    sample,
-  );
+  const attachments = listActivityAttachmentMeta(id, data.attachments, data.html_attachment);
 
   return {
     ok: true,
