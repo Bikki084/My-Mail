@@ -228,6 +228,15 @@ export const brevoCircuit = getCircuitBreaker({
   timeoutMs: 12_000,
 });
 
+export const sendgridCircuit = getCircuitBreaker({
+  name: "sendgrid-api",
+  failureThreshold: 3,
+  slowCallThresholdMs: 10_000,
+  resetTimeoutMs: 60_000,
+  maxConcurrency: 2,
+  timeoutMs: 12_000,
+});
+
 export const supabaseReadCircuit = getCircuitBreaker({
   name: "supabase-read",
   failureThreshold: 5,

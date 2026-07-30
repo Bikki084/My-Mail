@@ -1,8 +1,8 @@
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
-import { BrevoQuotaPanel } from "@/components/admin/brevo-quota-panel";
+import { SendGridQuotaPanel } from "@/components/admin/sendgrid-quota-panel";
 import { UserEmailsTodayCards } from "@/components/admin/user-emails-today-cards";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { getBrevoQuotaForAdmin } from "@/app/admin/brevo-quota-actions";
+import { getSendGridQuotaForAdmin } from "@/app/admin/sendgrid-quota-actions";
 import { resolveCacheLocale } from "@/lib/cache/render-cache";
 import {
   getCachedAdminDashboardStats,
@@ -14,16 +14,16 @@ export const revalidate = 45;
 
 export default async function AdminDashboardPage() {
   const locale = await resolveCacheLocale();
-  const [s, brevo, perUser] = await Promise.all([
+  const [s, sendgrid, perUser] = await Promise.all([
     getCachedAdminDashboardStats(locale),
-    getBrevoQuotaForAdmin(),
+    getSendGridQuotaForAdmin(),
     getCachedPerUserEmailsToday(locale),
   ]);
   return (
     <>
       <AdminPageHeader
         title="Dashboard"
-        description="Overview of tenants, sending activity, credits, and Brevo relay quota."
+        description="Overview of tenants, sending activity, credits, and SendGrid relay quota."
       />
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card className="border-gray-800 bg-[#111827]">
@@ -69,7 +69,7 @@ export default async function AdminDashboardPage() {
       </div>
 
       <div className="mt-6">
-        <BrevoQuotaPanel initial={brevo} />
+        <SendGridQuotaPanel initial={sendgrid} />
       </div>
 
       <div className="mt-6">
