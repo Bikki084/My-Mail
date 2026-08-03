@@ -2,7 +2,7 @@
 
 > **Purpose:** Single source of truth for AI agents and developers. Read this file **before** scanning the whole repo.  
 > **Maintainers:** Update this file whenever you add features, change limits, deploy steps, or infra — same as you would commit code.  
-> **Last updated:** 2026-08-02
+> **Last updated:** 2026-08-03
 
 ---
 
@@ -11,6 +11,7 @@
 | Date | Change |
 |------|--------|
 | 2026-08-02 | Created `brain.md`; agent rules in `AGENTS.md` |
+| 2026-08-03 | **AWS env:** `SENDGRID_EMAIL_PLAN_LIMIT` must be `50000` for Essentials 50K (not `5000`) or omit for auto-detect |
 | 2026-08-03 | SendGrid quota: show plan limit (50K) not 10× API cap; used from stats API |
 | 2026-07-30 | **User Activity** admin section (`/admin/user-activity`), 2-day retention, PDF preview via API |
 | 2026-07 | SendGrid/Mailjet From-address fixes; brand → `bulkprofire.com` / BulkProFire |
@@ -59,6 +60,25 @@ bash scripts/ensure-email-stack.sh
 **Processes (PM2):** `mymail-web`, `mymail-worker` — see `ecosystem.config.cjs`
 
 **Reliability:** `scripts/site-watchdog.sh` (cron every minute), hourly user-activity purge stamp
+
+### AWS Lightsail — `.env.local` (SendGrid)
+
+Edit on server: `nano ~/mymail/.env.local`
+
+| Variable | What to set | Notes |
+|----------|-------------|--------|
+| `SENDGRID_API_KEY` | `SG.xxxx...` | Same key as SMTP password when username is `apikey`. Needs **Read** scope for dashboard quota. |
+| `SENDGRID_EMAIL_PLAN_LIMIT` | **`50000`** or **remove line** | Essentials **50K** = 50,000 emails/month. **Do not use `5000`** — that is wrong for your plan. If omitted, app auto-detects 50K from API (500000 ÷ 10). |
+| `BREVO_API_KEY` | **Remove** | Legacy; dashboard uses SendGrid only. |
+
+After editing env:
+
+```bash
+cd ~/mymail && git pull && bash scripts/deploy-production.sh
+pm2 restart mymail-web mymail-worker --update-env
+```
+
+Verify admin dashboard → SendGrid quota shows **~50,000** limit and used count close to SendGrid UI.
 
 ---
 

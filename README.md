@@ -42,7 +42,7 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ## Project brain (for AI & onboarding)
 
-**`brain.md`** — architecture, limits, deploy runbook, env cheat sheet, and changelog. Agents should read it before scanning the repo; update it when features or infra change (see `AGENTS.md`).
+**`brain.md`** — architecture, limits, deploy runbook, **AWS `.env.local` SendGrid settings**, env cheat sheet, and changelog. Agents should read it before scanning the repo; update it when features or infra change (see `AGENTS.md`).
 
 ## Scripts
 
