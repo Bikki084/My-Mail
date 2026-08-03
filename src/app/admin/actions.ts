@@ -104,21 +104,19 @@ export async function getPerUserEmailsToday(): Promise<{
   }
 
   const clientIds = profiles.map((p) => p.id);
-  const { data: logs, error: logsErr } = await supabase
-    .from("sending_logs")
-    .select("user_id")
-    .in("user_id", clientIds)
-    .eq("status", "sent")
-    .gte("sent_at", todayIso);
-
-  if (logsErr) {
-    return { rows: [], live: false };
-  }
 
   const counts = new Map<string, number>();
-  for (const row of logs ?? []) {
-    counts.set(row.user_id, (counts.get(row.user_id) ?? 0) + 1);
-  }
+  await Promise.all(
+    clientIds.map(async (userId) => {
+      const { count, error } = await supabase
+        .from("sending_logs")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .eq("status", "sent")
+        .gte("sent_at", todayIso);
+      if (!error) counts.set(userId, count ?? 0);
+    }),
+  );
 
   const rows: UserEmailsTodayRow[] = profiles
     .map((p) => ({
