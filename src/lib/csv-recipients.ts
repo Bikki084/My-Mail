@@ -49,7 +49,7 @@ export function parsedCsvToRecipientRows(
     parsed.columnOrder.find((c) => c.trim().toLowerCase() === "email") ?? "email";
   const out: RecipientRow[] = [];
   for (const row of parsed.rows) {
-    if (row.invalidEmail || row.duplicate) continue;
+    if (row.invalidEmail || row.duplicate || row.validationBlocked) continue;
     const raw = cell(row, emailKey);
     const email = raw.trim().toLowerCase();
     if (!EMAIL_RE.test(email)) continue;

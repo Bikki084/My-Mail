@@ -7,6 +7,9 @@ export type CsvPreviewRow = {
   cells: Record<string, string>;
   duplicate?: boolean;
   invalidEmail?: boolean;
+  /** Blocked by deliverability validation (disposable, no MX, suppressed, role address). */
+  validationBlocked?: boolean;
+  validationReasons?: string[];
 };
 
 export type ParsedCsv = {

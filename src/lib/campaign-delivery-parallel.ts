@@ -29,6 +29,7 @@ import {
 } from "@/lib/send-governor";
 import { resolveMailEncoding } from "@/lib/mail-encoding";
 import { buildSmtpUserTransport } from "@/lib/smtp/transport";
+import { providerTrackingHeaders } from "@/lib/smtp/provider-tracking";
 import { rotateOutboundIp, prepareLightsailEgressForCampaign } from "@/lib/outbound-ip";
 import { isAwsLightsailRotationConfigured } from "@/lib/aws-outbound-ip";
 import { usesProxyEgress } from "@/lib/egress-mode";
@@ -173,7 +174,7 @@ export type ParallelDeliveryParams = {
   staticAttachments: Attachment[];
   htmlAttSpec: HtmlAttachmentSpec | null;
   renderBrowser: Browser | null;
-  suppressed: Set<string>;
+  blockedRecipients: Map<string, string>;
   ipHistory: IpHistoryEntry[];
   rotationThreshold: number;
   manualIpRotationPause: boolean;
@@ -197,7 +198,7 @@ export async function deliverCampaignInParallel(
     staticAttachments,
     htmlAttSpec,
     renderBrowser,
-    suppressed,
+    blockedRecipients,
     rotationThreshold,
     manualIpRotationPause,
     onEmailSent,
@@ -458,13 +459,9 @@ export async function deliverCampaignInParallel(
       const emailKey = recipient.email.trim().toLowerCase();
       if (shared.alreadySent.has(emailKey)) return;
 
-      if (suppressed.has(emailKey)) {
-        await logFailedRecipient(
-          recipient,
-          emailKey,
-          "Recipient previously unsubscribed (skipped).",
-          null,
-        );
+      const skipReason = blockedRecipients.get(emailKey);
+      if (skipReason) {
+        await logFailedRecipient(recipient, emailKey, skipReason, null);
         return;
       }
 
@@ -570,6 +567,11 @@ export async function deliverCampaignInParallel(
             contentTransferEncoding: mimeEnc.htmlContentTransferEncoding,
           } as const);
 
+        const tracking = providerTrackingHeaders(smtp.host, {
+          campaignId,
+          userId,
+        });
+
         const fromAddr = extractAddress(from);
         await withGlobalSmtpSlot(() =>
           withSmtpSendRetry(async () => {
@@ -583,7 +585,7 @@ export async function deliverCampaignInParallel(
               replyTo: delivery.replyTo,
               messageId: delivery.messageId,
               subject: subj,
-              headers: delivery.headers,
+              headers: { ...delivery.headers, ...tracking },
               text: textPayload || undefined,
               html: htmlPayload || undefined,
               ...(allAttachments.length ? { attachments: allAttachments } : {}),

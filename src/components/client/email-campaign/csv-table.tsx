@@ -45,6 +45,7 @@ import {
 } from "@/lib/built-in-merge-tags";
 import { cn } from "@/lib/utils";
 import type { CsvPreviewRow, ParsedCsv } from "@/lib/csv-types";
+import { validateEmailsViaApi } from "@/lib/recipient-validation-client";
 import { useEmailCampaign } from "./email-campaign-context";
 import { toast } from "sonner";
 
@@ -91,6 +92,36 @@ function resolveEmailColumnKey(fields: string[]): string | null {
       f.norm.includes("email"),
   );
   return loose?.raw ?? null;
+}
+
+function applyValidationToParsed(
+  parsed: ParsedCsv,
+  emailKey: string,
+  results: Map<string, { ok: boolean; reasonLabels: string[] }>,
+): ParsedCsv {
+  const rows = parsed.rows.map((row) => {
+    const emailRaw = row.cells[emailKey] ?? "";
+    const norm = normalizeEmail(emailRaw);
+    if (!norm || row.invalidEmail || row.duplicate) return row;
+    const v = results.get(norm);
+    if (!v || v.ok) return row;
+    return {
+      ...row,
+      validationBlocked: true,
+      validationReasons: v.reasonLabels,
+    };
+  });
+  return { ...parsed, rows };
+}
+
+function collectValidEmails(parsed: ParsedCsv, emailKey: string): string[] {
+  const out: string[] = [];
+  for (const row of parsed.rows) {
+    if (row.invalidEmail || row.duplicate) continue;
+    const norm = normalizeEmail(row.cells[emailKey] ?? "");
+    if (norm && isValidEmail(norm)) out.push(norm);
+  }
+  return out;
 }
 
 function buildParsedFromParseResult(
@@ -181,8 +212,9 @@ export function CsvTable({
             key={row.id}
             className={cn(
               "border-zinc-800",
+              row.validationBlocked && !row.invalidEmail && "bg-orange-950/25",
               row.invalidEmail && "bg-red-950/30",
-              row.duplicate && !row.invalidEmail && "bg-amber-950/20",
+              row.duplicate && !row.invalidEmail && !row.validationBlocked && "bg-amber-950/20",
             )}
           >
             {columnOrder.map((col) => (
@@ -198,6 +230,15 @@ export function CsvTable({
             ))}
             <TableCell className="text-right">
               <div className="flex flex-wrap justify-end gap-1">
+                {row.validationBlocked && (
+                  <Badge
+                    variant="secondary"
+                    className="border-orange-800/80 bg-orange-950/60 text-orange-200"
+                    title={row.validationReasons?.join("; ")}
+                  >
+                    Bounce risk
+                  </Badge>
+                )}
                 {row.duplicate && (
                   <Badge variant="secondary" className="border-amber-800/80 bg-amber-950/60 text-amber-200">
                     Duplicate
@@ -284,6 +325,7 @@ export function CsvRecipientsTab({ onGoToSmtp }: { onGoToSmtp?: () => void }) {
   const storageHydrateRef = React.useRef(false);
   const [dragActive, setDragActive] = React.useState(false);
   const [parsing, setParsing] = React.useState(false);
+  const [validating, setValidating] = React.useState(false);
   const [duplicateChecking, setDuplicateChecking] = React.useState(false);
   const [selectedCsvName, setSelectedCsvName] = React.useState<string | null>(null);
   const [csvFileError, setCsvFileError] = React.useState<string | null>(null);
@@ -310,6 +352,15 @@ export function CsvRecipientsTab({ onGoToSmtp }: { onGoToSmtp?: () => void }) {
     () => generateBuiltInFieldsForRecipient(builtInPreviewEmail, builtInMergeTags),
     [builtInPreviewEmail, builtInMergeTags],
   );
+
+  const validationStats = React.useMemo(() => {
+    if (!parsedData) return null;
+    const blocked = parsedData.rows.filter((r) => r.validationBlocked).length;
+    const sendable = parsedData.rows.filter(
+      (r) => !r.invalidEmail && !r.duplicate && !r.validationBlocked,
+    ).length;
+    return { blocked, sendable };
+  }, [parsedData]);
 
   const totalPages = React.useMemo(() => {
     if (!parsedData) return 1;
@@ -448,6 +499,31 @@ export function CsvRecipientsTab({ onGoToSmtp }: { onGoToSmtp?: () => void }) {
       } catch {
         setSuccessfulContentHash(null);
       }
+
+      const emailKey =
+        built.columnOrder.find((c) => c.trim().toLowerCase() === "email") ?? "email";
+      const emails = collectValidEmails(built, emailKey);
+      if (emails.length > 0) {
+        setValidating(true);
+        try {
+          const results = await validateEmailsViaApi(emails);
+          const validated = applyValidationToParsed(built, emailKey, results);
+          setParsedData(validated);
+          const blocked = validated.rows.filter((r) => r.validationBlocked).length;
+          if (blocked > 0) {
+            toast.warning(`${blocked} recipient(s) blocked (bounce risk)`, {
+              description:
+                "Disposable domains, missing MX, suppressed, or role addresses are excluded from send.",
+            });
+          }
+        } catch (e) {
+          toast.error("Deliverability check failed", {
+            description: e instanceof Error ? e.message : String(e),
+          });
+        } finally {
+          setValidating(false);
+        }
+      }
     } catch (e) {
       setParsedData(null);
       setCurrentPage(1);
@@ -535,14 +611,14 @@ export function CsvRecipientsTab({ onGoToSmtp }: { onGoToSmtp?: () => void }) {
             tabIndex={-1}
             onChange={onCsvInputChange}
             aria-label="Choose CSV file"
-            disabled={parsing || duplicateChecking}
+            disabled={parsing || validating || duplicateChecking}
           />
           <div
             role="button"
             tabIndex={0}
             onClick={() => !parsing && !duplicateChecking && openCsvPicker()}
             onKeyDown={(e) => {
-              if (parsing || duplicateChecking) return;
+              if (parsing || validating || duplicateChecking) return;
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
                 openCsvPicker();
@@ -557,17 +633,17 @@ export function CsvRecipientsTab({ onGoToSmtp }: { onGoToSmtp?: () => void }) {
               setDragActive(false);
             }}
             onDragOver={(e) => e.preventDefault()}
-            onDrop={parsing || duplicateChecking ? undefined : onCsvDrop}
+            onDrop={parsing || validating || duplicateChecking ? undefined : onCsvDrop}
             className={cn(
               "flex cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed px-6 py-14 transition-colors",
-              (parsing || duplicateChecking) && "pointer-events-none opacity-70",
+              (parsing || validating || duplicateChecking) && "pointer-events-none opacity-70",
               dragActive
                 ? "border-emerald-500/60 bg-emerald-950/20"
                 : "border-zinc-700 bg-zinc-950/50 hover:border-zinc-500",
             )}
           >
             <div className="flex size-14 items-center justify-center rounded-full bg-zinc-800">
-              {parsing || duplicateChecking ? (
+              {parsing || validating || duplicateChecking ? (
                 <Loader2 className="size-7 animate-spin text-zinc-300" />
               ) : (
                 <Upload className="size-7 text-zinc-300" />
@@ -579,7 +655,9 @@ export function CsvRecipientsTab({ onGoToSmtp }: { onGoToSmtp?: () => void }) {
                   ? "Checking file…"
                   : parsing
                     ? "Parsing CSV…"
-                    : "Drop CSV or click to upload"}
+                    : validating
+                      ? "Checking deliverability (MX, disposable)…"
+                      : "Drop CSV or click to upload"}
               </p>
               <p className="text-sm text-zinc-500">Accepts .csv with a header row</p>
             </div>
@@ -766,8 +844,8 @@ export function CsvRecipientsTab({ onGoToSmtp }: { onGoToSmtp?: () => void }) {
             <div className="min-w-0">
               <CardTitle className="text-zinc-100">Preview</CardTitle>
               <CardDescription>
-                Parsed rows from <span className="font-mono text-zinc-400">{parsedData.fileName}</span>. Invalid and
-                duplicate emails are flagged. {ROWS_PER_PAGE} rows per page — no scroll.
+                Parsed rows from <span className="font-mono text-zinc-400">{parsedData.fileName}</span>.
+                Invalid, duplicate, and bounce-risk emails are flagged. {ROWS_PER_PAGE} rows per page — no scroll.
               </CardDescription>
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
@@ -806,6 +884,26 @@ export function CsvRecipientsTab({ onGoToSmtp }: { onGoToSmtp?: () => void }) {
             <p className="text-sm text-zinc-400">
               <span className="font-medium text-zinc-200">{parsedData.totalCount}</span> record
               {parsedData.totalCount === 1 ? "" : "s"} parsed
+              {validationStats ? (
+                <>
+                  {" "}
+                  ·{" "}
+                  <span className="font-medium text-emerald-300/90">
+                    {validationStats.sendable}
+                  </span>{" "}
+                  sendable
+                  {validationStats.blocked > 0 ? (
+                    <>
+                      {" "}
+                      ·{" "}
+                      <span className="font-medium text-orange-300/90">
+                        {validationStats.blocked}
+                      </span>{" "}
+                      bounce risk
+                    </>
+                  ) : null}
+                </>
+              ) : null}
               {parsedData.totalCount > 0 ? (
                 <>
                   {" "}

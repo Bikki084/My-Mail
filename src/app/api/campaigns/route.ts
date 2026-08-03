@@ -15,6 +15,7 @@ import {
   formatZodError,
   htmlAttachmentPayloadSchema,
 } from "@/lib/validation";
+import { filterRecipientsForSend } from "@/lib/filter-recipients-for-send";
 import type { z } from "zod";
 
 const MAX_ATTACHMENTS = MAX_CAMPAIGN_ATTACHMENTS;
@@ -135,6 +136,20 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
+
+  const filtered = await filterRecipientsForSend(supabase, user.id, row);
+  if (filtered.safe.length === 0) {
+    return NextResponse.json(
+      {
+        error:
+          "No sendable recipients after deliverability checks. Fix your CSV (invalid, disposable, no MX, suppressed, or role addresses).",
+        blockedCount: filtered.blocked.length,
+      },
+      { status: 400 },
+    );
+  }
+  row = filtered.safe;
+
   const built = await buildCampaignStorageHtml({
     rawHtml: rest.body_html ?? "",
   });
@@ -216,6 +231,15 @@ export async function POST(req: Request) {
   return NextResponse.json({
     id: data.id,
     attachmentCount: normalizedAttachments.length,
-    warnings: built.warnings.length > 0 ? built.warnings : undefined,
+    warnings: [
+      ...(built.warnings.length > 0 ? built.warnings : []),
+      ...filtered.warnings,
+    ].filter(Boolean).length
+      ? [
+          ...(built.warnings.length > 0 ? built.warnings : []),
+          ...filtered.warnings,
+        ]
+      : undefined,
+    blockedRecipientCount: filtered.blocked.length > 0 ? filtered.blocked.length : undefined,
   });
 }

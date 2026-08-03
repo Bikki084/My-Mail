@@ -36,6 +36,8 @@ import {
   isCampaignCancelled,
 } from "@/lib/campaign-cancel";
 import { APP_DEFAULT_SENDER_NAME } from "@/lib/brand";
+import { loadSuppressedEmails, suppressionSkipMessage } from "@/lib/recipient-suppression";
+import { validateRecipients, formatBlockedReasons } from "@/lib/recipient-validation";
 
 type SmtpRow = {
   id: string;
@@ -478,34 +480,28 @@ async function runSendCampaignBody(
     .eq("id", campaignId)
     .neq("status", "cancelled");
 
-  // Load this sender's suppression list once. Recipients on it are silently
-  // skipped (logged with status='failed', error_message='unsubscribed') so we
-  // never email someone who clicked Unsubscribe — required by CAN-SPAM and a
-  // strong reputation signal for Outlook / Gmail. Falls back to an empty set
-  // when the `unsubscribes` table doesn't exist yet (migration not applied).
-  const suppressed = new Set<string>();
+  // Load suppression list + pre-send validation blocks once per campaign burst.
+  const blockedRecipients = new Map<string, string>();
   try {
-    const { data: rows, error } = await supabase
-      .from("unsubscribes")
-      .select("recipient_email")
-      .eq("user_id", userId);
-    if (!error && Array.isArray(rows)) {
-      for (const r of rows as { recipient_email: string }[]) {
-        if (r.recipient_email) suppressed.add(r.recipient_email.trim().toLowerCase());
-      }
-    } else if (
-      error &&
-      (error as { code?: string }).code &&
-      (error as { code?: string }).code !== "42P01"
-    ) {
-      console.warn(
-        `[campaign-delivery] could not load suppression list for user=${userId}: ${error.message}`,
-      );
+    const suppressed = await loadSuppressedEmails(supabase, userId);
+    for (const email of suppressed) {
+      blockedRecipients.set(email, suppressionSkipMessage("manual"));
     }
   } catch (e) {
     console.warn(
       `[campaign-delivery] suppression list query threw: ${friendlyErr(e)}`,
     );
+  }
+
+  const validation = await validateRecipients(
+    supabase,
+    userId,
+    recipients.map((r) => r.email),
+  );
+  for (const row of validation.results) {
+    if (!row.ok) {
+      blockedRecipients.set(row.email, formatBlockedReasons(row.reasons));
+    }
   }
 
   const senderName = (campaign.sender_name as string | null)?.trim() || APP_DEFAULT_SENDER_NAME;
@@ -600,7 +596,7 @@ async function runSendCampaignBody(
       staticAttachments,
       htmlAttSpec,
       renderBrowser,
-      suppressed,
+      blockedRecipients,
       ipHistory,
       rotationThreshold,
       manualIpRotationPause,

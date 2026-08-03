@@ -12,7 +12,7 @@
 |------|--------|
 | 2026-08-02 | Created `brain.md`; agent rules in `AGENTS.md` |
 | 2026-08-03 | **AWS env:** `SENDGRID_EMAIL_PLAN_LIMIT` must be `50000` for Essentials 50K (not `5000`) or omit for auto-detect |
-| 2026-08-03 | SendGrid quota: show plan limit (50K) not 10× API cap; used from stats API |
+| 2026-08-03 | **Bounce prevention:** CSV validation (syntax, disposable, MX, role addresses), suppression at send, provider-agnostic webhook `/api/webhooks/email-events` |
 | 2026-07-30 | **User Activity** admin section (`/admin/user-activity`), 2-day retention, PDF preview via API |
 | 2026-07 | SendGrid/Mailjet From-address fixes; brand → `bulkprofire.com` / BulkProFire |
 
@@ -107,6 +107,33 @@ Browser → nginx → Next.js (mymail-web)
 **Auth:** Supabase SSR cookies; role from `profiles.role` in middleware (`src/lib/supabase/middleware.ts`).
 
 **Admin actions:** Server Actions in `src/app/admin/**/actions.ts` + `assertAdmin()` pattern — not `/api/admin/*` except user-activity attachment stream.
+
+---
+
+## Bounce prevention (provider-agnostic)
+
+Works with **any SMTP** — not tied to SendGrid APIs for validation.
+
+| Layer | What it does |
+|-------|----------------|
+| **CSV upload** | `POST /api/recipients/validate` — syntax, disposable domains, DNS MX, role addresses, tenant suppression |
+| **Campaign create** | Server re-filters recipients (`filterRecipientsForSend`) before storing |
+| **Send loop** | Skips suppressed + validation-failed addresses; logs reason in `sending_logs` |
+| **Webhook** | `POST /api/webhooks/email-events` — hard bounces, blocks, spam → auto-suppress in `unsubscribes` |
+
+**SendGrid Event Webhook setup:**
+
+1. SendGrid → Settings → Mail Settings → Event Webhook  
+2. URL: `https://bulkprofire.com/api/webhooks/email-events`  
+3. Events: **Bounce**, **Blocked**, **Spam Report**, **Dropped**  
+4. Optional header: `X-Webhook-Secret: <EMAIL_WEBHOOK_SECRET>` (set same value in `.env.local`)  
+5. Optional header: `X-Webhook-Provider: sendgrid`
+
+Outbound sends attach `X-Mymail-Campaign-Id` / `X-Mymail-User-Id` (all providers) and SendGrid `unique_args` for webhook correlation.
+
+**Migration:** `20260803120000_recipient_bounce_prevention.sql`
+
+**Code:** `src/lib/recipient-validation/`, `src/lib/recipient-suppression.ts`, `src/lib/webhooks/`
 
 ---
 
@@ -225,6 +252,8 @@ Governor: `src/lib/send-governor.ts` — disable with `SEND_GOVERNOR_DISABLE=1` 
 | `SENDGRID_EMAIL_PLAN_LIMIT` | Optional override for plan allotment (e.g. `50000`); auto ÷10 from API cap if unset |
 | `APP_PUBLIC_URL` / `NEXT_PUBLIC_APP_URL` | Unsubscribe links, mailer URLs |
 | `PUPPETEER_EXECUTABLE_PATH` | `/usr/bin/chromium` on VPS for PDF attachments |
+| `EMAIL_WEBHOOK_SECRET` | Shared secret for inbound bounce/spam webhooks (`X-Webhook-Secret` header) |
+| `RECIPIENT_MX_CACHE_TTL_HOURS` | Optional MX DNS cache TTL (default 168h) |
 
 Full list: `.env.example`
 
