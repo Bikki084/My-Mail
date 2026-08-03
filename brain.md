@@ -11,7 +11,7 @@
 | Date | Change |
 |------|--------|
 | 2026-08-02 | Created `brain.md`; agent rules in `AGENTS.md` |
-| 2026-08-02 | Admin dashboard: **SendGrid quota** panel (replaced Brevo) — `SENDGRID_API_KEY` |
+| 2026-08-03 | SendGrid quota: show plan limit (50K) not 10× API cap; used from stats API |
 | 2026-07-30 | **User Activity** admin section (`/admin/user-activity`), 2-day retention, PDF preview via API |
 | 2026-07 | SendGrid/Mailjet From-address fixes; brand → `bulkprofire.com` / BulkProFire |
 
@@ -202,7 +202,7 @@ Governor: `src/lib/send-governor.ts` — disable with `SEND_GOVERNOR_DISABLE=1` 
 | `REDIS_URL` | BullMQ queue (required for reliable bulk) |
 | `SMTP_ENCRYPTION_KEY` | Encrypt SMTP passwords at rest |
 | `SENDGRID_API_KEY` | Admin dashboard quota (`/v3/user/credits`) |
-| `SENDGRID_EMAIL_PLAN_LIMIT` | Optional monthly cap if API omits total |
+| `SENDGRID_EMAIL_PLAN_LIMIT` | Optional override for plan allotment (e.g. `50000`); auto ÷10 from API cap if unset |
 | `APP_PUBLIC_URL` / `NEXT_PUBLIC_APP_URL` | Unsubscribe links, mailer URLs |
 | `PUPPETEER_EXECUTABLE_PATH` | `/usr/bin/chromium` on VPS for PDF attachments |
 

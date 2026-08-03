@@ -10,12 +10,15 @@ export type SendGridQuotaSnapshot = {
   planType?: string;
   planLabel?: string;
   remaining?: number;
+  /** Monthly plan email allotment (matches SendGrid UI, e.g. 50,000). */
   limit?: number;
   used?: number;
   period?: "day" | "month";
   periodEndsAt?: string;
   accountEmail?: string;
   fetchedAt: string;
+  /** SendGrid API sending cap when it differs from plan limit (often 10× plan). */
+  apiSendingCap?: number;
 };
 
 type SendGridCreditsResponse = {
@@ -73,6 +76,14 @@ function labelForPlanType(type: string): string {
   return type.charAt(0).toUpperCase() + type.slice(1);
 }
 
+function formatPlanLabel(planType: string, monthlyLimit?: number): string {
+  const base = labelForPlanType(planType);
+  if (monthlyLimit == null) return base;
+  if (monthlyLimit >= 1_000_000) return `${base} · ${(monthlyLimit / 1_000_000).toFixed(1)}M/mo`;
+  if (monthlyLimit >= 1_000) return `${base} · ${Math.round(monthlyLimit / 1_000)}K/mo`;
+  return `${base} · ${monthlyLimit.toLocaleString()}/mo`;
+}
+
 function periodFromResetFrequency(freq?: string): "day" | "month" {
   return freq?.trim().toLowerCase() === "daily" ? "day" : "month";
 }
@@ -85,6 +96,47 @@ function startOfMonthIsoDate(): string {
   const d = new Date();
   d.setUTCDate(1);
   return d.toISOString().slice(0, 10);
+}
+
+/**
+ * SendGrid dashboard shows the plan email allotment (e.g. 50,000/mo).
+ * The credits API `total` on Essentials/Pro is often 10× that cap (API request limit).
+ * @see https://support.sendgrid.com/hc/en-us/articles/35466138799899
+ */
+function resolveDisplayPlanLimit(credits: SendGridCreditsResponse): {
+  limit: number | undefined;
+  apiSendingCap?: number;
+} {
+  const envLimit = envPlanLimitOverride();
+  if (envLimit != null) {
+    return {
+      limit: envLimit,
+      apiSendingCap:
+        typeof credits.total === "number" && credits.total > envLimit
+          ? credits.total
+          : undefined,
+    };
+  }
+
+  const total = credits.total;
+  if (typeof total !== "number" || !Number.isFinite(total) || total <= 0) {
+    return { limit: undefined };
+  }
+
+  // Essentials 50K → credits.total=500_000; dashboard shows 50_000.
+  if (total >= 100_000 && total % 10 === 0) {
+    const planLimit = total / 10;
+    if (planLimit >= 1_000 && planLimit <= 2_500_000) {
+      return { limit: planLimit, apiSendingCap: total };
+    }
+  }
+
+  // Free / legacy: total is the plan cap itself.
+  if (total <= 100_000) {
+    return { limit: total };
+  }
+
+  return { limit: total };
 }
 
 async function sendGridGet<T>(
@@ -130,6 +182,20 @@ async function fetchStatsRequests(
   return total;
 }
 
+async function resolveMonthlyUsed(
+  apiKey: string,
+  credits: SendGridCreditsResponse,
+): Promise<number | undefined> {
+  const periodStart = credits.last_reset?.trim() || startOfMonthIsoDate();
+  const fromStats = await fetchStatsRequests(apiKey, periodStart, todayIsoDate());
+  if (fromStats != null) return fromStats;
+
+  if (typeof credits.used === "number" && Number.isFinite(credits.used)) {
+    return credits.used;
+  }
+  return undefined;
+}
+
 export async function fetchSendGridQuota(options?: {
   force?: boolean;
 }): Promise<SendGridQuotaSnapshot> {
@@ -161,25 +227,16 @@ export async function fetchSendGridQuota(options?: {
         const planType = accountRes.ok
           ? (accountRes.data.type ?? "unknown").toLowerCase()
           : "unknown";
-        const planLabel = labelForPlanType(planType);
 
         if (creditsRes.ok) {
           const c = creditsRes.data;
+          const { limit, apiSendingCap } = resolveDisplayPlanLimit(c);
+          const used = await resolveMonthlyUsed(apiKey, c);
           const remaining =
-            typeof c.remain === "number" && Number.isFinite(c.remain) ? c.remain : undefined;
-          const used =
-            typeof c.used === "number" && Number.isFinite(c.used) ? c.used : undefined;
-          let limit =
-            typeof c.total === "number" && Number.isFinite(c.total) && c.total > 0
-              ? c.total
-              : envPlanLimitOverride();
-
-          if (limit == null && remaining != null && used != null) {
-            limit = remaining + used;
-          }
-
+            limit != null && used != null ? Math.max(0, limit - used) : undefined;
           const period = periodFromResetFrequency(c.reset_frequency);
           const periodEndsAt = c.next_reset?.trim() || undefined;
+          const planLabel = formatPlanLabel(planType, limit);
 
           const okSnap: SendGridQuotaSnapshot = {
             configured: true,
@@ -192,13 +249,14 @@ export async function fetchSendGridQuota(options?: {
             period,
             periodEndsAt,
             accountEmail,
+            apiSendingCap,
             fetchedAt,
           };
           cache = { at: now, data: okSnap };
           return okSnap;
         }
 
-        // Credits endpoint unavailable on some plans — fall back to stats + optional limit.
+        // Credits endpoint unavailable — fall back to stats + optional env limit.
         const envLimit = envPlanLimitOverride();
         const startDate = startOfMonthIsoDate();
         const usedFromStats = await fetchStatsRequests(apiKey, startDate, todayIsoDate());
@@ -210,7 +268,7 @@ export async function fetchSendGridQuota(options?: {
             error: `SendGrid API ${creditsRes.status}${creditsRes.body ? `: ${creditsRes.body.slice(0, 120)}` : ""}`,
             accountEmail,
             planType,
-            planLabel,
+            planLabel: labelForPlanType(planType),
             fetchedAt,
           };
           cache = { at: now, data: errSnap };
@@ -226,7 +284,7 @@ export async function fetchSendGridQuota(options?: {
           configured: true,
           live: true,
           planType,
-          planLabel,
+          planLabel: formatPlanLabel(planType, limit),
           remaining,
           limit,
           used,

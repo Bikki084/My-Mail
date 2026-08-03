@@ -172,6 +172,13 @@ export function SendGridQuotaPanel({ initial }: { initial: SendGridQuotaSnapshot
                     })}
                   </>
                 ) : null}
+                . Used count from SendGrid stats since billing period start
+                {quota.apiSendingCap != null && quota.apiSendingCap > (quota.limit ?? 0) ? (
+                  <>
+                    {" "}
+                    (API request cap: {quota.apiSendingCap.toLocaleString()})
+                  </>
+                ) : null}
                 .
               </p>
             )}
