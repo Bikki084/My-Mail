@@ -5,7 +5,14 @@
 
 export type NormalizedEmailEvent = {
   provider: string;
-  eventType: "hard_bounce" | "soft_bounce" | "blocked" | "spam_report" | "dropped" | "other";
+  eventType:
+    | "hard_bounce"
+    | "soft_bounce"
+    | "blocked"
+    | "spam_report"
+    | "dropped"
+    | "deferred"
+    | "other";
   recipientEmail: string;
   userId: string | null;
   campaignId: string | null;
@@ -45,6 +52,7 @@ function mapSendGridEventType(
   if (ev === "spamreport" || ev === "spam_report") return "spam_report";
   if (ev === "blocked") return "blocked";
   if (ev === "dropped") return "dropped";
+  if (ev === "deferred") return "deferred";
   if (ev === "bounce") {
     const cls = (classification ?? typeField ?? "").toLowerCase();
     if (cls.includes("invalid") || cls.includes("hard") || typeField === "bounce") {
@@ -113,6 +121,7 @@ export function parseGenericEvents(
     else if (/soft.?bounce|temporary/.test(typeRaw)) eventType = "soft_bounce";
     else if (/block/.test(typeRaw)) eventType = "blocked";
     else if (/drop/.test(typeRaw)) eventType = "dropped";
+    else if (/defer/.test(typeRaw)) eventType = "deferred";
     else if (/bounce/.test(typeRaw)) eventType = "hard_bounce";
 
     if (eventType === "other") continue;

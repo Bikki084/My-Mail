@@ -35,6 +35,11 @@ import {
   createCampaignAbortChecker,
   isCampaignCancelled,
 } from "@/lib/campaign-cancel";
+import {
+  assertSendingAllowed,
+  formatDeliverabilityPauseMessage,
+  getDeliverabilityPauseStatus,
+} from "@/lib/deliverability-guard";
 import { APP_DEFAULT_SENDER_NAME } from "@/lib/brand";
 import { loadSuppressedEmails, suppressionSkipMessage } from "@/lib/recipient-suppression";
 import { validateRecipients, formatBlockedReasons } from "@/lib/recipient-validation";
@@ -354,7 +359,34 @@ async function runSendCampaignBody(
   userId: string,
   campaign: Awaited<ReturnType<typeof loadCampaignForDelivery>>,
 ): Promise<void> {
-  const shouldAbort = createCampaignAbortChecker(supabase, campaignId);
+  const sendAllowed = await assertSendingAllowed();
+  if (!sendAllowed.ok) {
+    const msg = formatDeliverabilityPauseMessage(sendAllowed.status);
+    await supabase
+      .from("campaigns")
+      .update({
+        status: "paused",
+        pause_reason: "deliverability_guard",
+        paused_at: new Date().toISOString(),
+        last_error: msg.slice(0, 2000),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", campaignId);
+    throw new Error(msg);
+  }
+
+  const cancelChecker = createCampaignAbortChecker(supabase, campaignId);
+  let lastGuardCheckMs = 0;
+  let guardPaused = false;
+  const shouldAbort = async (): Promise<boolean> => {
+    if (await cancelChecker()) return true;
+    const now = Date.now();
+    if (now - lastGuardCheckMs >= 1000) {
+      lastGuardCheckMs = now;
+      guardPaused = (await getDeliverabilityPauseStatus()).paused;
+    }
+    return guardPaused;
+  };
 
   const recipients = parseCampaignRecipients(campaign.recipients);
   if (recipients.length === 0) {

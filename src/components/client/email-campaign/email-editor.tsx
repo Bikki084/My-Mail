@@ -86,6 +86,44 @@ export function EmailEditor({
     attachmentNames: string[];
     warnings: string[];
   } | null>(null);
+  const [deliverabilityPause, setDeliverabilityPause] = React.useState<{
+    paused: boolean;
+    message: string;
+    pausedUntil: string | null;
+  }>({ paused: false, message: "", pausedUntil: null });
+
+  React.useEffect(() => {
+    if (previewMode) return;
+    let cancelled = false;
+    async function loadPauseStatus() {
+      try {
+        const res = await fetch("/api/deliverability/pause-status", {
+          credentials: "include",
+          cache: "no-store",
+        });
+        const j = (await res.json().catch(() => ({}))) as {
+          paused?: boolean;
+          message?: string;
+          pausedUntil?: string | null;
+        };
+        if (!cancelled) {
+          setDeliverabilityPause({
+            paused: Boolean(j.paused),
+            message: typeof j.message === "string" ? j.message : "",
+            pausedUntil: j.pausedUntil ?? null,
+          });
+        }
+      } catch {
+        // ignore
+      }
+    }
+    void loadPauseStatus();
+    const id = window.setInterval(loadPauseStatus, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [previewMode, isComposerActive]);
 
   /** Auto-derived plain text from the current HTML (read-only, re-computed on change). */
   const autoPlainText = React.useMemo(
@@ -329,6 +367,13 @@ export function EmailEditor({
       });
       return;
     }
+    if (deliverabilityPause.paused) {
+      toast.error("Sending temporarily paused", {
+        description: deliverabilityPause.message,
+        duration: 12_000,
+      });
+      return;
+    }
     const stream = composeDraft.streamName.trim() || `Send ${new Date().toLocaleString()}`;
     const composeCheck = validateCampaignComposeRequired({
       senderName: composeDraft.senderName,
@@ -464,6 +509,15 @@ export function EmailEditor({
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {deliverabilityPause.paused && (
+            <div
+              role="alert"
+              className="rounded-lg border border-amber-800/70 bg-amber-950/30 px-3 py-3 text-sm text-amber-100"
+            >
+              <p className="font-medium text-amber-50">Sending paused — SMTP protection active</p>
+              <p className="mt-1 text-amber-100/90">{deliverabilityPause.message}</p>
+            </div>
+          )}
           <div className="space-y-2">
             <Label htmlFor="sender-name">
               Sender name <span className="text-red-400">*</span>

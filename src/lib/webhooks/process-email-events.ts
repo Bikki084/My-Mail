@@ -7,6 +7,11 @@ import {
   type NormalizedEmailEvent,
 } from "@/lib/webhooks/email-events";
 import { addSuppression } from "@/lib/recipient-suppression";
+import {
+  mapWebhookEventToSignal,
+  pauseActiveCampaignsForDeliverabilityGuard,
+  recordDeliverabilitySignal,
+} from "@/lib/deliverability-guard";
 
 export type ProcessEmailEventsResult = {
   processed: number;
@@ -102,6 +107,18 @@ export async function processInboundEmailEvents(
     }
 
     await auditEvent(supabase, event, userId);
+
+    const guardSignal = mapWebhookEventToSignal(event.eventType);
+    if (guardSignal) {
+      const trip = await recordDeliverabilitySignal(guardSignal, {
+        userId,
+        campaignId: event.campaignId,
+        detail: `${event.provider}:${event.eventType}:${event.recipientEmail}`,
+      });
+      if (trip.paused && trip.reason) {
+        await pauseActiveCampaignsForDeliverabilityGuard(supabase, trip.reason);
+      }
+    }
 
     if (!shouldAutoSuppress(event.eventType)) {
       skipped += 1;

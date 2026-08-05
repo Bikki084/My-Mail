@@ -10,6 +10,7 @@
 
 | Date | Change |
 |------|--------|
+| 2026-08-05 | **Deliverability guard:** auto-pause all sends ~7h on spam report/block/bounce spikes (Redis + Event Webhook) |
 | 2026-08-05 | **Mandatory compose fields:** sender name, subject, and HTML body required to send; attachment-only campaigns blocked (client + API + delivery) |
 | 2026-08-03 | Fix admin per-client email counts capped at 1000 Supabase rows |
 | 2026-08-03 | **AWS env:** `SENDGRID_EMAIL_PLAN_LIMIT` must be `50000` for Essentials 50K (not `5000`) or omit for auto-detect |
@@ -154,6 +155,30 @@ Enforced in: `src/lib/campaign-compose-validation.ts`, Zod schema `campaignField
 
 ---
 
+## Deliverability guard (auto-pause)
+
+**Important:** No ESP reports silent spam-folder placement. SendGrid “delivered” only means the recipient server accepted the message — not inbox vs spam. The guard uses the **earliest available reputation signals**:
+
+| Signal | Source | Default threshold (60 min window) |
+|--------|--------|-----------------------------------|
+| Spam report | Event Webhook | 2 |
+| Blocked | Event Webhook | 4 |
+| Hard bounce | Webhook + SMTP errors | 8 |
+| SMTP spam reject | Send failure text (550/554/spam) | 3 |
+| Dropped / deferred | Event Webhook | 5 / 20 |
+
+When tripped → **all sends paused** for `DELIVERABILITY_PAUSE_HOURS` (default **7**). Active campaigns → `paused` with `pause_reason=deliverability_guard`.
+
+**Requires:** SendGrid Event Webhook configured (`/api/webhooks/email-events`) + Redis on production.
+
+**Status API:** `GET /api/deliverability/pause-status`
+
+**Code:** `src/lib/deliverability-guard.ts`
+
+**Env:** `DELIVERABILITY_PAUSE_HOURS`, `DELIVERABILITY_GUARD_DISABLE=1` to turn off.
+
+---
+
 ## Directory map (high signal)
 
 ```
@@ -271,6 +296,9 @@ Governor: `src/lib/send-governor.ts` — disable with `SEND_GOVERNOR_DISABLE=1` 
 | `PUPPETEER_EXECUTABLE_PATH` | `/usr/bin/chromium` on VPS for PDF attachments |
 | `EMAIL_WEBHOOK_SECRET` | Shared secret for inbound bounce/spam webhooks (`X-Webhook-Secret` header) |
 | `RECIPIENT_MX_CACHE_TTL_HOURS` | Optional MX DNS cache TTL (default 168h) |
+| `DELIVERABILITY_PAUSE_HOURS` | Hours to pause all sends after reputation spike (default `7`) |
+| `DELIVERABILITY_GUARD_DISABLE` | Set `1` to disable auto-pause guard |
+| `DELIVERABILITY_SIGNAL_WINDOW_MINUTES` | Rolling window for spike detection (default `60`) |
 
 Full list: `.env.example`
 

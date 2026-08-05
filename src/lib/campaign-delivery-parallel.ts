@@ -44,6 +44,11 @@ import {
 } from "@/lib/deliverability";
 import { partitionRecipientsBySmtp } from "@/lib/smtp-distribution";
 import { SendingLogBatcher, type SendingLogInsert } from "@/lib/db/batch-writes";
+import {
+  classifySmtpErrorForGuard,
+  pauseActiveCampaignsForDeliverabilityGuard,
+  recordDeliverabilitySignal,
+} from "@/lib/deliverability-guard";
 
 type SmtpRow = {
   id: string;
@@ -608,7 +613,20 @@ export async function deliverCampaignInParallel(
           await sleep(SMTP_INTER_SEND_MS);
         }
       } catch (e) {
-        await logFailedRecipient(recipient, emailKey, friendlyErr(e));
+        const errMsg = friendlyErr(e);
+        const signal = classifySmtpErrorForGuard(errMsg);
+        if (signal) {
+          const trip = await recordDeliverabilitySignal(signal, {
+            userId,
+            campaignId,
+            detail: errMsg.slice(0, 200),
+          });
+          if (trip.paused && trip.reason) {
+            shared.pausedForRotation = true;
+            await pauseActiveCampaignsForDeliverabilityGuard(supabase, trip.reason);
+          }
+        }
+        await logFailedRecipient(recipient, emailKey, errMsg);
       }
     }
 
