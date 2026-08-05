@@ -1,6 +1,11 @@
 import { z } from "zod";
 import { MAX_CAMPAIGN_ATTACHMENTS } from "@/lib/campaign-multipart";
 import {
+  campaignBodyHtmlField,
+  campaignSenderNameField,
+  campaignSubjectField,
+} from "@/lib/campaign-compose-validation";
+import {
   attachmentFilenameField,
   base64Field,
   emailField,
@@ -44,9 +49,9 @@ export const campaignFieldsSchema = z.object({
     .max(120, "Stream name must be at most 120 characters.")
     .transform((s) => s.trim())
     .refine((s) => s.length > 0, "Stream name is required."),
-  subject: z.string().max(998, "Subject is too long.").nullable().optional(),
-  sender_name: z.string().max(80, "Sender name is too long.").nullable().optional(),
-  body_html: z.string().max(500_000, "HTML body is too large.").nullable().optional(),
+  subject: campaignSubjectField,
+  sender_name: campaignSenderNameField,
+  body_html: campaignBodyHtmlField,
   body_text: z.string().max(500_000).nullable().optional(),
   encoding: z.string().max(32).optional(),
   smtp_server_ids: uuidListField(100).optional(),
@@ -65,9 +70,9 @@ export const campaignCreateBodySchema = campaignFieldsSchema.extend({
 });
 
 export const campaignPreviewPayloadSchema = z.object({
-  subject: z.string().max(998).nullable().optional(),
-  sender_name: z.string().max(80).nullable().optional(),
-  body_html: z.string().max(500_000).nullable().optional(),
+  subject: campaignSubjectField,
+  sender_name: campaignSenderNameField,
+  body_html: campaignBodyHtmlField,
   encoding: z.string().max(32).optional(),
   preview_to: z
     .string()

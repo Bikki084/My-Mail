@@ -127,12 +127,9 @@ export async function POST(req: Request) {
 
   const encPersist = coerceEncodingInput(rest.encoding ?? "auto");
   const rawHtml = (rest.body_html ?? "").trim();
-  const hasAtt = normalizedAttachments.length > 0;
-  const htmlAttachment = normalizeHtmlAttachment(rest.html_attachment ?? null);
-  const hasHtmlAtt = htmlAttachment != null;
-  if (!rawHtml && !hasAtt && !hasHtmlAtt) {
+  if (!rawHtml) {
     return NextResponse.json(
-      { error: "Email content (HTML) is required" },
+      { error: "Email body (HTML) is required. Attachments alone are not allowed." },
       { status: 400 },
     );
   }
@@ -149,6 +146,8 @@ export async function POST(req: Request) {
     );
   }
   row = filtered.safe;
+
+  const htmlAttachment = normalizeHtmlAttachment(rest.html_attachment ?? null);
 
   const built = await buildCampaignStorageHtml({
     rawHtml: rest.body_html ?? "",

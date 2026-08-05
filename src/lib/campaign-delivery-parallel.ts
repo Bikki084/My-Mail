@@ -520,17 +520,12 @@ export async function deliverCampaignInParallel(
 
         let htmlPart = html.trim();
         const textPart = text.trim();
-        if (!htmlPart && !allAttachments.length) {
-          throw new Error("Email content (HTML) is required.");
+        if (!htmlPart) {
+          throw new Error(
+            "Email body (HTML) is required. Attachments alone are not allowed.",
+          );
         }
-        if (!htmlPart && allAttachments.length) {
-          htmlPart = "<p>Please see the attached file(s).</p>";
-        }
-        const fallbackText =
-          textPart ||
-          (allAttachments.length && !html.trim()
-            ? "Please see the attached file(s)."
-            : "");
+        const fallbackText = textPart;
         const textBody = fallbackText.trim();
 
         const delivery = buildDeliverabilityHeaders({

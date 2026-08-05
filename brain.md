@@ -2,7 +2,7 @@
 
 > **Purpose:** Single source of truth for AI agents and developers. Read this file **before** scanning the whole repo.  
 > **Maintainers:** Update this file whenever you add features, change limits, deploy steps, or infra — same as you would commit code.  
-> **Last updated:** 2026-08-03
+> **Last updated:** 2026-08-05
 
 ---
 
@@ -10,7 +10,8 @@
 
 | Date | Change |
 |------|--------|
-| 2026-08-02 | Created `brain.md`; agent rules in `AGENTS.md` |
+| 2026-08-05 | **Mandatory compose fields:** sender name, subject, and HTML body required to send; attachment-only campaigns blocked (client + API + delivery) |
+| 2026-08-03 | Fix admin per-client email counts capped at 1000 Supabase rows |
 | 2026-08-03 | **AWS env:** `SENDGRID_EMAIL_PLAN_LIMIT` must be `50000` for Essentials 50K (not `5000`) or omit for auto-detect |
 | 2026-08-03 | **Bounce prevention:** CSV validation (syntax, disposable, MX, role addresses), suppression at send, provider-agnostic webhook `/api/webhooks/email-events` |
 | 2026-07-30 | **User Activity** admin section (`/admin/user-activity`), 2-day retention, PDF preview via API |
@@ -134,6 +135,22 @@ Outbound sends attach `X-Mymail-Campaign-Id` / `X-Mymail-User-Id` (all providers
 **Migration:** `20260803120000_recipient_bounce_prevention.sql`
 
 **Code:** `src/lib/recipient-validation/`, `src/lib/recipient-suppression.ts`, `src/lib/webhooks/`
+
+---
+
+## Campaign compose requirements (anti-spam)
+
+To reduce attachment-only spam patterns that trigger ESP suspensions:
+
+| Field | Required | Notes |
+|-------|----------|--------|
+| **Sender name** | Yes | Non-empty after trim |
+| **Subject** | Yes | Non-empty after trim |
+| **Email body (HTML)** | Yes | Must contain readable text (not empty tags) |
+| Attachments (PDF/PNG/file) | No | Optional |
+| HTML attachment (generated PDF/image) | No | Optional — still requires main body |
+
+Enforced in: `src/lib/campaign-compose-validation.ts`, Zod schema `campaignFieldsSchema`, Email Composer UI, `POST /api/campaigns`, and the send worker (no auto “see attached file” placeholder).
 
 ---
 

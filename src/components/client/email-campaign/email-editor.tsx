@@ -31,6 +31,7 @@ import {
   previewCampaignEmail,
   queueCampaignSend,
 } from "@/lib/campaign-send-client";
+import { validateCampaignComposeRequired } from "@/lib/campaign-compose-validation";
 import { applyMergePreview, buildPreviewRecipient, htmlToPlainText } from "@/lib/html-email";
 import { randomId } from "@/lib/random-id";
 import { useEmailCampaign } from "./email-campaign-context";
@@ -251,18 +252,18 @@ export function EmailEditor({
       toast.message("Sign in with Supabase to preview.");
       return;
     }
+    const composeCheck = validateCampaignComposeRequired({
+      senderName: composeDraft.senderName,
+      subject: composeDraft.subject,
+      bodyHtml: composeDraft.html,
+    });
+    if (!composeCheck.ok) {
+      toast.error(composeCheck.message);
+      return;
+    }
     if (attachmentKind && !attachmentHtml.trim()) {
       toast.error("Attachment HTML required", {
         description: "Enter HTML for the PDF or image attachment, or clear the attachment type.",
-      });
-      return;
-    }
-    const hasHtml = composeDraft.html.trim() !== "";
-    const hasGenAttach = Boolean(htmlAttachmentPayload);
-    if (!hasHtml && !hasGenAttach) {
-      toast.error("Email content (HTML) is required", {
-        description:
-          "Write your message in Email Content (HTML), or add a generated PDF/image attachment from HTML.",
       });
       return;
     }
@@ -329,18 +330,21 @@ export function EmailEditor({
       return;
     }
     const stream = composeDraft.streamName.trim() || `Send ${new Date().toLocaleString()}`;
-    if (attachmentKind && !attachmentHtml.trim()) {
-      toast.error("Attachment HTML required", {
-        description: "Enter HTML for the PDF or image attachment, or clear the attachment type.",
+    const composeCheck = validateCampaignComposeRequired({
+      senderName: composeDraft.senderName,
+      subject: composeDraft.subject,
+      bodyHtml: composeDraft.html,
+    });
+    if (!composeCheck.ok) {
+      toast.error(composeCheck.message, {
+        description:
+          "Sender name, subject, and email body (HTML) are required before sending. Attachments are optional.",
       });
       return;
     }
-    const hasHtml = composeDraft.html.trim() !== "";
-    const hasGenAttach = Boolean(htmlAttachmentPayload);
-    if (!hasHtml && !hasGenAttach) {
-      toast.error("Email content (HTML) is required", {
-        description:
-          "Write your message in Email Content (HTML), or add a generated PDF/image attachment from HTML.",
+    if (attachmentKind && !attachmentHtml.trim()) {
+      toast.error("Attachment HTML required", {
+        description: "Enter HTML for the PDF or image attachment, or clear the attachment type.",
       });
       return;
     }
@@ -452,14 +456,18 @@ export function EmailEditor({
         <CardHeader>
           <CardTitle className="text-zinc-100">Message</CardTitle>
           <CardDescription>
-            HTML is the primary content; plain text is generated automatically. Type{" "}
+            HTML is the primary content; plain text is generated automatically.{" "}
+            <span className="text-zinc-300">Sender name, subject, and body are required.</span>{" "}
+            Attachments are optional. Type{" "}
             <code className="text-xs text-zinc-300">{"{"}</code> in subject or body to pick a
             merge tag from your CSV.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="sender-name">Sender name</Label>
+            <Label htmlFor="sender-name">
+              Sender name <span className="text-red-400">*</span>
+            </Label>
             <Input
               id="sender-name"
               type="text"
@@ -472,7 +480,9 @@ export function EmailEditor({
           </div>
           <div className="space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <Label htmlFor="subject">Subject</Label>
+              <Label htmlFor="subject">
+                Subject <span className="text-red-400">*</span>
+              </Label>
               <MergeTagInsertMenu
                 lastParsedCsv={lastParsedCsv}
                 builtInMergeTags={builtInMergeTags}
@@ -491,7 +501,9 @@ export function EmailEditor({
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="body-html">Email Content (HTML)</Label>
+            <Label htmlFor="body-html">
+              Email Content (HTML) <span className="text-red-400">*</span>
+            </Label>
             <HtmlMergeTagEditor
               id="body-html"
               placeholder="Write your HTML email here"
