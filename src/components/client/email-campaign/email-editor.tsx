@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Eye, FileText, ImageIcon, Loader2, Paperclip, Plus, Send } from "lucide-react";
+import { Eye, FileText, ImageIcon, Loader2, Paperclip, Plus, Send, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -45,8 +45,24 @@ import {
   isMicrosoftMailbox,
 } from "@/lib/mailbox-domains";
 import { useWalletState } from "./wallet-state-context";
+import { cn } from "@/lib/utils";
 
 type HeaderRow = { id: string; name: string; value: string };
+
+type ContentReviewResult = {
+  riskScore: number;
+  riskLevel: "low" | "medium" | "high";
+  issues: { code: string; message: string; weight: number }[];
+  summary: string;
+  suggestedSubject: string | null;
+  suggestedHtml: string | null;
+  aiUsed: boolean;
+  aiNote: string | null;
+};
+
+function composeFingerprint(subject: string, html: string, sender: string): string {
+  return `${subject.trim()}|${html.trim()}|${sender.trim()}`;
+}
 
 export function EmailEditor({
   previewMode = false,
@@ -91,6 +107,25 @@ export function EmailEditor({
     message: string;
     pausedUntil: string | null;
   }>({ paused: false, message: "", pausedUntil: null });
+  const [contentReviewLoading, setContentReviewLoading] = React.useState(false);
+  const [contentReview, setContentReview] = React.useState<ContentReviewResult | null>(null);
+  const [contentReviewFingerprint, setContentReviewFingerprint] = React.useState<string | null>(
+    null,
+  );
+  const [contentReviewOpen, setContentReviewOpen] = React.useState(false);
+
+  const currentFingerprint = React.useMemo(
+    () =>
+      composeFingerprint(composeDraft.subject, composeDraft.html, composeDraft.senderName),
+    [composeDraft.subject, composeDraft.html, composeDraft.senderName],
+  );
+
+  React.useEffect(() => {
+    if (contentReviewFingerprint && contentReviewFingerprint !== currentFingerprint) {
+      setContentReview(null);
+      setContentReviewFingerprint(null);
+    }
+  }, [contentReviewFingerprint, currentFingerprint]);
 
   React.useEffect(() => {
     if (previewMode) return;
@@ -285,6 +320,72 @@ export function EmailEditor({
     setHeaderOpen(false);
   }
 
+  async function handleContentReview() {
+    if (previewMode) {
+      toast.message("Sign in to run content review.");
+      return;
+    }
+    const composeCheck = validateCampaignComposeRequired({
+      senderName: composeDraft.senderName,
+      subject: composeDraft.subject,
+      bodyHtml: composeDraft.html,
+    });
+    if (!composeCheck.ok) {
+      toast.error(composeCheck.message);
+      return;
+    }
+    setContentReviewLoading(true);
+    try {
+      const res = await fetch("/api/campaigns/content-review", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          subject: composeDraft.subject,
+          body_html: composeDraft.html,
+          sender_name: composeDraft.senderName,
+          use_ai: true,
+        }),
+      });
+      const j = (await res.json().catch(() => ({}))) as ContentReviewResult & { error?: string };
+      if (!res.ok) {
+        throw new Error(typeof j.error === "string" ? j.error : "Content review failed");
+      }
+      setContentReview(j);
+      setContentReviewFingerprint(currentFingerprint);
+      setContentReviewOpen(true);
+      if (j.riskLevel === "high") {
+        toast.warning("High spam risk detected", { description: j.summary, duration: 10_000 });
+      } else if (j.riskLevel === "medium") {
+        toast.message("Some spam signals found", { description: j.summary });
+      } else {
+        toast.success("Content looks good", { description: j.summary });
+      }
+    } catch (e) {
+      toast.error("Could not review content", {
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setContentReviewLoading(false);
+    }
+  }
+
+  function applyContentSuggestions(which: "subject" | "body" | "both") {
+    if (!contentReview) return;
+    if (which === "subject" || which === "both") {
+      if (contentReview.suggestedSubject) {
+        updateCompose({ subject: contentReview.suggestedSubject });
+      }
+    }
+    if (which === "body" || which === "both") {
+      if (contentReview.suggestedHtml) {
+        updateCompose({ html: contentReview.suggestedHtml });
+      }
+    }
+    setContentReviewOpen(false);
+    toast.success("Suggestions applied — run Check spam risk again after edits.");
+  }
+
   async function handlePreviewEmail() {
     if (previewMode) {
       toast.message("Sign in with Supabase to preview.");
@@ -386,6 +487,30 @@ export function EmailEditor({
           "Sender name, subject, and email body (HTML) are required before sending. Attachments are optional.",
       });
       return;
+    }
+    const needsReview =
+      !contentReview ||
+      contentReviewFingerprint !== currentFingerprint ||
+      contentReview.riskLevel === "high";
+    if (needsReview) {
+      const heuristicsOnly = contentReview?.riskLevel === "high";
+      toast.error(
+        heuristicsOnly
+          ? "High spam risk — review content before sending"
+          : "Run spam risk check before sending",
+        {
+          description:
+            "Click “Check spam risk” on the Message card. Apply suggestions if the score is high.",
+          duration: 12_000,
+        },
+      );
+      return;
+    }
+    if (contentReview.riskLevel === "medium") {
+      toast.warning("Medium spam risk", {
+        description: "Consider applying AI suggestions before sending at scale.",
+        duration: 8_000,
+      });
     }
     if (attachmentKind && !attachmentHtml.trim()) {
       toast.error("Attachment HTML required", {
@@ -589,6 +714,66 @@ export function EmailEditor({
               This is sent as a fallback for mail clients that don&apos;t render HTML. You
               can&apos;t edit it — it always mirrors the HTML above.
             </p>
+          </div>
+
+          <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-4 space-y-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-zinc-200">Spam risk check</p>
+                <p className="mt-1 text-xs text-zinc-500">
+                  Free local scan + Google Gemini rewrite suggestions (when configured on server).
+                  Required before send.
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="border-violet-800/60 bg-violet-950/30 text-violet-100 hover:bg-violet-900/40"
+                disabled={contentReviewLoading || previewMode}
+                onClick={() => void handleContentReview()}
+              >
+                {contentReviewLoading ? (
+                  <>
+                    <Loader2 className="me-2 size-4 animate-spin" />
+                    Checking…
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="me-2 size-4" />
+                    Check spam risk
+                  </>
+                )}
+              </Button>
+            </div>
+            {contentReview && contentReviewFingerprint === currentFingerprint ? (
+              <div
+                className={cn(
+                  "rounded-md border px-3 py-2 text-sm",
+                  contentReview.riskLevel === "high"
+                    ? "border-red-900/60 bg-red-950/30 text-red-100"
+                    : contentReview.riskLevel === "medium"
+                      ? "border-amber-900/60 bg-amber-950/30 text-amber-100"
+                      : "border-emerald-900/60 bg-emerald-950/30 text-emerald-100",
+                )}
+              >
+                <p className="font-medium">
+                  Risk score: {contentReview.riskScore}/100 ({contentReview.riskLevel})
+                  {contentReview.aiUsed ? " · AI suggestions" : " · rule-based"}
+                </p>
+                <p className="mt-1 text-xs opacity-90">{contentReview.summary}</p>
+                {contentReview.riskLevel !== "low" ? (
+                  <Button
+                    type="button"
+                    variant="link"
+                    className="mt-1 h-auto p-0 text-xs underline"
+                    onClick={() => setContentReviewOpen(true)}
+                  >
+                    View suggestions
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </CardContent>
       </Card>
@@ -1076,6 +1261,74 @@ export function EmailEditor({
             <Button type="button" onClick={addHeader}>
               Add
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={contentReviewOpen} onOpenChange={setContentReviewOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto border-zinc-800 bg-zinc-950 text-zinc-100">
+          <DialogHeader>
+            <DialogTitle>Spam risk review</DialogTitle>
+          </DialogHeader>
+          {contentReview ? (
+            <div className="space-y-4 text-sm">
+              <p>
+                Score:{" "}
+                <span className="font-semibold">
+                  {contentReview.riskScore}/100 ({contentReview.riskLevel})
+                </span>
+                {contentReview.aiUsed ? " — Gemini rewrite" : " — rules only"}
+              </p>
+              <p className="text-zinc-400">{contentReview.summary}</p>
+              {contentReview.aiNote ? (
+                <p className="text-xs text-amber-200/90">{contentReview.aiNote}</p>
+              ) : null}
+              {contentReview.issues.length > 0 ? (
+                <ul className="list-disc space-y-1 ps-5 text-zinc-300">
+                  {contentReview.issues.map((issue) => (
+                    <li key={issue.code}>{issue.message}</li>
+                  ))}
+                </ul>
+              ) : null}
+              {contentReview.suggestedSubject ? (
+                <div className="space-y-1">
+                  <p className="text-xs font-medium uppercase text-zinc-500">Suggested subject</p>
+                  <p className="rounded border border-zinc-800 bg-zinc-900/80 p-2 font-mono text-xs">
+                    {contentReview.suggestedSubject}
+                  </p>
+                </div>
+              ) : null}
+              {contentReview.suggestedHtml ? (
+                <div className="space-y-1">
+                  <p className="text-xs font-medium uppercase text-zinc-500">Suggested HTML body</p>
+                  <Textarea
+                    readOnly
+                    className="min-h-40 font-mono text-xs bg-zinc-900/80"
+                    value={contentReview.suggestedHtml}
+                  />
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          <DialogFooter className="flex flex-wrap gap-2 sm:justify-end">
+            <Button type="button" variant="ghost" onClick={() => setContentReviewOpen(false)}>
+              Close
+            </Button>
+            {contentReview?.suggestedSubject ? (
+              <Button type="button" variant="outline" onClick={() => applyContentSuggestions("subject")}>
+                Apply subject
+              </Button>
+            ) : null}
+            {contentReview?.suggestedHtml ? (
+              <Button type="button" variant="outline" onClick={() => applyContentSuggestions("body")}>
+                Apply body
+              </Button>
+            ) : null}
+            {contentReview?.suggestedSubject && contentReview?.suggestedHtml ? (
+              <Button type="button" onClick={() => applyContentSuggestions("both")}>
+                Apply both
+              </Button>
+            ) : null}
           </DialogFooter>
         </DialogContent>
       </Dialog>

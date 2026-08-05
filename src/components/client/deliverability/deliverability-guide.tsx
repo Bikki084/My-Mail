@@ -50,6 +50,7 @@ export function DeliverabilityGuide({
               "Outlook/Hotmail recipients get transactional-style headers (no bulk/marketing signals)",
               "Plain-text body auto-generated from your HTML so the MIME parts never drift",
               "Deliverability guard: auto-pauses all sends ~7h when spam reports, blocks, or bounce spikes are detected (requires Event Webhook)",
+              "Content spam-risk check on Email Composer (local rules + optional Gemini AI rewrites via GEMINI_API_KEY)",
               "Sender name, subject, and email body (HTML) are required before send — attachment-only campaigns are blocked",
               "Per-recipient X-Entity-Ref-ID for FBL / abuse triage",
               "Optional in-process DKIM signing when DKIM_* env vars are set (aligned with your From domain)",

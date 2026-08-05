@@ -10,6 +10,7 @@
 
 | Date | Change |
 |------|--------|
+| 2026-08-05 | **Content spam review:** local heuristics + Gemini AI subject/body rewrite suggestions in Email Composer |
 | 2026-08-05 | **Deliverability guard:** auto-pause all sends ~7h on spam report/block/bounce spikes (Redis + Event Webhook) |
 | 2026-08-05 | **Mandatory compose fields:** sender name, subject, and HTML body required to send; attachment-only campaigns blocked (client + API + delivery) |
 | 2026-08-03 | Fix admin per-client email counts capped at 1000 Supabase rows |
@@ -179,6 +180,27 @@ When tripped → **all sends paused** for `DELIVERABILITY_PAUSE_HOURS` (default 
 
 ---
 
+## Content spam review (AI + rules)
+
+Pre-send coach in **Email Composer → Check spam risk**:
+
+| Layer | What it does |
+|-------|----------------|
+| **Local heuristics** | Instant score 0–100: caps, spam phrases, thin body, attachment-only pitch, link count |
+| **Gemini AI** (optional) | Rewrites subject + HTML to reduce spam signals; preserves `{{{merge_tags}}}` |
+
+**API:** `POST /api/campaigns/content-review` (authenticated)
+
+**Requires send:** User must run check before SEND; high risk blocks until score improves.
+
+**Free AI key:** [Google AI Studio](https://aistudio.google.com/apikey) → `GEMINI_API_KEY` in `.env.local`
+
+**Code:** `src/lib/content-spam-review/`
+
+**Env:** `GEMINI_API_KEY`, optional `GEMINI_CONTENT_REVIEW_MODEL` (default `gemini-2.0-flash`)
+
+---
+
 ## Directory map (high signal)
 
 ```
@@ -299,6 +321,8 @@ Governor: `src/lib/send-governor.ts` — disable with `SEND_GOVERNOR_DISABLE=1` 
 | `DELIVERABILITY_PAUSE_HOURS` | Hours to pause all sends after reputation spike (default `7`) |
 | `DELIVERABILITY_GUARD_DISABLE` | Set `1` to disable auto-pause guard |
 | `DELIVERABILITY_SIGNAL_WINDOW_MINUTES` | Rolling window for spike detection (default `60`) |
+| `GEMINI_API_KEY` | Google AI Studio key for spam-risk content rewrites (free tier) |
+| `GEMINI_CONTENT_REVIEW_MODEL` | Optional Gemini model (default `gemini-2.0-flash`) |
 
 Full list: `.env.example`
 
