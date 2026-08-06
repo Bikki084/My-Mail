@@ -105,3 +105,33 @@ export function campaignBouncePauseRate(): number {
 export function campaignBouncePauseMinAttempts(): number {
   return envInt("CAMPAIGN_BOUNCE_PAUSE_MIN_ATTEMPTS", 20, 5);
 }
+
+/** Require genuineness pass token before send (default on). */
+export function contentGenuinenessGateEnabled(): boolean {
+  return process.env.CONTENT_GENUINENESS_GATE_DISABLE !== "1";
+}
+
+/** Min distinct content tokens for "specific enough" body (default 8). */
+export function genuinenessMinSpecificTokens(): number {
+  return envInt("GENUINENESS_MIN_SPECIFIC_TOKENS", 8, 1);
+}
+
+/** Min Jaccard overlap (0–1) between body and attachment text (default 0.08). */
+export function genuinenessAttachmentRelevanceMin(): number {
+  return envFloat("GENUINENESS_ATTACHMENT_RELEVANCE_MIN", 0.08, 0);
+}
+
+/** Max share of body that may be generic template phrases (0–1, default 0.45). */
+export function genuinenessMaxGenericPhraseShare(): number {
+  return envFloat("GENUINENESS_MAX_GENERIC_PHRASE_SHARE", 0.45, 0);
+}
+
+/** Pass-token TTL minutes (default 60). */
+export function genuinenessPassTokenTtlMinutes(): number {
+  return envInt("GENUINENESS_PASS_TOKEN_TTL_MINUTES", 60, 5);
+}
+
+/** Flag noreply@-style senders as lower trust (default on). */
+export function genuinenessFlagNoreplySender(): boolean {
+  return process.env.GENUINENESS_FLAG_NOREPLY_SENDER !== "0";
+}

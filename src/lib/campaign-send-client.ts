@@ -107,6 +107,8 @@ export type QueueCampaignOptions = {
    * Legacy JSON+base64 path (e.g. tests). Prefer omitting from the browser composer.
    */
   attachments?: { filename: string; contentBase64: string }[];
+  /** Pass token from pre-send genuineness review (required when gate enabled). */
+  genuinenessPassToken?: string | null;
 };
 
 /**
@@ -141,6 +143,11 @@ export async function queueCampaignSend(
         ? { rotation_strategy: options.rotationStrategy }
         : {};
 
+  const genuinenessHeaders: Record<string, string> = {};
+  if (options.genuinenessPassToken?.trim()) {
+    genuinenessHeaders["X-Mymail-Genuineness-Token"] = options.genuinenessPassToken.trim();
+  }
+
   let create: Response;
   if (useMultipart) {
     const fd = new FormData();
@@ -164,6 +171,7 @@ export async function queueCampaignSend(
       headers: {
         "X-Mymail-Expected-Files": String(nAttachLegacy),
         "X-Mymail-Intent": "send",
+        ...genuinenessHeaders,
       },
     });
   } else {
@@ -173,6 +181,7 @@ export async function queueCampaignSend(
       headers: {
         "Content-Type": "application/json",
         "X-Mymail-Intent": "send",
+        ...genuinenessHeaders,
       },
       body: JSON.stringify({
         stream_name: options.streamName,
@@ -225,7 +234,15 @@ export async function queueCampaignSend(
 
   let go: Response;
   try {
-    go = await sendCampaign(cj.id);
+    go = await sendCampaign(cj.id, {
+      headers: {
+        "Content-Type": "application/json",
+        ...genuinenessHeaders,
+      },
+      body: JSON.stringify({
+        genuineness_pass_token: options.genuinenessPassToken?.trim() || undefined,
+      }),
+    });
   } catch (e) {
     const msg =
       e instanceof Error && e.name === "TimeoutError"

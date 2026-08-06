@@ -85,3 +85,34 @@ export async function logContentRescoreAttempt(
     console.warn("[anti-spam-audit] content_rescore insert failed:", e);
   }
 }
+
+export async function logGenuinenessReview(
+  _supabase: SupabaseClient | null,
+  input: {
+    userId: string;
+    contentFingerprint: string;
+    passed: boolean;
+    failedCategories: string[];
+    aiSuggested: boolean;
+    aiAccepted?: boolean;
+    campaignId?: string | null;
+    metadata?: Record<string, unknown>;
+  },
+): Promise<void> {
+  const client = auditClient(_supabase);
+  if (!client) return;
+  try {
+    await client.from("content_genuineness_audit").insert({
+      user_id: input.userId,
+      campaign_id: input.campaignId ?? null,
+      content_fingerprint: input.contentFingerprint.slice(0, 128),
+      passed: input.passed,
+      failed_categories: input.failedCategories,
+      ai_suggested: input.aiSuggested,
+      ai_accepted: input.aiAccepted ?? false,
+      metadata: input.metadata ?? null,
+    });
+  } catch (e) {
+    console.warn("[anti-spam-audit] content_genuineness insert failed:", e);
+  }
+}

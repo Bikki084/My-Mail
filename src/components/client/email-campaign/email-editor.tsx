@@ -50,18 +50,32 @@ import { cn } from "@/lib/utils";
 type HeaderRow = { id: string; name: string; value: string };
 
 type ContentReviewResult = {
+  passed: boolean;
+  passToken: string | null;
+  contentFingerprint?: string;
   riskLevel: "low" | "medium" | "high";
-  issues: { code: string; message: string }[];
+  feedback?: {
+    category: string;
+    message: string;
+    locationHint?: string;
+  }[];
+  issues: { code: string; message: string; locationHint?: string }[];
   summary: string;
   suggestedSubject: string | null;
   suggestedHtml: string | null;
   aiUsed: boolean;
   aiNote: string | null;
   rescoringRemaining?: number;
+  gateRequired?: boolean;
 };
 
-function composeFingerprint(subject: string, html: string, sender: string): string {
-  return `${subject.trim()}|${html.trim()}|${sender.trim()}`;
+function composeFingerprint(
+  subject: string,
+  html: string,
+  sender: string,
+  attachmentHtml: string,
+): string {
+  return `${subject.trim()}|${html.trim()}|${sender.trim()}|${attachmentHtml.trim()}`;
 }
 
 export function EmailEditor({
@@ -113,17 +127,30 @@ export function EmailEditor({
     null,
   );
   const [contentReviewOpen, setContentReviewOpen] = React.useState(false);
+  const [genuinenessPassToken, setGenuinenessPassToken] = React.useState<string | null>(null);
 
   const currentFingerprint = React.useMemo(
     () =>
-      composeFingerprint(composeDraft.subject, composeDraft.html, composeDraft.senderName),
-    [composeDraft.subject, composeDraft.html, composeDraft.senderName],
+      composeFingerprint(
+        composeDraft.subject,
+        composeDraft.html,
+        composeDraft.senderName,
+        attachmentHtml,
+      ),
+    [composeDraft.subject, composeDraft.html, composeDraft.senderName, attachmentHtml],
+  );
+
+  const contentVerifiedForSend = Boolean(
+    contentReview?.passed &&
+      genuinenessPassToken &&
+      contentReviewFingerprint === currentFingerprint,
   );
 
   React.useEffect(() => {
     if (contentReviewFingerprint && contentReviewFingerprint !== currentFingerprint) {
       setContentReview(null);
       setContentReviewFingerprint(null);
+      setGenuinenessPassToken(null);
     }
   }, [contentReviewFingerprint, currentFingerprint]);
 
@@ -322,7 +349,7 @@ export function EmailEditor({
 
   async function handleContentReview() {
     if (previewMode) {
-      toast.message("Sign in to run content review.");
+      toast.message("Sign in to run content verification.");
       return;
     }
     const composeCheck = validateCampaignComposeRequired({
@@ -336,6 +363,15 @@ export function EmailEditor({
     }
     setContentReviewLoading(true);
     try {
+      const attachmentsPayload =
+        attachmentKind && attachmentHtml.trim()
+          ? [
+              {
+                filename: "generated-html-attachment",
+                htmlText: attachmentHtml.trim(),
+              },
+            ]
+          : [];
       const res = await fetch("/api/campaigns/content-review", {
         method: "POST",
         credentials: "include",
@@ -345,30 +381,55 @@ export function EmailEditor({
           body_html: composeDraft.html,
           sender_name: composeDraft.senderName,
           use_ai: true,
+          attachments: attachmentsPayload,
         }),
       });
-      const j = (await res.json().catch(() => ({}))) as ContentReviewResult & { error?: string };
+      const j = (await res.json().catch(() => ({}))) as ContentReviewResult & {
+        error?: string;
+        blocked?: boolean;
+      };
       if (!res.ok) {
-        throw new Error(typeof j.error === "string" ? j.error : "Content review failed");
+        throw new Error(typeof j.error === "string" ? j.error : "Content verification failed");
       }
       setContentReview(j);
       setContentReviewFingerprint(currentFingerprint);
+      setGenuinenessPassToken(j.passed && j.passToken ? j.passToken : null);
       setContentReviewOpen(true);
-      if (j.riskLevel === "high") {
-        toast.warning("High spam risk detected", { description: j.summary, duration: 10_000 });
-      } else if (j.riskLevel === "medium") {
-        toast.message("Some spam signals found", { description: j.summary });
+      if (j.passed) {
+        toast.success("Content verified — Send unlocked", { description: j.summary });
       } else {
-        toast.success("Content looks good", { description: j.summary });
+        toast.error("Content did not pass verification", {
+          description: j.summary,
+          duration: 10_000,
+        });
       }
     } catch (e) {
-      toast.error("Could not review content", {
+      setGenuinenessPassToken(null);
+      toast.error("Could not verify content", {
         description: e instanceof Error ? e.message : String(e),
       });
     } finally {
       setContentReviewLoading(false);
     }
   }
+
+  // Auto-run verification after compose settles (preview/save moment), not only on click.
+  React.useEffect(() => {
+    if (previewMode) return;
+    const composeCheck = validateCampaignComposeRequired({
+      senderName: composeDraft.senderName,
+      subject: composeDraft.subject,
+      bodyHtml: composeDraft.html,
+    });
+    if (!composeCheck.ok) return;
+    if (contentReviewFingerprint === currentFingerprint && contentReview) return;
+
+    const timerId = window.setTimeout(() => {
+      void handleContentReview();
+    }, 2500);
+    return () => window.clearTimeout(timerId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional debounce on compose fingerprint
+  }, [currentFingerprint, previewMode]);
 
   function applyContentSuggestions(which: "subject" | "body" | "both") {
     if (!contentReview) return;
@@ -383,7 +444,10 @@ export function EmailEditor({
       }
     }
     setContentReviewOpen(false);
-    toast.success("Suggestions applied — run Check spam risk again after edits.");
+    setGenuinenessPassToken(null);
+    setContentReview(null);
+    setContentReviewFingerprint(null);
+    toast.success("Suggestions applied — verification will re-run automatically.");
   }
 
   async function handlePreviewEmail() {
@@ -488,30 +552,14 @@ export function EmailEditor({
       });
       return;
     }
-    const needsReview =
-      !contentReview ||
-      contentReviewFingerprint !== currentFingerprint;
+    const needsReview = !contentVerifiedForSend;
     if (needsReview) {
-      toast.error("Check spam risk before sending", {
+      toast.error("Verify content before sending", {
         description:
-          "Click “Check spam risk” first. The server blocks high-risk content automatically.",
+          "Send stays locked until content verification passes for this exact message version.",
         duration: 10_000,
       });
       return;
-    }
-    if (contentReview.riskLevel === "high") {
-      toast.error("High spam risk — sending blocked", {
-        description:
-          "Apply the suggested subject/body rewrite, run Check spam risk again, then send.",
-        duration: 12_000,
-      });
-      return;
-    }
-    if (contentReview.riskLevel === "medium") {
-      toast.warning("Medium spam risk", {
-        description: "Consider applying AI suggestions before sending at scale.",
-        duration: 8_000,
-      });
     }
     if (attachmentKind && !attachmentHtml.trim()) {
       toast.error("Attachment HTML required", {
@@ -584,6 +632,7 @@ export function EmailEditor({
         htmlAttachment: htmlAttachmentPayload,
         smtpServerIds,
         rotationStrategy: "round_robin",
+        genuinenessPassToken,
       });
       if (!res.ok) {
         throw new Error(res.error);
@@ -720,10 +769,10 @@ export function EmailEditor({
           <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-4 space-y-3">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <p className="text-sm font-medium text-zinc-200">Spam risk check</p>
+                <p className="text-sm font-medium text-zinc-200">Content verification (required)</p>
                 <p className="mt-1 text-xs text-zinc-500">
-                  Advisory only — get Gemini rewrite suggestions and a general risk level (Low /
-                  Medium / High). Objective rule violations block send on the server.
+                  Subject, body, and attachment content must pass genuineness checks before Send
+                  unlocks. Edits invalidate a previous pass.
                 </p>
               </div>
               <Button
@@ -737,12 +786,12 @@ export function EmailEditor({
                 {contentReviewLoading ? (
                   <>
                     <Loader2 className="me-2 size-4 animate-spin" />
-                    Checking…
+                    Verifying…
                   </>
                 ) : (
                   <>
                     <Sparkles className="me-2 size-4" />
-                    Check spam risk
+                    Verify content
                   </>
                 )}
               </Button>
@@ -751,33 +800,47 @@ export function EmailEditor({
               <div
                 className={cn(
                   "rounded-md border px-3 py-2 text-sm",
-                  contentReview.riskLevel === "high"
-                    ? "border-red-900/60 bg-red-950/30 text-red-100"
-                    : contentReview.riskLevel === "medium"
-                      ? "border-amber-900/60 bg-amber-950/30 text-amber-100"
-                      : "border-emerald-900/60 bg-emerald-950/30 text-emerald-100",
+                  contentReview.passed
+                    ? "border-emerald-900/60 bg-emerald-950/30 text-emerald-100"
+                    : "border-red-900/60 bg-red-950/30 text-red-100",
                 )}
               >
-                <p className="font-medium capitalize">
-                  Risk level: {contentReview.riskLevel}
-                  {contentReview.aiUsed ? " · AI suggestions" : " · rule-based"}
+                <p className="font-medium">
+                  {contentReview.passed ? "Passed — Send unlocked" : "Failed — Send locked"}
+                  {contentReview.aiUsed ? " · AI suggestions available" : ""}
                   {typeof contentReview.rescoringRemaining === "number"
                     ? ` · ${contentReview.rescoringRemaining} rechecks left`
                     : null}
                 </p>
                 <p className="mt-1 text-xs opacity-90">{contentReview.summary}</p>
-                {contentReview.riskLevel !== "low" ? (
+                {(contentReview.feedback ?? contentReview.issues)?.length ? (
+                  <ul className="mt-2 list-disc space-y-1 ps-4 text-xs opacity-95">
+                    {(contentReview.feedback ?? contentReview.issues).slice(0, 6).map((item, idx) => (
+                      <li key={`${item.message}-${idx}`}>
+                        {"locationHint" in item && item.locationHint
+                          ? `${item.locationHint}: `
+                          : ""}
+                        {item.message}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                {!contentReview.passed || contentReview.suggestedSubject || contentReview.suggestedHtml ? (
                   <Button
                     type="button"
                     variant="link"
                     className="mt-1 h-auto p-0 text-xs underline"
                     onClick={() => setContentReviewOpen(true)}
                   >
-                    View suggestions
+                    {contentReview.passed ? "View details" : "View feedback & AI rewrite"}
                   </Button>
                 ) : null}
               </div>
-            ) : null}
+            ) : (
+              <p className="text-xs text-amber-200/90">
+                Send is disabled until this message version passes verification.
+              </p>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -1022,9 +1085,20 @@ export function EmailEditor({
             <Button
               type="button"
               size="lg"
-              className="inline-flex w-full min-w-[12rem] items-center justify-center gap-2 bg-emerald-600 text-white hover:bg-emerald-500 sm:w-auto"
-              disabled={sending || previewMode || !timer.planRunning}
+              className="inline-flex w-full min-w-[12rem] items-center justify-center gap-2 bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-40 sm:w-auto"
+              disabled={
+                sending ||
+                previewMode ||
+                !timer.planRunning ||
+                !contentVerifiedForSend ||
+                contentReviewLoading
+              }
               onClick={() => void handleSend()}
+              title={
+                contentVerifiedForSend
+                  ? "Send campaign"
+                  : "Verify content first — Send stays locked until verification passes"
+              }
             >
               {sending ? (
                 <>
@@ -1272,14 +1346,16 @@ export function EmailEditor({
       <Dialog open={contentReviewOpen} onOpenChange={setContentReviewOpen}>
         <DialogContent className="max-h-[90vh] overflow-y-auto border-zinc-800 bg-zinc-950 text-zinc-100">
           <DialogHeader>
-            <DialogTitle>Spam risk review</DialogTitle>
+            <DialogTitle>Content verification</DialogTitle>
           </DialogHeader>
           {contentReview ? (
             <div className="space-y-4 text-sm">
               <p>
-                Risk level:{" "}
-                <span className="font-semibold capitalize">{contentReview.riskLevel}</span>
-                {contentReview.aiUsed ? " — Gemini rewrite" : " — rules only"}
+                Status:{" "}
+                <span className="font-semibold">
+                  {contentReview.passed ? "Passed" : "Failed"}
+                </span>
+                {contentReview.aiUsed ? " — grounded AI rewrite available" : ""}
               </p>
               <p className="text-zinc-400">{contentReview.summary}</p>
               {contentReview.aiNote ? (

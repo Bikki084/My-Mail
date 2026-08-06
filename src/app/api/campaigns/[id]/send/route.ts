@@ -17,13 +17,14 @@ import {
 import {
   runCampaignContentGuards,
   runContentSpamRiskGuard,
+  runGenuinenessPassGuard,
   runTrustTierSendGuard,
 } from "@/lib/campaign-send-guards";
 import { evaluateAndUpdateTrustTier, getTrustTierStatus } from "@/lib/trust-tier/service";
 
 type Params = { params: Promise<{ id: string }> };
 
-export async function POST(_req: Request, { params }: Params) {
+export async function POST(req: Request, { params }: Params) {
   const { id: campaignId } = await params;
   const supabase = await createClient();
   const {
@@ -31,6 +32,17 @@ export async function POST(_req: Request, { params }: Params) {
   } = await supabase.auth.getUser();
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  let passToken =
+    req.headers.get("x-mymail-genuineness-token")?.trim() ||
+    req.headers.get("X-Mymail-Genuineness-Token")?.trim() ||
+    "";
+  if (!passToken) {
+    const body = await req.json().catch(() => null);
+    if (body && typeof body === "object" && typeof (body as { genuineness_pass_token?: unknown }).genuineness_pass_token === "string") {
+      passToken = (body as { genuineness_pass_token: string }).genuineness_pass_token.trim();
+    }
   }
 
   const planBlock = await requireActivePlanForMailOrJson(supabase, user.id);
@@ -51,7 +63,7 @@ export async function POST(_req: Request, { params }: Params) {
   const { data: campaign, error: cErr } = await supabase
     .from("campaigns")
     .select(
-      "id, user_id, status, total_emails, subject, sender_name, body_html, attachment_paths",
+      "id, user_id, status, total_emails, subject, sender_name, body_html, attachment_paths, html_attachment",
     )
     .eq("id", campaignId)
     .single();
@@ -105,6 +117,21 @@ export async function POST(_req: Request, { params }: Params) {
     ? (campaign.attachment_paths as { filename: string; contentBase64: string }[])
     : [];
 
+  // Include HTML-attachment text when present on the campaign row.
+  const htmlAtt =
+    campaign && typeof (campaign as { html_attachment?: unknown }).html_attachment === "object"
+      ? ((campaign as { html_attachment?: { html?: string; kind?: string } }).html_attachment ?? null)
+      : null;
+  const guardAttachments = [
+    ...attachmentRows.map((a) => ({
+      filename: a.filename,
+      contentBase64: a.contentBase64,
+    })),
+    ...(htmlAtt?.html?.trim()
+      ? [{ filename: "generated-html-attachment", htmlText: htmlAtt.html.trim() }]
+      : []),
+  ];
+
   const contentGuard = await runCampaignContentGuards(
     service,
     user.id,
@@ -137,6 +164,25 @@ export async function POST(_req: Request, { params }: Params) {
     return NextResponse.json(
       { error: spamGuard.message, code: spamGuard.code },
       { status: spamGuard.status },
+    );
+  }
+
+  const genuinenessGuard = await runGenuinenessPassGuard(
+    service,
+    user.id,
+    {
+      senderName: campaign.sender_name ?? "",
+      subject: campaign.subject ?? "",
+      bodyHtml: campaign.body_html ?? "",
+      attachments: guardAttachments,
+      passToken,
+    },
+    { campaignId },
+  );
+  if (!genuinenessGuard.ok) {
+    return NextResponse.json(
+      { error: genuinenessGuard.message, code: genuinenessGuard.code },
+      { status: genuinenessGuard.status },
     );
   }
 

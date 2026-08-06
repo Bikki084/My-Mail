@@ -18,15 +18,22 @@ import {
   type ContentRiskLevel,
 } from "@/lib/content-spam-review/heuristics";
 import {
+  contentGenuinenessGateEnabled,
   contentSpamBlockHighRisk,
   contentSpamBlockMediumRisk,
 } from "@/lib/anti-spam-config";
+import {
+  attachmentListFingerprint,
+  messageContentFingerprint,
+  runGenuinenessReview,
+  verifyGenuinenessPassToken,
+} from "@/lib/content-genuineness";
 
 export type CampaignGuardInput = {
   senderName: string;
   subject: string;
   bodyHtml: string;
-  attachments?: { filename: string; contentBase64: string }[];
+  attachments?: { filename: string; contentBase64?: string; htmlText?: string }[];
 };
 
 export type CampaignGuardResult =
@@ -54,7 +61,11 @@ export async function runCampaignContentGuards(
     return { ok: false, message: compose.message, code: "compose_required", status: 400 };
   }
 
-  const attachmentRows = input.attachments ?? [];
+  const attachmentRows = (input.attachments ?? [])
+    .filter((a): a is { filename: string; contentBase64: string; htmlText?: string } =>
+      Boolean(a.contentBase64 && a.contentBase64.trim()),
+    )
+    .map((a) => ({ filename: a.filename, contentBase64: a.contentBase64 }));
   const decoded = attachmentsFromBase64Rows(attachmentRows);
   const attachSecurity = validateAllAttachments(decoded);
   if (!attachSecurity.ok) {
@@ -150,6 +161,95 @@ export async function runContentSpamRiskGuard(
     code: `spam_risk_${risk.level}`,
     status: 400,
   };
+}
+
+/**
+ * Hard pre-send genuineness gate: valid pass token for this message version +
+ * fresh server-side review (no AI). Does not weaken existing spam-risk guards.
+ */
+export async function runGenuinenessPassGuard(
+  supabase: SupabaseClient | null,
+  userId: string,
+  input: CampaignGuardInput & { passToken?: string | null },
+  opts?: { campaignId?: string | null },
+): Promise<CampaignGuardResult> {
+  if (!contentGenuinenessGateEnabled()) return { ok: true };
+
+  const attFp = attachmentListFingerprint(
+    (input.attachments ?? []).map((a) => ({
+      filename: a.filename,
+      contentBase64: a.contentBase64,
+      htmlText: a.htmlText,
+    })),
+  );
+  const fingerprint = messageContentFingerprint({
+    subject: input.subject,
+    bodyHtml: input.bodyHtml,
+    senderName: input.senderName,
+    attachmentFingerprint: attFp,
+  });
+
+  const token = (input.passToken ?? "").trim();
+  if (!token) {
+    const message =
+      "Content verification required — run “Verify content” in the composer and wait for a pass before sending.";
+    void logContentRejection(supabase, {
+      userId,
+      reasonCode: "genuineness_token_missing",
+      message,
+      campaignId: opts?.campaignId,
+    });
+    return { ok: false, message, code: "genuineness_required", status: 400 };
+  }
+
+  const verified = verifyGenuinenessPassToken({
+    token,
+    userId,
+    fingerprint,
+  });
+  if (!verified.ok) {
+    void logContentRejection(supabase, {
+      userId,
+      reasonCode: "genuineness_token_invalid",
+      message: verified.reason,
+      campaignId: opts?.campaignId,
+      metadata: { fingerprint },
+    });
+    return { ok: false, message: verified.reason, code: "genuineness_required", status: 400 };
+  }
+
+  // Re-validate on server (no AI) so a stolen/stale token cannot bypass content rules.
+  const review = await runGenuinenessReview(
+    {
+      subject: input.subject,
+      bodyHtml: input.bodyHtml,
+      senderName: input.senderName,
+      attachments: (input.attachments ?? []).map((a) => ({
+        filename: a.filename,
+        contentBase64: a.contentBase64,
+        htmlText: a.htmlText,
+      })),
+    },
+    { useAi: false },
+  );
+
+  if (!review.passed) {
+    const top = review.feedback
+      .slice(0, 3)
+      .map((f) => f.message)
+      .join(" ");
+    const message = `Content verification failed on the server. ${top}`.trim();
+    void logContentRejection(supabase, {
+      userId,
+      reasonCode: "genuineness_failed",
+      message,
+      campaignId: opts?.campaignId,
+      metadata: { categories: review.feedback.map((f) => f.category) },
+    });
+    return { ok: false, message, code: "genuineness_failed", status: 400 };
+  }
+
+  return { ok: true };
 }
 
 export async function runTrustTierSendGuard(

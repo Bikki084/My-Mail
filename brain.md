@@ -11,7 +11,7 @@
 | Date | Change |
 |------|--------|
 | 2026-08-06 | **Domain cutover:** production app switched back to `bulkfirepro.com` (from `bulkprofire.com`) |
-| 2026-08-06 | **Deliverability freeze hardened:** 1 spam report or ESP account warning freezes all sends 7h; composite score + bounce spike also trigger platform freeze |
+| 2026-08-06 | **Pre-send genuineness gate:** mandatory subject/body/attachment review; Send locked until pass token; grounded Gemini rewrite; audit table |
 | 2026-08-05 | **Content spam review:** local heuristics + Gemini AI subject/body rewrite suggestions in Email Composer |
 | 2026-08-05 | **Deliverability guard:** auto-pause all sends ~7h on spam report/block/bounce spikes (Redis + Event Webhook) |
 | 2026-08-05 | **Mandatory compose fields:** sender name, subject, and HTML body required to send; attachment-only campaigns blocked (client + API + delivery) |
@@ -195,26 +195,33 @@ When tripped → **all sends frozen** for `DELIVERABILITY_PAUSE_HOURS` (default 
 
 ## Content spam review (AI + rules)
 
-Pre-send coach in **Email Composer → Check spam risk**:
+Pre-send coach in **Email Composer → Verify content**:
 
 | Layer | What it does |
 |-------|----------------|
 | **Local heuristics** | Instant score 0–100: caps, spam phrases, thin body, attachment-only pitch, link count |
-| **Gemini AI** (optional) | Rewrites subject + HTML to reduce spam signals; preserves `{{{merge_tags}}}` |
+| **Genuineness gate** | Hard pass/fail on subject quality, body specificity, subject↔body alignment, attachment text, body↔attachment relevance |
+| **Gemini AI** (optional) | Grounded rewrite of subject + HTML from draft/PDF text; preserves `{{{merge_tags}}}`; never auto-approved |
 
 **API:** `POST /api/campaigns/content-review` (authenticated)
 
-**Requires send:** User must run **Check spam risk** before SEND; **high risk blocks send** (client + server). Medium is advisory unless `CONTENT_SPAM_BLOCK_MEDIUM_RISK=1`.
+**Requires send:** Message must **pass genuineness review** for the current content fingerprint. Send button stays **disabled** until pass. Pass is bound to a short-lived HMAC token (`X-Mymail-Genuineness-Token`) verified again on create+send. Any edit invalidates the pass.
 
-**Server block:** `runContentSpamRiskGuard` on create (send intent) and send API — blocks high risk when `CONTENT_SPAM_BLOCK_HIGH_RISK=1` (default).
+**Server block:** `runGenuinenessPassGuard` + existing `runContentSpamRiskGuard` on create (send intent) and send API.
 
-**Rescore limit:** fingerprint-based rate limit on repeated spam checks (`CONTENT_RESCORE_MAX_ATTEMPTS`, `CONTENT_RESCORE_WINDOW_MINUTES`). Code: `src/lib/content-spam-review/rescore-limit.ts`
+**Rescore limit:** fingerprint-based rate limit on repeated checks (`CONTENT_RESCORE_MAX_ATTEMPTS`, `CONTENT_RESCORE_WINDOW_MINUTES`).
 
-**Gemini:** re-scores AI rewrites; warns if rewrite still high risk.
+**Audit:** `content_genuineness_audit` (pass/fail, categories, AI suggested/accepted). Migration: `20260806140000_content_genuineness_audit.sql`
+
+**Code:** `src/lib/content-genuineness/`, `src/lib/content-spam-review/`
+
+**Env:** `CONTENT_GENUINENESS_GATE_DISABLE`, `GENUINENESS_*`, `GEMINI_API_KEY`
+
+---
+
+## Content spam review (legacy heuristics notes)
 
 **Heuristics added:** fake Re:/Fwd: subjects, hidden HTML, image-heavy bodies, phishing phrases, URL shorteners, subject length.
-
-**Code:** `src/lib/content-spam-review/`, `src/lib/campaign-bounce-guard.ts`
 
 **Free AI key:** [Google AI Studio](https://aistudio.google.com/apikey) → `GEMINI_API_KEY` in `.env.local`
 
@@ -408,6 +415,10 @@ Governor: `src/lib/send-governor.ts` — disable with `SEND_GOVERNOR_DISABLE=1` 
 | `CONTENT_RESCORE_WINDOW_MINUTES` | Rescore rate-limit window (default `30`) |
 | `CONTENT_SPAM_BLOCK_HIGH_RISK` | Block send on high heuristic spam risk (default on; set `0` to disable) |
 | `CONTENT_SPAM_BLOCK_MEDIUM_RISK` | Block send on medium risk (default off) |
+| `CONTENT_GENUINENESS_GATE_DISABLE` | Set `1` to disable hard genuineness Send gate |
+| `GENUINENESS_MIN_SPECIFIC_TOKENS` | Min distinct content tokens in body (default `8`) |
+| `GENUINENESS_ATTACHMENT_RELEVANCE_MIN` | Min body↔attachment token overlap (default `0.08`) |
+| `GENUINENESS_PASS_TOKEN_TTL_MINUTES` | Pass token lifetime (default `60`) |
 | `CAMPAIGN_BOUNCE_PAUSE_RATE` | In-flight campaign hard-bounce rate pause threshold (default `0.05`) |
 | `CAMPAIGN_BOUNCE_PAUSE_MIN_ATTEMPTS` | Min attempts before bounce pause (default `20`) |
 | `TRUST_TIER_NEW_DAILY_LIMIT` | Daily cap for new tier (default `30`) |

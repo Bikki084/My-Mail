@@ -19,6 +19,7 @@ import { filterRecipientsForSend } from "@/lib/filter-recipients-for-send";
 import {
   runCampaignContentGuards,
   runContentSpamRiskGuard,
+  runGenuinenessPassGuard,
 } from "@/lib/campaign-send-guards";
 import {
   assertSendingAllowed,
@@ -189,6 +190,31 @@ export async function POST(req: Request) {
   row = filtered.safe;
 
   const htmlAttachment = normalizeHtmlAttachment(rest.html_attachment ?? null);
+
+  if (intentSend) {
+    const passToken =
+      req.headers.get("x-mymail-genuineness-token")?.trim() ||
+      req.headers.get("X-Mymail-Genuineness-Token")?.trim() ||
+      "";
+    const genuinenessGuard = await runGenuinenessPassGuard(supabase, user.id, {
+      senderName: rest.sender_name ?? "",
+      subject: rest.subject ?? "",
+      bodyHtml: rest.body_html ?? "",
+      attachments: [
+        ...normalizedAttachments,
+        ...(htmlAttachment?.html
+          ? [{ filename: "generated-html-attachment", htmlText: htmlAttachment.html }]
+          : []),
+      ],
+      passToken,
+    });
+    if (!genuinenessGuard.ok) {
+      return NextResponse.json(
+        { error: genuinenessGuard.message, code: genuinenessGuard.code },
+        { status: genuinenessGuard.status },
+      );
+    }
+  }
 
   const built = await buildCampaignStorageHtml({
     rawHtml: rest.body_html ?? "",
