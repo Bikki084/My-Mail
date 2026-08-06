@@ -10,6 +10,7 @@
 
 | Date | Change |
 |------|--------|
+| 2026-08-06 | **Favicon:** tab + Apple touch icons match header logo (emerald→teal mail mark) via `src/app/icon.svg` + `apple-icon.tsx` |
 | 2026-08-06 | **Domain cutover:** production app switched back to `bulkfirepro.com` (from `bulkprofire.com`) |
 | 2026-08-06 | **AI merge tags:** Gemini spam-free / genuineness rewrites personalize with CSV + built-in tags (`{{{name}}}`, `{{{email}}}`, …) |
 | 2026-08-05 | **Content spam review:** local heuristics + Gemini AI subject/body rewrite suggestions in Email Composer |
