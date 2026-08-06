@@ -10,7 +10,8 @@ import {
   suggestSpamFreeContentWithGemini,
 } from "@/lib/content-spam-review/gemini-suggest";
 
-export type ContentReviewResult = {
+/** Internal result — includes score for logging; never expose score to clients. */
+export type ContentReviewInternalResult = {
   riskScore: number;
   riskLevel: ContentRiskLevel;
   issues: HeuristicIssue[];
@@ -21,12 +22,40 @@ export type ContentReviewResult = {
   aiNote: string | null;
 };
 
+/** Client-facing API — advisory only, no numeric score. */
+export type ContentReviewPublicResult = {
+  riskLevel: ContentRiskLevel;
+  issues: Array<{ code: string; message: string }>;
+  summary: string;
+  suggestedSubject: string | null;
+  suggestedHtml: string | null;
+  aiUsed: boolean;
+  aiNote: string | null;
+  rescoringRemaining?: number;
+};
+
+export function toPublicContentReviewResult(
+  internal: ContentReviewInternalResult,
+  opts?: { rescoringRemaining?: number },
+): ContentReviewPublicResult {
+  return {
+    riskLevel: internal.riskLevel,
+    issues: internal.issues.map(({ code, message }) => ({ code, message })),
+    summary: internal.summary,
+    suggestedSubject: internal.suggestedSubject,
+    suggestedHtml: internal.suggestedHtml,
+    aiUsed: internal.aiUsed,
+    aiNote: internal.aiNote,
+    rescoringRemaining: opts?.rescoringRemaining,
+  };
+}
+
 export async function reviewCampaignContent(input: {
   subject: string;
   bodyHtml: string;
   senderName: string;
   useAi?: boolean;
-}): Promise<ContentReviewResult> {
+}): Promise<ContentReviewInternalResult> {
   const subject = input.subject.trim();
   const bodyHtml = input.bodyHtml.trim();
   const senderName = input.senderName.trim();

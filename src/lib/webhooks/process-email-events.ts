@@ -12,6 +12,7 @@ import {
   pauseActiveCampaignsForDeliverabilityGuard,
   recordDeliverabilitySignal,
 } from "@/lib/deliverability-guard";
+import { evaluateAndUpdateTrustTier } from "@/lib/trust-tier/service";
 
 export type ProcessEmailEventsResult = {
   processed: number;
@@ -118,6 +119,10 @@ export async function processInboundEmailEvents(
       if (trip.paused && trip.reason) {
         await pauseActiveCampaignsForDeliverabilityGuard(supabase, trip.reason);
       }
+    }
+
+    if (guardSignal && userId) {
+      void evaluateAndUpdateTrustTier(supabase, userId);
     }
 
     if (!shouldAutoSuppress(event.eventType)) {

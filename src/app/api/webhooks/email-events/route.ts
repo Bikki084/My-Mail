@@ -2,7 +2,7 @@
  * Provider-agnostic inbound email events (bounces, blocks, spam reports).
  *
  * Configure your SMTP/ESP webhook to POST here:
- *   POST https://bulkprofire.com/api/webhooks/email-events
+ *   POST https://bulkfirepro.com/api/webhooks/email-events
  *
  * Optional headers:
  *   X-Webhook-Provider: sendgrid | generic

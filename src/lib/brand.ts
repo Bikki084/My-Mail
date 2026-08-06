@@ -1,5 +1,5 @@
 /** Primary production hostname (no protocol, no path). */
-export const APP_DOMAIN = "bulkprofire.com";
+export const APP_DOMAIN = "bulkfirepro.com";
 
 /** HTTPS origin for links in emails and redirects (no trailing slash). */
 export const APP_PUBLIC_URL = `https://${APP_DOMAIN}`;

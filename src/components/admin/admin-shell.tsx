@@ -18,6 +18,7 @@ import {
   ScrollText,
   LogOut,
   Mail,
+  Shield,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -46,6 +47,7 @@ const nav: { href: string; label: string; icon: React.ComponentType<{ className?
   { href: "/admin/credits/top-up", label: "Top-up Credits", icon: Wallet },
   { href: "/admin/payment-notes", label: "Payment Notes", icon: Receipt },
   { href: "/admin/monitor", label: "Sending Monitor", icon: Activity },
+  { href: "/admin/trust-tiers", label: "Trust Tiers", icon: Shield },
   { href: "/admin/reports", label: "Usage Reports", icon: BarChart3 },
   { href: "/admin/login-history", label: "Login History", icon: History },
   { href: "/admin/announcements", label: "Announcements", icon: Megaphone },

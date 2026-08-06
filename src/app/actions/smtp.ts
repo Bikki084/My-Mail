@@ -150,7 +150,7 @@ function friendlySmtpError(err: unknown, hostHint?: string): string {
         : host.includes("brevo.com")
           ? " For Brevo: confirm your server IP is in Brevo → SMTP & API → Authorized IPs, then retry."
           : host.includes("sendgrid.net")
-            ? " For SendGrid: use port 587 (not 25 — blocked on AWS), authenticate bulkprofire.com in SendGrid, and redeploy the app."
+            ? " For SendGrid: use port 587 (not 25 — blocked on AWS), authenticate bulkfirepro.com in SendGrid, and redeploy the app."
             : "";
     return `Could not reach ${host} — connection timed out. Check host, port, firewall, and authorized IPs (${msg}).${localHint}`;
   }
@@ -181,8 +181,8 @@ function friendlySmtpError(err: unknown, hostHint?: string): string {
   }
   if (/550/.test(resp) && /sendgrid\.net/i.test(hostHint ?? "")) {
     return (
-      `SendGrid rejected the From address. Authenticate bulkprofire.com under SendGrid → Settings → ` +
-      `Sender Authentication, redeploy the app (git pull), then send from noreply@bulkprofire.com. ` +
+      `SendGrid rejected the From address. Authenticate bulkfirepro.com under SendGrid → Settings → ` +
+      `Sender Authentication, redeploy the app (git pull), then send from noreply@bulkfirepro.com. ` +
       `Server said: ${resp || msg}`
     );
   }

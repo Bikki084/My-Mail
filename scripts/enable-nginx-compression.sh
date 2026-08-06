@@ -11,7 +11,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-DOMAIN="${BULK_DOMAIN:-bulkprofire.com}"
+DOMAIN="${BULK_DOMAIN:-bulkfirepro.com}"
 NGINX_SITE="/etc/nginx/sites-available/${DOMAIN}"
 GZIP_CONF="/etc/nginx/conf.d/bulkprofire-compression.conf"
 BROTLI_CONF="/etc/nginx/conf.d/bulkprofire-compression-brotli.conf"

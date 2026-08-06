@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Enable HTTPS (Let's Encrypt) for bulkprofire.com on Ubuntu Lightsail + nginx.
+# Enable HTTPS (Let's Encrypt) for bulkfirepro.com on Ubuntu Lightsail + nginx.
 # Run ON the server (once, or after nginx breaks):
 #   cd ~/mymail && git pull && sudo bash scripts/setup-https.sh
 #
-# Requires: DNS A record for bulkprofire.com → this server's public IP, port 80 open.
+# Requires: DNS A record for bulkfirepro.com → this server's public IP, port 80 open.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "${SCRIPT_DIR}/.."
 
-DOMAIN="${BULK_DOMAIN:-bulkprofire.com}"
+DOMAIN="${BULK_DOMAIN:-bulkfirepro.com}"
 WWW_DOMAIN="www.${DOMAIN}"
 EMAIL="${CERTBOT_EMAIL:-}"
 APP_PORT="${APP_PORT:-3000}"
@@ -61,8 +61,8 @@ EOF
 ln -sf "${NGINX_SITE}" "${NGINX_ENABLED}"
 rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
 
-# Disable old-domain vhosts so certbot/nginx don't serve bulkfirepro.com for bulkprofire.com.
-for old in bulkfirepro bulkfirepro.com; do
+# Disable old-domain vhosts so certbot/nginx don't serve bulkprofire.com for bulkfirepro.com.
+for old in bulkprofire bulkprofire.com; do
   rm -f "/etc/nginx/sites-enabled/${old}" 2>/dev/null || true
 done
 

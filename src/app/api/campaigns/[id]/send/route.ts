@@ -14,6 +14,11 @@ import {
   assertSendingAllowed,
   formatDeliverabilityPauseMessage,
 } from "@/lib/deliverability-guard";
+import {
+  runCampaignContentGuards,
+  runTrustTierSendGuard,
+} from "@/lib/campaign-send-guards";
+import { evaluateAndUpdateTrustTier, getTrustTierStatus } from "@/lib/trust-tier/service";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -44,7 +49,9 @@ export async function POST(_req: Request, { params }: Params) {
 
   const { data: campaign, error: cErr } = await supabase
     .from("campaigns")
-    .select("id, user_id, status, total_emails")
+    .select(
+      "id, user_id, status, total_emails, subject, sender_name, body_html, attachment_paths",
+    )
     .eq("id", campaignId)
     .single();
 
@@ -67,6 +74,51 @@ export async function POST(_req: Request, { params }: Params) {
     return NextResponse.json(
       { error: "This campaign has no recipients." },
       { status: 400 },
+    );
+  }
+
+  let service: ReturnType<typeof createServiceClient>;
+  try {
+    service = createServiceClient();
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Server configuration error";
+    return NextResponse.json({ error: msg }, { status: 503 });
+  }
+
+  await evaluateAndUpdateTrustTier(service, user.id);
+
+  const trustGuard = await runTrustTierSendGuard(service, user.id, need);
+  if (!trustGuard.ok) {
+    const tierStatus = await getTrustTierStatus(service, user.id);
+    return NextResponse.json(
+      {
+        error: trustGuard.message,
+        code: trustGuard.code,
+        trustTier: tierStatus,
+      },
+      { status: trustGuard.status },
+    );
+  }
+
+  const attachmentRows = Array.isArray(campaign.attachment_paths)
+    ? (campaign.attachment_paths as { filename: string; contentBase64: string }[])
+    : [];
+
+  const contentGuard = await runCampaignContentGuards(
+    service,
+    user.id,
+    {
+      senderName: campaign.sender_name ?? "",
+      subject: campaign.subject ?? "",
+      bodyHtml: campaign.body_html ?? "",
+      attachments: attachmentRows,
+    },
+    { campaignId },
+  );
+  if (!contentGuard.ok) {
+    return NextResponse.json(
+      { error: contentGuard.message, code: contentGuard.code },
+      { status: contentGuard.status },
     );
   }
 
@@ -95,14 +147,6 @@ export async function POST(_req: Request, { params }: Params) {
       },
       { status: 400 },
     );
-  }
-
-  let service: ReturnType<typeof createServiceClient>;
-  try {
-    service = createServiceClient();
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : "Server configuration error";
-    return NextResponse.json({ error: msg }, { status: 503 });
   }
 
   const preflight = await runSendPreflight(service, user.id);

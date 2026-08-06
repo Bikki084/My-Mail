@@ -105,8 +105,8 @@ PY
 
 echo "3) Patching site configs..."
 for site in \
-  /etc/nginx/sites-available/bulkprofire \
-  /etc/nginx/sites-available/bulkprofire.com; do
+  /etc/nginx/sites-available/bulkfirepro \
+  /etc/nginx/sites-available/bulkfirepro.com; do
   patch_site "$site"
 done
 
@@ -117,5 +117,5 @@ systemctl reload nginx
 
 echo ""
 echo "=== nginx hardened ==="
-echo "Probe: curl -I https://bulkprofire.com/"
+echo "Probe: curl -I https://bulkfirepro.com/"
 echo ""

@@ -144,7 +144,7 @@ fi
 echo ""
 pm2 status
 echo ""
-echo "=== Deploy complete — https://bulkprofire.com ==="
+echo "=== Deploy complete — https://bulkfirepro.com ==="
 echo "If browser shows http only, run once: sudo bash scripts/setup-https.sh"
 echo "If 502s return randomly, run once: bash scripts/install-site-reliability.sh"
 echo ""

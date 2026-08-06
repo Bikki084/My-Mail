@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Fix 502 Bad Gateway on bulkprofire.com (nginx up, app on :3000 down).
+# Fix 502 Bad Gateway on bulkfirepro.com (nginx up, app on :3000 down).
 #   cd ~/mymail && git pull && bash scripts/fix-502.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo ""
-echo "=== Fix 502 (bulkprofire.com) ==="
+echo "=== Fix 502 (bulkfirepro.com) ==="
 echo ""
 
 if [[ ! -f .env.local ]]; then
@@ -39,5 +39,5 @@ if command -v nginx >/dev/null 2>&1; then
 fi
 
 echo ""
-echo "=== Site should be back — open https://bulkprofire.com/client ==="
+echo "=== Site should be back — open https://bulkfirepro.com/client ==="
 echo ""

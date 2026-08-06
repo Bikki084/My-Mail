@@ -2,7 +2,7 @@
 
 > **Purpose:** Single source of truth for AI agents and developers. Read this file **before** scanning the whole repo.  
 > **Maintainers:** Update this file whenever you add features, change limits, deploy steps, or infra — same as you would commit code.  
-> **Last updated:** 2026-08-05
+> **Last updated:** 2026-08-06
 
 ---
 
@@ -10,6 +10,8 @@
 
 | Date | Change |
 |------|--------|
+| 2026-08-06 | **Domain cutover:** production app switched back to `bulkfirepro.com` (from `bulkprofire.com`) |
+| 2026-08-06 | **Trust tiers + anti-spam guards:** per-client daily send caps, content quality checks, attachment security, rescore rate limits, admin `/admin/trust-tiers` |
 | 2026-08-05 | **Content spam review:** local heuristics + Gemini AI subject/body rewrite suggestions in Email Composer |
 | 2026-08-05 | **Deliverability guard:** auto-pause all sends ~7h on spam report/block/bounce spikes (Redis + Event Webhook) |
 | 2026-08-05 | **Mandatory compose fields:** sender name, subject, and HTML body required to send; attachment-only campaigns blocked (client + API + delivery) |
@@ -26,7 +28,7 @@
 | Item | Value |
 |------|--------|
 | **Brand** | BulkProFire |
-| **Domain** | `bulkprofire.com` |
+| **Domain** | `bulkfirepro.com` |
 | **Repo** | GitHub `Bikki084/My-Mail` |
 | **Stack** | Next.js 16 App Router, React 19, Tailwind v4, Supabase, BullMQ + Redis, Nodemailer |
 | **Production host** | AWS Lightsail (Mumbai), nginx → PM2 |
@@ -42,6 +44,10 @@ Brand constants: `src/lib/brand.ts`
 # SSH → app directory
 cd ~/mymail
 
+# Domain cutover (bulkfirepro.com)
+git pull && bash scripts/setup-bulkfirepro-lightsail.sh
+# Or HTTPS-only fix: sudo bash scripts/fix-bulkfirepro-https.sh && bash scripts/deploy-production.sh
+
 # Deploy (pull + build + PM2 reload)
 git pull && bash scripts/deploy-production.sh
 
@@ -49,7 +55,7 @@ git pull && bash scripts/deploy-production.sh
 npm run db:migrate
 
 # Health check
-curl -sf https://bulkprofire.com/api/health
+curl -sf https://bulkfirepro.com/api/health
 
 # PM2
 pm2 status
@@ -127,7 +133,7 @@ Works with **any SMTP** — not tied to SendGrid APIs for validation.
 **SendGrid Event Webhook setup:**
 
 1. SendGrid → Settings → Mail Settings → Event Webhook  
-2. URL: `https://bulkprofire.com/api/webhooks/email-events`  
+2. URL: `https://bulkfirepro.com/api/webhooks/email-events`  
 3. Events: **Bounce**, **Blocked**, **Spam Report**, **Dropped**  
 4. Optional header: `X-Webhook-Secret: <EMAIL_WEBHOOK_SECRET>` (set same value in `.env.local`)  
 5. Optional header: `X-Webhook-Provider: sendgrid`
@@ -199,6 +205,54 @@ Pre-send coach in **Email Composer → Check spam risk**:
 
 **Env:** `GEMINI_API_KEY`, optional `GEMINI_CONTENT_REVIEW_MODEL` (default `gemini-2.0-flash`)
 
+**Rescore limit:** fingerprint-based rate limit on repeated spam checks (`CONTENT_RESCORE_MAX_ATTEMPTS`, `CONTENT_RESCORE_WINDOW_MINUTES`). Code: `src/lib/content-spam-review/rescore-limit.ts`
+
+---
+
+## Trust tiers (client send caps)
+
+Progressive daily send limits per client before mail hits the ESP queue:
+
+| Tier | Default daily cap | How reached |
+|------|-------------------|-------------|
+| **new** | 30 | Default for new accounts (first 4 days) |
+| **warming** | doubles every 3 days | After new period, if metrics OK |
+| **established** | 50,000 | Sustained good bounce/complaint rates |
+| **restricted** | 5 | Bounce/complaint thresholds exceeded |
+
+Metrics from webhook + send logs (30-day lookback). Tier changes logged in `client_trust_tier_history`.
+
+**Enforced at:** campaign create, send, content review — via `src/lib/campaign-send-guards.ts` + `src/lib/trust-tier/service.ts`
+
+**Client API:** `GET /api/account/trust-tier`
+
+**Admin:** `/admin/trust-tiers` — view/adjust tiers
+
+**Migration:** `20260805120000_trust_tier_and_anti_spam_audit.sql` (adds `profiles.trust_tier`, audit tables)
+
+**Code:** `src/lib/trust-tier/`, `src/lib/anti-spam-config.ts`
+
+**Env:** `TRUST_TIER_*` — see `.env.example`
+
+---
+
+## Content quality & attachment security
+
+Hard blocks at campaign create/send (logged to audit tables):
+
+| Check | What it blocks |
+|-------|----------------|
+| **Min word count** | Thin HTML body (default 25 words) |
+| **Text vs attachment ratio** | Large attachments with little body text |
+| **Attachment types** | Dangerous extensions / MIME mismatches (`.exe`, `.js`, etc.) |
+| **Rescore gaming** | Too many spam-risk rescoring attempts on same content |
+
+**Audit tables:** `content_rejection_audit`, `attachment_block_audit`, `content_rescore_audit`
+
+**Code:** `src/lib/content-quality-validation.ts`, `src/lib/attachment-security.ts`, `src/lib/anti-spam-audit.ts`
+
+**Env:** `CONTENT_MIN_WORD_COUNT`, `CONTENT_MIN_TEXT_CHARS_PER_ATTACHMENT_KB`, `CONTENT_RESCORE_*`
+
 ---
 
 ## Directory map (high signal)
@@ -246,6 +300,7 @@ ecosystem.config.cjs  PM2 production env defaults
 | `/admin/login-history` | Login audit |
 | `/admin/announcements` | Broadcast announcements |
 | `/admin/user-activity` | Per-user send audit (2-day retention) |
+| `/admin/trust-tiers` | Client trust tier, daily limits, tier history |
 
 Nav: `src/components/admin/admin-shell.tsx`
 
@@ -292,6 +347,11 @@ Governor: `src/lib/send-governor.ts` — disable with `SEND_GOVERNOR_DISABLE=1` 
 
 **Core tables:** `profiles`, `campaigns`, `sending_logs`, `smtp_servers`, `credits`, `active_plans`, `unsubscribes`, `login_events`, `announcements`
 
+**Trust / anti-spam audit:**
+- `profiles.trust_tier`, `profiles.trust_daily_send_limit` — per-client caps
+- `client_trust_tier_history` — tier upgrades/downgrades
+- `content_rejection_audit`, `attachment_block_audit`, `content_rescore_audit`
+
 **User activity (2-day retention):**
 - `user_activity_batches` — PK `campaign_id`
 - `user_activity_snapshots` — body + attachments + sample recipient
@@ -323,6 +383,13 @@ Governor: `src/lib/send-governor.ts` — disable with `SEND_GOVERNOR_DISABLE=1` 
 | `DELIVERABILITY_SIGNAL_WINDOW_MINUTES` | Rolling window for spike detection (default `60`) |
 | `GEMINI_API_KEY` | Google AI Studio key for spam-risk content rewrites (free tier) |
 | `GEMINI_CONTENT_REVIEW_MODEL` | Optional Gemini model (default `gemini-2.0-flash`) |
+| `CONTENT_MIN_WORD_COUNT` | Min HTML body words (default `25`) |
+| `CONTENT_MIN_TEXT_CHARS_PER_ATTACHMENT_KB` | Body text vs attachment size ratio |
+| `CONTENT_RESCORE_MAX_ATTEMPTS` | Max spam rescoring attempts per fingerprint window |
+| `CONTENT_RESCORE_WINDOW_MINUTES` | Rescore rate-limit window (default `30`) |
+| `TRUST_TIER_NEW_DAILY_LIMIT` | Daily cap for new tier (default `30`) |
+| `TRUST_TIER_ESTABLISHED_DAILY_LIMIT` | Daily cap when established (default `50000`) |
+| `TRUST_TIER_RESTRICTED_DAILY_LIMIT` | Daily cap when restricted (default `5`) |
 
 Full list: `.env.example`
 
@@ -338,20 +405,20 @@ Full list: `.env.example`
 | Port | **587** (not 25 on Lightsail) |
 | Username | `apikey` |
 | Password | SendGrid API key `SG.…` |
-| From | Verified domain e.g. `noreply@bulkprofire.com` |
+| From | Verified domain e.g. `noreply@bulkfirepro.com` |
 
 From resolution: `src/lib/smtp/from-address.ts` (Mailjet, SendGrid, Brevo host detection).
 
 ---
 
-## Deliverability / DNS (bulkprofire.com)
+## Deliverability / DNS (bulkfirepro.com)
 
 - SPF: `v=spf1 include:sendgrid.net ~all` (merge providers if multi-relay)
 - SendGrid DKIM + domain authentication in Twilio console
 - DMARC recommended
 - Warm-up: start 20–50/day on new domain; UI mentions ~5k/day guidance
 
-Scripts: `scripts/fix-bulkprofire-deliverability.sh`
+Scripts: `scripts/fix-bulkfirepro-deliverability.sh`, `scripts/setup-bulkfirepro-lightsail.sh`
 
 ---
 
@@ -364,6 +431,7 @@ Scripts: `scripts/fix-bulkprofire-deliverability.sh`
 | `POST /api/campaigns/[id]/send` | Start send |
 | `POST /api/campaigns/[id]/resume` | Resume paused |
 | `POST /api/campaigns/[id]/cancel` | Cancel |
+| `GET /api/account/trust-tier` | Client trust tier + daily quota |
 | `GET /api/admin/user-activity/attachment` | Admin PDF/image stream (inline preview) |
 
 ---

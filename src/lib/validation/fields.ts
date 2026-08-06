@@ -90,7 +90,7 @@ export const domainNameField = z
   .min(1, "Domain is required.")
   .max(253, "Domain is too long.")
   .transform((s) => s.trim().toLowerCase())
-  .refine((d) => !d.includes("@"), "Enter a domain only (e.g. bulkprofire.com).")
+  .refine((d) => !d.includes("@"), "Enter a domain only (e.g. bulkfirepro.com).")
   .refine((d) => DOMAIN_RE.test(d), "Enter a valid domain (e.g. mail.yourcompany.com).");
 
 export const isoDateField = z

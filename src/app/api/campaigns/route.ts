@@ -16,6 +16,7 @@ import {
   htmlAttachmentPayloadSchema,
 } from "@/lib/validation";
 import { filterRecipientsForSend } from "@/lib/filter-recipients-for-send";
+import { runCampaignContentGuards } from "@/lib/campaign-send-guards";
 import type { z } from "zod";
 
 const MAX_ATTACHMENTS = MAX_CAMPAIGN_ATTACHMENTS;
@@ -126,12 +127,19 @@ export async function POST(req: Request) {
   }
 
   const encPersist = coerceEncodingInput(rest.encoding ?? "auto");
-  const rawHtml = (rest.body_html ?? "").trim();
-  if (!rawHtml) {
-    return NextResponse.json(
-      { error: "Email body (HTML) is required. Attachments alone are not allowed." },
-      { status: 400 },
-    );
+
+  const contentGuard = await runCampaignContentGuards(
+    supabase,
+    user.id,
+    {
+      senderName: rest.sender_name ?? "",
+      subject: rest.subject ?? "",
+      bodyHtml: rest.body_html ?? "",
+      attachments: normalizedAttachments,
+    },
+  );
+  if (!contentGuard.ok) {
+    return NextResponse.json({ error: contentGuard.message, code: contentGuard.code }, { status: contentGuard.status });
   }
 
   const filtered = await filterRecipientsForSend(supabase, user.id, row);

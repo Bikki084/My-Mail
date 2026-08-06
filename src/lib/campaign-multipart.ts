@@ -1,5 +1,9 @@
 import "server-only";
 
+import {
+  validateAttachmentSecurity,
+} from "@/lib/attachment-security";
+
 export const MAX_CAMPAIGN_ATTACHMENT_BYTES = 3 * 1024 * 1024;
 export const MAX_CAMPAIGN_ATTACHMENTS = 5;
 
@@ -75,6 +79,10 @@ export async function normalizedAttachmentsFromMultipart(
         ? p.name
         : `attachment-${index + 1}.bin`;
     const filename = name.slice(0, 200);
+    const security = validateAttachmentSecurity({ filename, buffer: buf });
+    if (!security.ok) {
+      return { ok: false, message: security.message };
+    }
     rows.push({ filename, contentBase64: buf.toString("base64") });
     index += 1;
   }

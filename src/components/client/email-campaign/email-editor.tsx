@@ -50,14 +50,14 @@ import { cn } from "@/lib/utils";
 type HeaderRow = { id: string; name: string; value: string };
 
 type ContentReviewResult = {
-  riskScore: number;
   riskLevel: "low" | "medium" | "high";
-  issues: { code: string; message: string; weight: number }[];
+  issues: { code: string; message: string }[];
   summary: string;
   suggestedSubject: string | null;
   suggestedHtml: string | null;
   aiUsed: boolean;
   aiNote: string | null;
+  rescoringRemaining?: number;
 };
 
 function composeFingerprint(subject: string, html: string, sender: string): string {
@@ -490,24 +490,20 @@ export function EmailEditor({
     }
     const needsReview =
       !contentReview ||
-      contentReviewFingerprint !== currentFingerprint ||
-      contentReview.riskLevel === "high";
+      contentReviewFingerprint !== currentFingerprint;
     if (needsReview) {
-      const heuristicsOnly = contentReview?.riskLevel === "high";
-      toast.error(
-        heuristicsOnly
-          ? "High spam risk — review content before sending"
-          : "Run spam risk check before sending",
-        {
-          description:
-            "Click “Check spam risk” on the Message card. Apply suggestions if the score is high.",
-          duration: 12_000,
-        },
-      );
-      return;
-    }
-    if (contentReview.riskLevel === "medium") {
-      toast.warning("Medium spam risk", {
+      toast.message("Optional: check spam risk before sending", {
+        description:
+          "Use “Check spam risk” for improvement suggestions. Hard blocks (short body, banned attachments, daily limits) are enforced by the server when you send.",
+        duration: 10_000,
+      });
+    } else if (contentReview.riskLevel === "high") {
+      toast.warning("High spam risk (advisory)", {
+        description: contentReview.summary,
+        duration: 10_000,
+      });
+    } else if (contentReview.riskLevel === "medium") {
+      toast.message("Medium spam risk (advisory)", {
         description: "Consider applying AI suggestions before sending at scale.",
         duration: 8_000,
       });
@@ -721,8 +717,8 @@ export function EmailEditor({
               <div>
                 <p className="text-sm font-medium text-zinc-200">Spam risk check</p>
                 <p className="mt-1 text-xs text-zinc-500">
-                  Free local scan + Google Gemini rewrite suggestions (when configured on server).
-                  Required before send.
+                  Advisory only — get Gemini rewrite suggestions and a general risk level (Low /
+                  Medium / High). Objective rule violations block send on the server.
                 </p>
               </div>
               <Button
@@ -757,9 +753,12 @@ export function EmailEditor({
                       : "border-emerald-900/60 bg-emerald-950/30 text-emerald-100",
                 )}
               >
-                <p className="font-medium">
-                  Risk score: {contentReview.riskScore}/100 ({contentReview.riskLevel})
+                <p className="font-medium capitalize">
+                  Risk level: {contentReview.riskLevel}
                   {contentReview.aiUsed ? " · AI suggestions" : " · rule-based"}
+                  {typeof contentReview.rescoringRemaining === "number"
+                    ? ` · ${contentReview.rescoringRemaining} rechecks left`
+                    : null}
                 </p>
                 <p className="mt-1 text-xs opacity-90">{contentReview.summary}</p>
                 {contentReview.riskLevel !== "low" ? (
@@ -1273,10 +1272,8 @@ export function EmailEditor({
           {contentReview ? (
             <div className="space-y-4 text-sm">
               <p>
-                Score:{" "}
-                <span className="font-semibold">
-                  {contentReview.riskScore}/100 ({contentReview.riskLevel})
-                </span>
+                Risk level:{" "}
+                <span className="font-semibold capitalize">{contentReview.riskLevel}</span>
                 {contentReview.aiUsed ? " — Gemini rewrite" : " — rules only"}
               </p>
               <p className="text-zinc-400">{contentReview.summary}</p>
