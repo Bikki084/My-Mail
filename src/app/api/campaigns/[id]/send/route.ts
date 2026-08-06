@@ -16,6 +16,7 @@ import {
 } from "@/lib/deliverability-guard";
 import {
   runCampaignContentGuards,
+  runContentSpamRiskGuard,
   runTrustTierSendGuard,
 } from "@/lib/campaign-send-guards";
 import { evaluateAndUpdateTrustTier, getTrustTierStatus } from "@/lib/trust-tier/service";
@@ -119,6 +120,23 @@ export async function POST(_req: Request, { params }: Params) {
     return NextResponse.json(
       { error: contentGuard.message, code: contentGuard.code },
       { status: contentGuard.status },
+    );
+  }
+
+  const spamGuard = await runContentSpamRiskGuard(
+    service,
+    user.id,
+    {
+      senderName: campaign.sender_name ?? "",
+      subject: campaign.subject ?? "",
+      bodyHtml: campaign.body_html ?? "",
+    },
+    { campaignId },
+  );
+  if (!spamGuard.ok) {
+    return NextResponse.json(
+      { error: spamGuard.message, code: spamGuard.code },
+      { status: spamGuard.status },
     );
   }
 

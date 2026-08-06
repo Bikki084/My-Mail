@@ -492,18 +492,23 @@ export function EmailEditor({
       !contentReview ||
       contentReviewFingerprint !== currentFingerprint;
     if (needsReview) {
-      toast.message("Optional: check spam risk before sending", {
+      toast.error("Check spam risk before sending", {
         description:
-          "Use “Check spam risk” for improvement suggestions. Hard blocks (short body, banned attachments, daily limits) are enforced by the server when you send.",
+          "Click “Check spam risk” first. The server blocks high-risk content automatically.",
         duration: 10_000,
       });
-    } else if (contentReview.riskLevel === "high") {
-      toast.warning("High spam risk (advisory)", {
-        description: contentReview.summary,
-        duration: 10_000,
+      return;
+    }
+    if (contentReview.riskLevel === "high") {
+      toast.error("High spam risk — sending blocked", {
+        description:
+          "Apply the suggested subject/body rewrite, run Check spam risk again, then send.",
+        duration: 12_000,
       });
-    } else if (contentReview.riskLevel === "medium") {
-      toast.message("Medium spam risk (advisory)", {
+      return;
+    }
+    if (contentReview.riskLevel === "medium") {
+      toast.warning("Medium spam risk", {
         description: "Consider applying AI suggestions before sending at scale.",
         duration: 8_000,
       });

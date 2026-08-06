@@ -13,10 +13,12 @@ const SPAM_PHRASES = [
   /\bact now\b/i,
   /\blimited time\b/i,
   /\bclick here\b/i,
+  /\bclick below\b/i,
   /\b100%\s*free\b/i,
   /\bwinner\b/i,
   /\bcongratulations\b/i,
   /\bverify your account\b/i,
+  /\bconfirm your account\b/i,
   /\bsuspended account\b/i,
   /\burgent\b/i,
   /\bno obligation\b/i,
@@ -30,13 +32,26 @@ const SPAM_PHRASES = [
   /\bviagra\b/i,
   /\bcasino\b/i,
   /\blottery\b/i,
-  /\bdear (customer|friend|user)\b/i,
+  /\bdear (customer|friend|user|sir|madam)\b/i,
   /\bopen immediately\b/i,
   /\bfinal notice\b/i,
   /\blast chance\b/i,
+  /\bwire transfer\b/i,
+  /\bnigerian?\b/i,
+  /\bpassword reset\b/i,
+  /\baccount suspended\b/i,
+  /\bclaim your (prize|reward|gift)\b/i,
+  /\bdouble your income\b/i,
+  /\bno credit check\b/i,
+  /\bunsecured loan\b/i,
+  /\bmlm\b/i,
+  /\bforex\b/i,
+  /\bpenny stock\b/i,
 ];
 
-const URL_SHORTENERS = /bit\.ly|tinyurl|t\.co|goo\.gl|ow\.ly|is\.gd|buff\.ly/i;
+const URL_SHORTENERS = /bit\.ly|tinyurl|t\.co|goo\.gl|ow\.ly|is\.gd|buff\.ly|rebrand\.ly|cutt\.ly/i;
+
+const FAKE_REPLY_PREFIX = /^(re|fwd|fw):\s/i;
 
 function countLinks(text: string): number {
   const matches = text.match(/https?:\/\/[^\s<>"']+/gi);
@@ -92,6 +107,56 @@ export function analyzeContentHeuristics(input: {
     });
   }
 
+  if (/\?{3,}/.test(subject) || /\?{4,}/.test(plainBody)) {
+    issues.push({
+      code: "excessive_question_marks",
+      message: "Excessive question marks in subject or body look like spam.",
+      weight: 10,
+    });
+  }
+
+  if (subject.length > 78) {
+    issues.push({
+      code: "subject_too_long",
+      message: "Subject line is very long — keep under ~78 characters for better inbox placement.",
+      weight: 8,
+    });
+  }
+
+  if (FAKE_REPLY_PREFIX.test(subject)) {
+    issues.push({
+      code: "fake_reply_subject",
+      message: "Subject starts with Re:/Fwd: — fake reply prefixes are a common spam tactic.",
+      weight: 14,
+    });
+  }
+
+  if (/display\s*:\s*none|font-size\s*:\s*0|visibility\s*:\s*hidden|opacity\s*:\s*0/i.test(input.bodyHtml)) {
+    issues.push({
+      code: "hidden_text",
+      message: "HTML contains hidden text (display:none, zero font-size) — a spam-filter red flag.",
+      weight: 22,
+    });
+  }
+
+  if (/<img\b/i.test(input.bodyHtml) && plainBody.split(/\s+/).length < 30) {
+    issues.push({
+      code: "image_heavy",
+      message: "Image-heavy email with little plain text — add descriptive copy for filters and accessibility.",
+      weight: 12,
+    });
+  }
+
+  const links = countLinks(`${input.bodyHtml} ${plainBody}`);
+
+  if (/\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b/i.test(plainBody) && links === 0) {
+    issues.push({
+      code: "raw_email_in_body",
+      message: "Raw email addresses in the body without context can trigger phishing filters.",
+      weight: 8,
+    });
+  }
+
   if (/\$\s*\d|€\s*\d|£\s*\d|\d+\s*(usd|dollars?|percent|% off)/i.test(combined)) {
     issues.push({
       code: "money_offers",
@@ -111,7 +176,6 @@ export function analyzeContentHeuristics(input: {
     }
   }
 
-  const links = countLinks(`${input.bodyHtml} ${plainBody}`);
   if (links >= 4) {
     issues.push({
       code: "many_links",

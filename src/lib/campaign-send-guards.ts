@@ -13,6 +13,14 @@ import {
   logContentRejection,
 } from "@/lib/anti-spam-audit";
 import { assertDailySendQuota } from "@/lib/trust-tier/service";
+import {
+  analyzeContentHeuristics,
+  type ContentRiskLevel,
+} from "@/lib/content-spam-review/heuristics";
+import {
+  contentSpamBlockHighRisk,
+  contentSpamBlockMediumRisk,
+} from "@/lib/anti-spam-config";
 
 export type CampaignGuardInput = {
   senderName: string;
@@ -93,6 +101,55 @@ export async function runCampaignContentGuards(
   }
 
   return { ok: true };
+}
+
+export function assessContentSpamRisk(input: {
+  subject: string;
+  bodyHtml: string;
+  senderName: string;
+}): { level: ContentRiskLevel; issues: { code: string; message: string }[] } {
+  const result = analyzeContentHeuristics(input);
+  return {
+    level: result.level,
+    issues: result.issues.map(({ code, message }) => ({ code, message })),
+  };
+}
+
+export async function runContentSpamRiskGuard(
+  supabase: SupabaseClient | null,
+  userId: string,
+  input: Pick<CampaignGuardInput, "subject" | "bodyHtml" | "senderName">,
+  opts?: { campaignId?: string | null },
+): Promise<CampaignGuardResult> {
+  const risk = assessContentSpamRisk(input);
+  const blockHigh = contentSpamBlockHighRisk();
+  const blockMedium = contentSpamBlockMediumRisk();
+
+  const shouldBlock =
+    (blockHigh && risk.level === "high") || (blockMedium && risk.level === "medium");
+
+  if (!shouldBlock) return { ok: true };
+
+  const topIssues = risk.issues.slice(0, 3).map((i) => i.message).join(" ");
+  const message =
+    risk.level === "high"
+      ? `High spam risk — sending blocked. Use “Check spam risk” in the composer and apply the suggested rewrite. ${topIssues}`.trim()
+      : `Medium spam risk — sending blocked (server policy). Improve content using “Check spam risk” before sending. ${topIssues}`.trim();
+
+  void logContentRejection(supabase, {
+    userId,
+    reasonCode: `spam_risk_${risk.level}`,
+    message,
+    campaignId: opts?.campaignId,
+    metadata: { issues: risk.issues },
+  });
+
+  return {
+    ok: false,
+    message,
+    code: `spam_risk_${risk.level}`,
+    status: 400,
+  };
 }
 
 export async function runTrustTierSendGuard(

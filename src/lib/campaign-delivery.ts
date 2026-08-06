@@ -595,6 +595,7 @@ async function runSendCampaignBody(
   let failedInBurst = 0;
   let sentInBurst = 0;
   let pausedForRotation = false;
+  let pausedForBounce = false;
 
   try {
     if (isAwsLightsailRotationConfigured()) {
@@ -646,6 +647,7 @@ async function runSendCampaignBody(
     sentInBurst = parallelResult.sentInBurst;
     failedInBurst = parallelResult.failedInBurst;
     pausedForRotation = parallelResult.pausedForRotation;
+    pausedForBounce = parallelResult.pausedForBounce;
     ipHistory.splice(0, ipHistory.length, ...parallelResult.ipHistory);
   } finally {
     if (isAwsLightsailPoolRotationEnabled()) {
@@ -703,6 +705,22 @@ async function runSendCampaignBody(
     if (totalSent > 0) {
       await captureUserActivityBatch(supabase, campaignId);
     }
+    return;
+  }
+
+  if (pausedForBounce) {
+    await supabase
+      .from("campaigns")
+      .update({
+        sent_count: totalSent,
+        failed_count: totalFailed,
+        outbound_ip_history: updatedHistory,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", campaignId);
+    console.log(
+      `[campaign-delivery] campaign=${campaignId} paused for bounce spike (total sent: ${totalSent}, bounces in logs).`,
+    );
     return;
   }
 

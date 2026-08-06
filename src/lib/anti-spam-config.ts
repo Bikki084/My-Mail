@@ -85,3 +85,23 @@ export function contentRescoreMaxAttempts(): number {
 export function contentRescoreWindowMinutes(): number {
   return envInt("CONTENT_RESCORE_WINDOW_MINUTES", 30, 1);
 }
+
+/** Block campaign create/send when heuristic spam risk is high (default on). */
+export function contentSpamBlockHighRisk(): boolean {
+  return process.env.CONTENT_SPAM_BLOCK_HIGH_RISK !== "0";
+}
+
+/** Also block medium risk at server (default off — advisory only). */
+export function contentSpamBlockMediumRisk(): boolean {
+  return process.env.CONTENT_SPAM_BLOCK_MEDIUM_RISK === "1";
+}
+
+/** Hard-bounce rate that pauses an in-flight campaign (0–1, default 5%). */
+export function campaignBouncePauseRate(): number {
+  return envFloat("CAMPAIGN_BOUNCE_PAUSE_RATE", 0.05, 0);
+}
+
+/** Min send+bounce attempts before campaign bounce pause can trigger. */
+export function campaignBouncePauseMinAttempts(): number {
+  return envInt("CAMPAIGN_BOUNCE_PAUSE_MIN_ATTEMPTS", 20, 5);
+}

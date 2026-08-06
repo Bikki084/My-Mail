@@ -16,7 +16,10 @@ import {
   htmlAttachmentPayloadSchema,
 } from "@/lib/validation";
 import { filterRecipientsForSend } from "@/lib/filter-recipients-for-send";
-import { runCampaignContentGuards } from "@/lib/campaign-send-guards";
+import {
+  runCampaignContentGuards,
+  runContentSpamRiskGuard,
+} from "@/lib/campaign-send-guards";
 import type { z } from "zod";
 
 const MAX_ATTACHMENTS = MAX_CAMPAIGN_ATTACHMENTS;
@@ -140,6 +143,20 @@ export async function POST(req: Request) {
   );
   if (!contentGuard.ok) {
     return NextResponse.json({ error: contentGuard.message, code: contentGuard.code }, { status: contentGuard.status });
+  }
+
+  if (intentSend) {
+    const spamGuard = await runContentSpamRiskGuard(supabase, user.id, {
+      senderName: rest.sender_name ?? "",
+      subject: rest.subject ?? "",
+      bodyHtml: rest.body_html ?? "",
+    });
+    if (!spamGuard.ok) {
+      return NextResponse.json(
+        { error: spamGuard.message, code: spamGuard.code },
+        { status: spamGuard.status },
+      );
+    }
   }
 
   const filtered = await filterRecipientsForSend(supabase, user.id, row);

@@ -11,7 +11,7 @@
 | Date | Change |
 |------|--------|
 | 2026-08-06 | **Domain cutover:** production app switched back to `bulkfirepro.com` (from `bulkprofire.com`) |
-| 2026-08-06 | **Trust tiers + anti-spam guards:** per-client daily send caps, content quality checks, attachment security, rescore rate limits, admin `/admin/trust-tiers` |
+| 2026-08-06 | **Spam protection hardening:** server blocks high-risk content at send, required spam check in composer, per-campaign bounce spike pause, stronger heuristics + Gemini re-score |
 | 2026-08-05 | **Content spam review:** local heuristics + Gemini AI subject/body rewrite suggestions in Email Composer |
 | 2026-08-05 | **Deliverability guard:** auto-pause all sends ~7h on spam report/block/bounce spikes (Redis + Event Webhook) |
 | 2026-08-05 | **Mandatory compose fields:** sender name, subject, and HTML body required to send; attachment-only campaigns blocked (client + API + delivery) |
@@ -176,6 +176,8 @@ Enforced in: `src/lib/campaign-compose-validation.ts`, Zod schema `campaignField
 
 When tripped → **all sends paused** for `DELIVERABILITY_PAUSE_HOURS` (default **7**). Active campaigns → `paused` with `pause_reason=deliverability_guard`.
 
+**Per-campaign bounce pause:** during send, if hard-bounce rate ≥ `CAMPAIGN_BOUNCE_PAUSE_RATE` (default **5%**) after `CAMPAIGN_BOUNCE_PAUSE_MIN_ATTEMPTS` (default **20**) attempts → campaign `paused` with `pause_reason=bounce_spike`. Code: `src/lib/campaign-bounce-guard.ts`
+
 **Requires:** SendGrid Event Webhook configured (`/api/webhooks/email-events`) + Redis on production.
 
 **Status API:** `GET /api/deliverability/pause-status`
@@ -197,15 +199,21 @@ Pre-send coach in **Email Composer → Check spam risk**:
 
 **API:** `POST /api/campaigns/content-review` (authenticated)
 
-**Requires send:** User must run check before SEND; high risk blocks until score improves.
+**Requires send:** User must run **Check spam risk** before SEND; **high risk blocks send** (client + server). Medium is advisory unless `CONTENT_SPAM_BLOCK_MEDIUM_RISK=1`.
+
+**Server block:** `runContentSpamRiskGuard` on create (send intent) and send API — blocks high risk when `CONTENT_SPAM_BLOCK_HIGH_RISK=1` (default).
+
+**Rescore limit:** fingerprint-based rate limit on repeated spam checks (`CONTENT_RESCORE_MAX_ATTEMPTS`, `CONTENT_RESCORE_WINDOW_MINUTES`). Code: `src/lib/content-spam-review/rescore-limit.ts`
+
+**Gemini:** re-scores AI rewrites; warns if rewrite still high risk.
+
+**Heuristics added:** fake Re:/Fwd: subjects, hidden HTML, image-heavy bodies, phishing phrases, URL shorteners, subject length.
+
+**Code:** `src/lib/content-spam-review/`, `src/lib/campaign-bounce-guard.ts`
 
 **Free AI key:** [Google AI Studio](https://aistudio.google.com/apikey) → `GEMINI_API_KEY` in `.env.local`
 
-**Code:** `src/lib/content-spam-review/`
-
-**Env:** `GEMINI_API_KEY`, optional `GEMINI_CONTENT_REVIEW_MODEL` (default `gemini-2.0-flash`)
-
-**Rescore limit:** fingerprint-based rate limit on repeated spam checks (`CONTENT_RESCORE_MAX_ATTEMPTS`, `CONTENT_RESCORE_WINDOW_MINUTES`). Code: `src/lib/content-spam-review/rescore-limit.ts`
+**Env:** `GEMINI_API_KEY`, optional `GEMINI_CONTENT_REVIEW_MODEL` (default `gemini-2.0-flash`), `CONTENT_SPAM_BLOCK_*`
 
 ---
 
@@ -387,6 +395,10 @@ Governor: `src/lib/send-governor.ts` — disable with `SEND_GOVERNOR_DISABLE=1` 
 | `CONTENT_MIN_TEXT_CHARS_PER_ATTACHMENT_KB` | Body text vs attachment size ratio |
 | `CONTENT_RESCORE_MAX_ATTEMPTS` | Max spam rescoring attempts per fingerprint window |
 | `CONTENT_RESCORE_WINDOW_MINUTES` | Rescore rate-limit window (default `30`) |
+| `CONTENT_SPAM_BLOCK_HIGH_RISK` | Block send on high heuristic spam risk (default on; set `0` to disable) |
+| `CONTENT_SPAM_BLOCK_MEDIUM_RISK` | Block send on medium risk (default off) |
+| `CAMPAIGN_BOUNCE_PAUSE_RATE` | In-flight campaign hard-bounce rate pause threshold (default `0.05`) |
+| `CAMPAIGN_BOUNCE_PAUSE_MIN_ATTEMPTS` | Min attempts before bounce pause (default `20`) |
 | `TRUST_TIER_NEW_DAILY_LIMIT` | Daily cap for new tier (default `30`) |
 | `TRUST_TIER_ESTABLISHED_DAILY_LIMIT` | Daily cap when established (default `50000`) |
 | `TRUST_TIER_RESTRICTED_DAILY_LIMIT` | Daily cap when restricted (default `5`) |

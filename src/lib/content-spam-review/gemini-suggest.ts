@@ -81,7 +81,10 @@ Rules:
 - Ensure the body has at least 2-3 short paragraphs of useful context (not attachment-only)
 - Preserve any {{{merge_tag}}} placeholders exactly
 - Do not add fake legal text or misleading claims
-- Subject under 80 characters if possible
+- Do not use Re:/Fwd: prefixes unless the original had them legitimately
+- Avoid URL shorteners; use full https:// links if links are needed
+- No hidden HTML (display:none, font-size:0)
+- Subject under 78 characters if possible
 
 Sender name: ${input.senderName || "(not set)"}
 Heuristic spam risk score (0-100): ${input.heuristicScore}

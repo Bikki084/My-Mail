@@ -40,7 +40,7 @@
     "gmail:exchange-code": "tsx scripts/gmail-api-exchange-code.ts",
     "gmail:send-test": "tsx scripts/gmail-api-send-test.ts",
     "db:migrate:wallet": "tsx scripts/apply-migrations.ts --only=20260428120000_wallet_and_plans.sql",
-    "test": "node --import tsx --test src/lib/content-quality-validation.test.ts src/lib/attachment-security.test.ts src/lib/trust-tier/evaluate.test.ts src/lib/content-spam-review/rescore-limit.test.ts"
+    "test": "node --import tsx --test src/lib/content-quality-validation.test.ts src/lib/attachment-security.test.ts src/lib/trust-tier/evaluate.test.ts src/lib/content-spam-review/rescore-limit.test.ts src/lib/content-spam-review/heuristics.test.ts src/lib/campaign-bounce-guard.test.ts"
   },
   "dependencies": {
     "@aws-sdk/client-ec2": "^3.1062.0",

@@ -49,6 +49,12 @@ import {
   pauseActiveCampaignsForDeliverabilityGuard,
   recordDeliverabilitySignal,
 } from "@/lib/deliverability-guard";
+import {
+  formatCampaignBouncePauseMessage,
+  pauseCampaignForBounceSpike,
+  shouldPauseCampaignForBounceSpike,
+} from "@/lib/campaign-bounce-guard";
+import { campaignBouncePauseRate } from "@/lib/anti-spam-config";
 
 type SmtpRow = {
   id: string;
@@ -164,6 +170,7 @@ export type ParallelDeliveryResult = {
   sentInBurst: number;
   failedInBurst: number;
   pausedForRotation: boolean;
+  pausedForBounce: boolean;
   ipHistory: IpHistoryEntry[];
 };
 
@@ -222,6 +229,7 @@ export async function deliverCampaignInParallel(
     sentInBurst: 0,
     failedInBurst: 0,
     pausedForRotation: false,
+    pausedForBounce: false,
     ipHistory: params.ipHistory,
     rotationThreshold,
     recipientsTotal: recipients.length,
@@ -230,10 +238,11 @@ export async function deliverCampaignInParallel(
     smtpReconnectGeneration: 0,
     liveSent: 0,
     liveFailed: 0,
+    liveBounced: 0,
     lastProgressFlushAt: 0,
   };
 
-  const [existingSentRes, existingFailedRes] = await Promise.all([
+  const [existingSentRes, existingFailedRes, existingBouncedRes] = await Promise.all([
     supabase
       .from("sending_logs")
       .select("id", { count: "exact", head: true })
@@ -243,10 +252,16 @@ export async function deliverCampaignInParallel(
       .from("sending_logs")
       .select("id", { count: "exact", head: true })
       .eq("campaign_id", campaignId)
-      .in("status", ["failed", "bounced"]),
+      .eq("status", "failed"),
+    supabase
+      .from("sending_logs")
+      .select("id", { count: "exact", head: true })
+      .eq("campaign_id", campaignId)
+      .eq("status", "bounced"),
   ]);
   shared.liveSent = existingSentRes.count ?? 0;
-  shared.liveFailed = existingFailedRes.count ?? 0;
+  shared.liveFailed = (existingFailedRes.count ?? 0) + (existingBouncedRes.count ?? 0);
+  shared.liveBounced = existingBouncedRes.count ?? 0;
 
   async function flushCampaignProgress(force = false): Promise<void> {
     // Always persist buffered sending_logs first so failed rows are never lost
@@ -363,6 +378,31 @@ export async function deliverCampaignInParallel(
     });
   }
 
+  async function maybePauseForBounceSpike(): Promise<void> {
+    if (shared.pausedForBounce) return;
+    if (
+      !shouldPauseCampaignForBounceSpike(shared.liveSent, shared.liveBounced)
+    ) {
+      return;
+    }
+    await withStatsLock(async () => {
+      if (shared.pausedForBounce) return;
+      if (
+        !shouldPauseCampaignForBounceSpike(shared.liveSent, shared.liveBounced)
+      ) {
+        return;
+      }
+      shared.pausedForBounce = true;
+      shared.pausedForRotation = true;
+      const msg = formatCampaignBouncePauseMessage(
+        shared.liveSent,
+        shared.liveBounced,
+        campaignBouncePauseRate(),
+      );
+      await pauseCampaignForBounceSpike(supabase, campaignId, userId, msg);
+    });
+  }
+
   async function runSmtpWorker(smtpIndex: number, smtp: SmtpRow): Promise<void> {
     const queue = partitions.get(smtpIndex) ?? [];
     if (queue.length === 0) return;
@@ -439,6 +479,7 @@ export async function deliverCampaignInParallel(
       emailKey: string,
       errorMessage: string,
       smtpUsed: string | null = smtpLabel,
+      logStatus: "failed" | "bounced" = "failed",
     ): Promise<void> {
       shared.alreadySent.add(emailKey);
       await recordFailedSend();
@@ -447,18 +488,22 @@ export async function deliverCampaignInParallel(
         user_id: userId,
         recipient_email: recipient.email,
         smtp_used: smtpUsed,
-        status: "failed",
+        status: logStatus,
         error_message: errorMessage.slice(0, 2000),
         sent_at: new Date().toISOString(),
       });
       shared.liveFailed += 1;
+      if (logStatus === "bounced") {
+        shared.liveBounced += 1;
+        void maybePauseForBounceSpike();
+      }
       void flushCampaignProgress();
     }
 
     async function sendOne({ recipient }: { recipient: RecipientRow }): Promise<void> {
       // Pause/cancel leaves remaining recipients for a later resume — do not
       // invent failure rows for unattempted addresses.
-      if (shared.pausedForRotation) return;
+      if (shared.pausedForRotation || shared.pausedForBounce) return;
       if (shouldAbort && (await shouldAbort())) return;
 
       const emailKey = recipient.email.trim().toLowerCase();
@@ -626,7 +671,14 @@ export async function deliverCampaignInParallel(
             await pauseActiveCampaignsForDeliverabilityGuard(supabase, trip.reason);
           }
         }
-        await logFailedRecipient(recipient, emailKey, errMsg);
+        const isHardBounce = signal === "hard_bounce";
+        await logFailedRecipient(
+          recipient,
+          emailKey,
+          errMsg,
+          smtpLabel,
+          isHardBounce ? "bounced" : "failed",
+        );
       }
     }
 
@@ -660,6 +712,7 @@ export async function deliverCampaignInParallel(
     sentInBurst: shared.sentInBurst,
     failedInBurst: shared.failedInBurst,
     pausedForRotation: shared.pausedForRotation,
+    pausedForBounce: shared.pausedForBounce,
     ipHistory: shared.ipHistory,
   };
 }

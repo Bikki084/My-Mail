@@ -81,9 +81,20 @@ export async function reviewCampaignContent(input: {
     });
     if (gemini.ok) {
       aiUsed = true;
+      const rescore = analyzeContentHeuristics({
+        subject: gemini.suggestedSubject,
+        bodyHtml: gemini.suggestedHtml,
+        senderName,
+      });
       suggestedSubject = gemini.suggestedSubject;
       suggestedHtml = gemini.suggestedHtml;
       summary = gemini.summary;
+      if (rescore.level === "high" && heuristics.level !== "high") {
+        aiNote =
+          "AI rewrite still shows high spam risk — edit further before sending at scale.";
+      } else if (rescore.score < heuristics.score) {
+        summary = `${gemini.summary} Risk reduced after rewrite.`;
+      }
     } else {
       aiNote = gemini.reason;
     }
