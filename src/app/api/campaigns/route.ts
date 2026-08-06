@@ -20,6 +20,10 @@ import {
   runCampaignContentGuards,
   runContentSpamRiskGuard,
 } from "@/lib/campaign-send-guards";
+import {
+  assertSendingAllowed,
+  formatDeliverabilityPauseMessage,
+} from "@/lib/deliverability-guard";
 import type { z } from "zod";
 
 const MAX_ATTACHMENTS = MAX_CAMPAIGN_ATTACHMENTS;
@@ -66,6 +70,18 @@ export async function POST(req: Request) {
   if (intentSend) {
     const planBlock = await requireActivePlanForMailOrJson(supabase, user.id);
     if (planBlock) return planBlock;
+
+    const deliverabilityBlock = await assertSendingAllowed();
+    if (!deliverabilityBlock.ok) {
+      return NextResponse.json(
+        {
+          error: formatDeliverabilityPauseMessage(deliverabilityBlock.status),
+          deliverabilityPaused: true,
+          pausedUntil: deliverabilityBlock.status.pausedUntil,
+        },
+        { status: 503 },
+      );
+    }
   }
 
   const contentType = (req.headers.get("content-type") || "").toLowerCase();

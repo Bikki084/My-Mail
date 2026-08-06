@@ -2,6 +2,7 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { formatCampaignBouncePauseMessage } from "@/lib/campaign-bounce-guard-logic";
+import { freezeAllSendingForReputation } from "@/lib/deliverability-guard";
 import { evaluateAndUpdateTrustTier } from "@/lib/trust-tier/service";
 
 export {
@@ -26,6 +27,11 @@ export async function pauseCampaignForBounceSpike(
       updated_at: now,
     })
     .eq("id", campaignId);
+
+  await freezeAllSendingForReputation(
+    supabase,
+    `Hard bounce spike detected — ${message}`,
+  );
 
   void evaluateAndUpdateTrustTier(supabase, userId);
 

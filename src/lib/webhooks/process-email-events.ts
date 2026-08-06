@@ -8,8 +8,8 @@ import {
 } from "@/lib/webhooks/email-events";
 import { addSuppression } from "@/lib/recipient-suppression";
 import {
+  freezeAllSendingForReputation,
   mapWebhookEventToSignal,
-  pauseActiveCampaignsForDeliverabilityGuard,
   recordDeliverabilitySignal,
 } from "@/lib/deliverability-guard";
 import { evaluateAndUpdateTrustTier } from "@/lib/trust-tier/service";
@@ -117,7 +117,7 @@ export async function processInboundEmailEvents(
         detail: `${event.provider}:${event.eventType}:${event.recipientEmail}`,
       });
       if (trip.paused && trip.reason) {
-        await pauseActiveCampaignsForDeliverabilityGuard(supabase, trip.reason);
+        await freezeAllSendingForReputation(supabase, trip.reason);
       }
     }
 

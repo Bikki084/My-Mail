@@ -6,6 +6,10 @@ import { resolveCampaignSendMode } from "@/lib/queue/send-mode";
 import { requireActivePlanForMailOrJson } from "@/lib/active-plan-guard";
 import { getOrCreateOutboundIp } from "@/lib/outbound-ip";
 import { maxSyncCampaignRecipients } from "@/lib/campaign-sync-limits";
+import {
+  assertSendingAllowed,
+  formatDeliverabilityPauseMessage,
+} from "@/lib/deliverability-guard";
 type Params = { params: Promise<{ id: string }> };
 
 /**
@@ -32,6 +36,18 @@ export async function POST(_req: Request, { params }: Params) {
   const planBlock = await requireActivePlanForMailOrJson(supabase, user.id);
   if (planBlock) return planBlock;
 
+  const deliverabilityBlock = await assertSendingAllowed();
+  if (!deliverabilityBlock.ok) {
+    return NextResponse.json(
+      {
+        error: formatDeliverabilityPauseMessage(deliverabilityBlock.status),
+        deliverabilityPaused: true,
+        pausedUntil: deliverabilityBlock.status.pausedUntil,
+      },
+      { status: 503 },
+    );
+  }
+
   const { data: campaign, error: cErr } = await supabase
     .from("campaigns")
     .select(
@@ -49,6 +65,17 @@ export async function POST(_req: Request, { params }: Params) {
     return NextResponse.json(
       { error: `Campaign is ${campaign.status}, not paused — nothing to resume.` },
       { status: 409 },
+    );
+  }
+
+  if (campaign.pause_reason === "deliverability_guard") {
+    return NextResponse.json(
+      {
+        error:
+          "This campaign was paused by the deliverability guard. All sending is frozen for ~7 hours — wait for the cooldown before resuming.",
+        deliverabilityPaused: true,
+      },
+      { status: 503 },
     );
   }
 

@@ -4,21 +4,25 @@ import IORedis from "ioredis";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { parsePositiveIntEnv } from "@/lib/async-pool";
 import { isRedisCircuitOpen } from "@/lib/circuit-breaker";
+import type { DeliverabilitySignal } from "@/lib/deliverability-guard-types";
+import {
+  classifySmtpErrorForGuard,
+  computeCompositeScore,
+  compositePauseThreshold,
+  formatPlatformFreezeReason,
+  mapWebhookEventToSignal,
+  perSignalThresholds,
+  shouldTripCompositePause,
+} from "@/lib/deliverability-guard-logic";
+
+export type { DeliverabilitySignal } from "@/lib/deliverability-guard-types";
+export { classifySmtpErrorForGuard, mapWebhookEventToSignal };
 
 /**
  * Platform-wide send pause when reputation signals spike (spam reports, blocks,
- * bounces, SMTP spam rejects). ESPs do NOT report silent spam-folder placement —
- * this reacts to the earliest signals available before account suspension.
+ * bounces, SMTP spam rejects, ESP account warnings). Freezes all sending for
+ * DELIVERABILITY_PAUSE_HOURS (default 7) before the ESP suspends the account.
  */
-
-export type DeliverabilitySignal =
-  | "spam_report"
-  | "blocked"
-  | "hard_bounce"
-  | "soft_bounce"
-  | "deferred"
-  | "dropped"
-  | "smtp_spam_reject";
 
 export type DeliverabilityPauseStatus = {
   paused: boolean;
@@ -52,18 +56,6 @@ function windowMs(): number {
   return parsePositiveIntEnv("DELIVERABILITY_SIGNAL_WINDOW_MINUTES", 60) * 60_000;
 }
 
-function thresholds(): Record<DeliverabilitySignal, number> {
-  return {
-    spam_report: parsePositiveIntEnv("DELIVERABILITY_SPAM_REPORT_THRESHOLD", 2),
-    blocked: parsePositiveIntEnv("DELIVERABILITY_BLOCKED_THRESHOLD", 4),
-    hard_bounce: parsePositiveIntEnv("DELIVERABILITY_HARD_BOUNCE_THRESHOLD", 8),
-    soft_bounce: parsePositiveIntEnv("DELIVERABILITY_SOFT_BOUNCE_THRESHOLD", 15),
-    deferred: parsePositiveIntEnv("DELIVERABILITY_DEFERRED_THRESHOLD", 20),
-    dropped: parsePositiveIntEnv("DELIVERABILITY_DROPPED_THRESHOLD", 5),
-    smtp_spam_reject: parsePositiveIntEnv("DELIVERABILITY_SMTP_SPAM_REJECT_THRESHOLD", 3),
-  };
-}
-
 let redis: IORedis | null = null;
 
 function getRedis(): IORedis | null {
@@ -86,43 +78,6 @@ function pruneLocal(now: number): void {
   const cutoff = now - windowMs();
   while (localEvents.length > 0 && localEvents[0]!.ts < cutoff) {
     localEvents.shift();
-  }
-}
-
-/** Classify SMTP failure text for reputation guard signals. */
-export function classifySmtpErrorForGuard(message: string): DeliverabilitySignal | null {
-  const m = message.toLowerCase();
-  if (
-    /spam|junk folder|unsolicited|blacklist|block list|reputation|5\.7\.1|5\.7\.0|554|policy reject|content rejected|abuse|complaint/.test(
-      m,
-    )
-  ) {
-    return "smtp_spam_reject";
-  }
-  if (/bounce|550 5\.1|551|552|553|user unknown|mailbox unavailable|does not exist|invalid recipient/.test(m)) {
-    return "hard_bounce";
-  }
-  return null;
-}
-
-export function mapWebhookEventToSignal(eventType: string): DeliverabilitySignal | null {
-  switch (eventType) {
-    case "spam_report":
-      return "spam_report";
-    case "blocked":
-      return "blocked";
-    case "hard_bounce":
-      return "hard_bounce";
-    case "soft_bounce":
-      return "soft_bounce";
-    case "dropped":
-      return "dropped";
-    case "dropped":
-      return "dropped";
-    case "deferred":
-      return "deferred";
-    default:
-      return null;
   }
 }
 
@@ -189,6 +144,34 @@ function countSignalsInWindow(
   return counts;
 }
 
+async function readAllSignalCounts(
+  now: number,
+): Promise<Partial<Record<DeliverabilitySignal, number>>> {
+  const r = getRedis();
+  const out: Partial<Record<DeliverabilitySignal, number>> = {};
+  const signals = Object.keys(perSignalThresholds()) as DeliverabilitySignal[];
+
+  if (r) {
+    try {
+      const keys = signals.map((s) => countKey(s));
+      const values = await r.mget(...keys);
+      for (let i = 0; i < signals.length; i++) {
+        const n = parseInt(values[i] ?? "0", 10);
+        if (n > 0) out[signals[i]!] = n;
+      }
+      return out;
+    } catch {
+      // fall through to local
+    }
+  }
+
+  const local = countSignalsInWindow(localEvents, now);
+  for (const [signal, count] of local) {
+    out[signal] = count;
+  }
+  return out;
+}
+
 async function activatePause(reason: string): Promise<void> {
   const until = Date.now() + pauseHours() * 60 * 60_000;
   localPausedUntil = until;
@@ -213,12 +196,65 @@ async function activatePause(reason: string): Promise<void> {
   }
 
   console.error(
-    `[deliverability-guard] ALL SENDS PAUSED until ${new Date(until).toISOString()} — ${reason}`,
+    `[deliverability-guard] ALL SENDS FROZEN ${pauseHours()}h until ${new Date(until).toISOString()} — ${reason}`,
   );
 }
 
 /**
- * Record a negative deliverability signal. May trip a platform-wide pause.
+ * Freeze all platform sending for DELIVERABILITY_PAUSE_HOURS and pause in-flight campaigns.
+ * Call when reputation signals spike — before the ESP (SendGrid) suspends the account.
+ */
+export async function freezeAllSendingForReputation(
+  supabase: SupabaseClient | null,
+  reason: string,
+): Promise<void> {
+  if (!guardEnabled()) return;
+
+  const existing = await getDeliverabilityPauseStatus();
+  if (!existing.paused) {
+    await activatePause(reason);
+  }
+
+  if (supabase) {
+    await pauseActiveCampaignsForDeliverabilityGuard(supabase, reason);
+  }
+}
+
+async function evaluateTripAfterSignal(
+  signal: DeliverabilitySignal,
+  count: number,
+  now: number,
+  meta?: { userId?: string | null; campaignId?: string | null; detail?: string },
+): Promise<{ paused: boolean; reason?: string }> {
+  const limits = perSignalThresholds();
+  const limit = limits[signal];
+
+  if (count >= limit) {
+    const reason = formatPlatformFreezeReason({
+      signal,
+      count,
+      limit,
+      detail: meta?.detail,
+    });
+    return { paused: true, reason };
+  }
+
+  const allCounts = await readAllSignalCounts(now);
+  const composite = computeCompositeScore(allCounts);
+  if (shouldTripCompositePause(composite)) {
+    const reason = formatPlatformFreezeReason({
+      compositeScore: composite,
+      compositeLimit: compositePauseThreshold(),
+      detail: meta?.detail,
+    });
+    return { paused: true, reason };
+  }
+
+  return { paused: false };
+}
+
+/**
+ * Record a negative deliverability signal. May trip a platform-wide 7h freeze.
  */
 export async function recordDeliverabilitySignal(
   signal: DeliverabilitySignal,
@@ -230,9 +266,7 @@ export async function recordDeliverabilitySignal(
   if (existing.paused) return { paused: true, reason: existing.reason ?? undefined };
 
   const now = Date.now();
-  const entry = { ts: now, signal };
-
-  localEvents.push(entry);
+  localEvents.push({ ts: now, signal });
   pruneLocal(now);
 
   const r = getRedis();
@@ -245,24 +279,22 @@ export async function recordDeliverabilitySignal(
         await r.pexpire(key, windowMs());
       }
     } catch {
-      count = (countSignalsInWindow(localEvents, now).get(signal) ?? 0);
+      count = countSignalsInWindow(localEvents, now).get(signal) ?? 0;
     }
   } else {
     count = countSignalsInWindow(localEvents, now).get(signal) ?? 0;
   }
 
-  const t = thresholds();
-  const limit = t[signal];
-  if (count >= limit) {
-    const reason = `${count} ${signal.replace(/_/g, " ")} signal(s) in the last ${windowMs() / 60_000} minutes (limit ${limit})`;
-    const full = meta?.detail ? `${reason} — ${meta.detail}` : reason;
-    await activatePause(full);
-    return { paused: true, reason: full };
+  const trip = await evaluateTripAfterSignal(signal, count, now, meta);
+  if (trip.paused && trip.reason) {
+    await activatePause(trip.reason);
+    return trip;
   }
 
   if (meta?.userId || meta?.campaignId) {
+    const limits = perSignalThresholds();
     console.warn(
-      `[deliverability-guard] signal=${signal} user=${meta.userId ?? "?"} campaign=${meta.campaignId ?? "?"} (${count}/${limit})`,
+      `[deliverability-guard] signal=${signal} user=${meta.userId ?? "?"} campaign=${meta.campaignId ?? "?"} (${count}/${limits[signal]})`,
     );
   }
 
@@ -276,8 +308,11 @@ export async function pauseActiveCampaignsForDeliverabilityGuard(
 ): Promise<number> {
   const now = new Date().toISOString();
   const msg =
-    `Sending paused ${pauseHours()}h: deliverability guard triggered (${reason}). ` +
-    "Wait for the cooldown or contact the platform admin.".slice(0, 2000);
+    `Sending frozen ${pauseHours()}h to protect your ESP account (${reason}). ` +
+    "All users must wait for the cooldown — contact the platform admin if this was a mistake.".slice(
+      0,
+      2000,
+    );
 
   const { data, error } = await supabase
     .from("campaigns")
@@ -304,7 +339,7 @@ export function formatDeliverabilityPauseMessage(status: DeliverabilityPauseStat
   }
   const until = new Date(status.pausedUntil).toLocaleString();
   return (
-    `Sending is temporarily paused until ${until} to protect your SMTP account. ` +
+    `All sending is frozen until ${until} (${pauseHours()}h cooldown) to protect your SendGrid/ESP account from suspension. ` +
     (status.reason ? `Reason: ${status.reason}` : "")
   );
 }

@@ -11,7 +11,7 @@
 | Date | Change |
 |------|--------|
 | 2026-08-06 | **Domain cutover:** production app switched back to `bulkfirepro.com` (from `bulkprofire.com`) |
-| 2026-08-06 | **Spam protection hardening:** server blocks high-risk content at send, required spam check in composer, per-campaign bounce spike pause, stronger heuristics + Gemini re-score |
+| 2026-08-06 | **Deliverability freeze hardened:** 1 spam report or ESP account warning freezes all sends 7h; composite score + bounce spike also trigger platform freeze |
 | 2026-08-05 | **Content spam review:** local heuristics + Gemini AI subject/body rewrite suggestions in Email Composer |
 | 2026-08-05 | **Deliverability guard:** auto-pause all sends ~7h on spam report/block/bounce spikes (Redis + Event Webhook) |
 | 2026-08-05 | **Mandatory compose fields:** sender name, subject, and HTML body required to send; attachment-only campaigns blocked (client + API + delivery) |
@@ -162,29 +162,34 @@ Enforced in: `src/lib/campaign-compose-validation.ts`, Zod schema `campaignField
 
 ---
 
-## Deliverability guard (auto-pause)
+## Deliverability guard (auto-pause / freeze)
 
-**Important:** No ESP reports silent spam-folder placement. SendGrid “delivered” only means the recipient server accepted the message — not inbox vs spam. The guard uses the **earliest available reputation signals**:
+**Important:** No ESP reports silent spam-folder placement. SendGrid “delivered” only means the recipient server accepted the message — not inbox vs spam. The guard uses the **earliest available reputation signals** and **freezes all sending for 7 hours** before SendGrid can suspend the account:
 
 | Signal | Source | Default threshold (60 min window) |
 |--------|--------|-----------------------------------|
-| Spam report | Event Webhook | 2 |
-| Blocked | Event Webhook | 4 |
-| Hard bounce | Webhook + SMTP errors | 8 |
-| SMTP spam reject | Send failure text (550/554/spam) | 3 |
-| Dropped / deferred | Event Webhook | 5 / 20 |
+| Spam report | Event Webhook | **1** |
+| ESP account risk | SMTP errors (suspended, disabled) | **1** |
+| Blocked | Event Webhook | **2** |
+| Hard bounce | Webhook + SMTP errors | **5** |
+| SMTP spam reject | Send failure text (550/554/spam) | **2** |
+| Dropped / deferred | Event Webhook | **3** / **15** |
 
-When tripped → **all sends paused** for `DELIVERABILITY_PAUSE_HOURS` (default **7**). Active campaigns → `paused` with `pause_reason=deliverability_guard`.
+**Composite score:** weighted sum of all signals in the window (spam=10, esp risk=15, block=6, …). Trips at **12** points by default — catches mixed bad signals early.
 
-**Per-campaign bounce pause:** during send, if hard-bounce rate ≥ `CAMPAIGN_BOUNCE_PAUSE_RATE` (default **5%**) after `CAMPAIGN_BOUNCE_PAUSE_MIN_ATTEMPTS` (default **20**) attempts → campaign `paused` with `pause_reason=bounce_spike`. Code: `src/lib/campaign-bounce-guard.ts`
+When tripped → **all sends frozen** for `DELIVERABILITY_PAUSE_HOURS` (default **7**). Active campaigns → `paused` with `pause_reason=deliverability_guard`. Resume blocked until cooldown ends.
 
-**Requires:** SendGrid Event Webhook configured (`/api/webhooks/email-events`) + Redis on production.
+**Bounce spike → platform freeze:** campaign hard-bounce rate ≥5% also triggers the same 7h platform freeze (not just campaign pause).
+
+**Enforced at:** send API, resume API, campaign create (send intent), worker mid-send (`shouldAbort` every 1s), webhook handler.
+
+**Requires:** SendGrid Event Webhook (`/api/webhooks/email-events`) + **Redis** on production (shared state across web + worker).
 
 **Status API:** `GET /api/deliverability/pause-status`
 
-**Code:** `src/lib/deliverability-guard.ts`
+**Code:** `src/lib/deliverability-guard.ts`, `src/lib/deliverability-guard-logic.ts`
 
-**Env:** `DELIVERABILITY_PAUSE_HOURS`, `DELIVERABILITY_GUARD_DISABLE=1` to turn off.
+**Env:** `DELIVERABILITY_PAUSE_HOURS`, `DELIVERABILITY_GUARD_DISABLE=1` to turn off, `DELIVERABILITY_COMPOSITE_THRESHOLD`, `DELIVERABILITY_*_THRESHOLD`
 
 ---
 
@@ -386,9 +391,15 @@ Governor: `src/lib/send-governor.ts` — disable with `SEND_GOVERNOR_DISABLE=1` 
 | `PUPPETEER_EXECUTABLE_PATH` | `/usr/bin/chromium` on VPS for PDF attachments |
 | `EMAIL_WEBHOOK_SECRET` | Shared secret for inbound bounce/spam webhooks (`X-Webhook-Secret` header) |
 | `RECIPIENT_MX_CACHE_TTL_HOURS` | Optional MX DNS cache TTL (default 168h) |
-| `DELIVERABILITY_PAUSE_HOURS` | Hours to pause all sends after reputation spike (default `7`) |
-| `DELIVERABILITY_GUARD_DISABLE` | Set `1` to disable auto-pause guard |
+| `DELIVERABILITY_PAUSE_HOURS` | Hours to freeze all sends after reputation spike (default `7`) |
+| `DELIVERABILITY_GUARD_DISABLE` | Set `1` to disable auto-freeze guard |
 | `DELIVERABILITY_SIGNAL_WINDOW_MINUTES` | Rolling window for spike detection (default `60`) |
+| `DELIVERABILITY_COMPOSITE_THRESHOLD` | Weighted score that triggers 7h freeze (default `12`) |
+| `DELIVERABILITY_SPAM_REPORT_THRESHOLD` | Spam reports before freeze (default `1`) |
+| `DELIVERABILITY_ESP_ACCOUNT_RISK_THRESHOLD` | ESP suspension SMTP errors before freeze (default `1`) |
+| `DELIVERABILITY_BLOCKED_THRESHOLD` | Blocked events before freeze (default `2`) |
+| `DELIVERABILITY_HARD_BOUNCE_THRESHOLD` | Hard bounces before freeze (default `5`) |
+| `DELIVERABILITY_SMTP_SPAM_REJECT_THRESHOLD` | SMTP spam rejects before freeze (default `2`) |
 | `GEMINI_API_KEY` | Google AI Studio key for spam-risk content rewrites (free tier) |
 | `GEMINI_CONTENT_REVIEW_MODEL` | Optional Gemini model (default `gemini-2.0-flash`) |
 | `CONTENT_MIN_WORD_COUNT` | Min HTML body words (default `25`) |

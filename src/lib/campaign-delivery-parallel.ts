@@ -46,7 +46,7 @@ import { partitionRecipientsBySmtp } from "@/lib/smtp-distribution";
 import { SendingLogBatcher, type SendingLogInsert } from "@/lib/db/batch-writes";
 import {
   classifySmtpErrorForGuard,
-  pauseActiveCampaignsForDeliverabilityGuard,
+  freezeAllSendingForReputation,
   recordDeliverabilitySignal,
 } from "@/lib/deliverability-guard";
 import {
@@ -668,7 +668,7 @@ export async function deliverCampaignInParallel(
           });
           if (trip.paused && trip.reason) {
             shared.pausedForRotation = true;
-            await pauseActiveCampaignsForDeliverabilityGuard(supabase, trip.reason);
+            await freezeAllSendingForReputation(supabase, trip.reason);
           }
         }
         const isHardBounce = signal === "hard_bounce";
