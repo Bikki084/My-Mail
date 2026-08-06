@@ -21,6 +21,7 @@ import {
 } from "@/lib/content-genuineness";
 import { analyzeContentHeuristics } from "@/lib/content-spam-review/heuristics";
 import { contentGenuinenessGateEnabled } from "@/lib/anti-spam-config";
+import { normalizeMergeTagKeys } from "@/lib/content-spam-review/merge-tags-prompt";
 import { z } from "zod";
 import { formatZodError } from "@/lib/validation";
 
@@ -43,6 +44,8 @@ const bodySchema = z.object({
   sender_name: z.string().max(80),
   use_ai: z.boolean().optional(),
   attachments: z.array(attachmentSchema).max(5).optional(),
+  /** CSV / built-in merge tag keys for AI personalization (e.g. name, email). */
+  merge_tags: z.array(z.string().max(64)).max(40).optional(),
 });
 
 export async function POST(req: Request) {
@@ -147,12 +150,15 @@ export async function POST(req: Request) {
     );
   }
 
+  const mergeTags = normalizeMergeTagKeys(parsed.data.merge_tags);
+
   const genuineness = await runGenuinenessReview(
     {
       subject: parsed.data.subject,
       bodyHtml: parsed.data.body_html,
       senderName: parsed.data.sender_name,
       attachments,
+      mergeTags,
     },
     { useAi: parsed.data.use_ai },
   );

@@ -101,6 +101,7 @@ export async function runGenuinenessReview(
       plainBody,
       attachmentText: attachmentCombined || null,
       feedback,
+      mergeTags: input.mergeTags ?? [],
     });
     if (gemini.ok) {
       const sources = `${subject}\n${plainBody}\n${attachmentCombined}`;

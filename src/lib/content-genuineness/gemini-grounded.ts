@@ -2,6 +2,7 @@ import "server-only";
 
 import { rewriteIntroducesUngroundedClaims } from "@/lib/content-genuineness/grounding";
 import type { GenuinenessFeedback } from "@/lib/content-genuineness/types";
+import { mergeTagsPromptSection } from "@/lib/content-spam-review/merge-tags-prompt";
 
 export type GroundedRewriteResult =
   | {
@@ -60,6 +61,7 @@ export async function suggestGroundedRewrite(input: {
   plainBody: string;
   attachmentText: string | null;
   feedback: GenuinenessFeedback[];
+  mergeTags?: string[];
 }): Promise<GroundedRewriteResult> {
   const apiKey = geminiApiKey();
   if (!apiKey) {
@@ -68,16 +70,20 @@ export async function suggestGroundedRewrite(input: {
 
   const feedbackList =
     input.feedback.map((f) => `- [${f.category}] ${f.message}`).join("\n") || "- none";
+  const mergeTags = input.mergeTags ?? [];
 
-  const prompt = `You help writers pass email deliverability review. Rewrite ONLY based on facts present in the user's draft and/or attachment excerpt.
+  const prompt = `You help writers pass email deliverability review. Rewrite ONLY based on facts present in the user's draft and/or attachment excerpt. Personalize with available recipient merge tags.
 
 CRITICAL GROUNDING RULES:
 - Do NOT invent products, prices, offers, deadlines, prizes, credentials, or claims absent from the source text/attachment.
 - Do NOT add marketing hype, urgency, or clickbait.
-- Rephrase for clarity and professionalism; preserve {{{merge_tags}}} exactly.
-- If the body is empty/minimal but attachment text exists, draft a short genuine subject + body that accurately summarizes what the attachment contains (who/what/why) — still no invented claims.
+- Preserve {{{merge_tags}}} already in the draft exactly.
+- Where natural, include available merge tags (greeting with name, referencing email, etc.).
+- If the body is empty/minimal but attachment text exists, draft a short genuine subject + body that accurately summarizes what the attachment contains (who/what/why) — still no invented claims — and personalize with merge tags when available.
 - Return HTML body with simple <p> tags only.
 - Subject under 78 characters.
+
+${mergeTagsPromptSection(mergeTags)}
 
 Return ONLY valid JSON:
 {"summary":"...","suggestedSubject":"...","suggestedHtml":"..."}

@@ -11,7 +11,7 @@
 | Date | Change |
 |------|--------|
 | 2026-08-06 | **Domain cutover:** production app switched back to `bulkfirepro.com` (from `bulkprofire.com`) |
-| 2026-08-06 | **Pre-send genuineness gate:** mandatory subject/body/attachment review; Send locked until pass token; grounded Gemini rewrite; audit table |
+| 2026-08-06 | **AI merge tags:** Gemini spam-free / genuineness rewrites personalize with CSV + built-in tags (`{{{name}}}`, `{{{email}}}`, …) |
 | 2026-08-05 | **Content spam review:** local heuristics + Gemini AI subject/body rewrite suggestions in Email Composer |
 | 2026-08-05 | **Deliverability guard:** auto-pause all sends ~7h on spam report/block/bounce spikes (Redis + Event Webhook) |
 | 2026-08-05 | **Mandatory compose fields:** sender name, subject, and HTML body required to send; attachment-only campaigns blocked (client + API + delivery) |
@@ -201,7 +201,7 @@ Pre-send coach in **Email Composer → Verify content**:
 |-------|----------------|
 | **Local heuristics** | Instant score 0–100: caps, spam phrases, thin body, attachment-only pitch, link count |
 | **Genuineness gate** | Hard pass/fail on subject quality, body specificity, subject↔body alignment, attachment text, body↔attachment relevance |
-| **Gemini AI** (optional) | Grounded rewrite of subject + HTML from draft/PDF text; preserves `{{{merge_tags}}}`; never auto-approved |
+| **Gemini AI** (optional) | Grounded rewrite of subject + HTML from draft/PDF text; personalizes with CSV merge tags (`{{{name}}}`, `{{{email}}}`, …); preserves existing tags; never auto-approved |
 
 **API:** `POST /api/campaigns/content-review` (authenticated)
 

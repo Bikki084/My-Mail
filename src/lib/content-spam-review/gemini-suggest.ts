@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { HeuristicIssue } from "@/lib/content-spam-review/heuristics";
+import { mergeTagsPromptSection } from "@/lib/content-spam-review/merge-tags-prompt";
 
 export type GeminiSuggestionResult = {
   ok: true;
@@ -59,6 +60,7 @@ export async function suggestSpamFreeContentWithGemini(input: {
   plainBody: string;
   heuristicScore: number;
   issues: HeuristicIssue[];
+  mergeTags?: string[];
 }): Promise<GeminiSuggestionResult> {
   const apiKey = geminiApiKey();
   if (!apiKey) {
@@ -66,7 +68,8 @@ export async function suggestSpamFreeContentWithGemini(input: {
   }
 
   const issueList = input.issues.map((i) => `- ${i.message}`).join("\n") || "- none listed";
-  const prompt = `You are an email deliverability expert. Review this bulk/transactional email draft and rewrite it to reduce spam-filter risk while keeping the same intent and merge tags like {{{name}}} unchanged.
+  const mergeTags = input.mergeTags ?? [];
+  const prompt = `You are an email deliverability expert. Review this bulk/transactional email draft and rewrite it to reduce spam-filter risk while keeping the same intent. Personalize naturally with the available recipient merge tags.
 
 Return ONLY valid JSON (no markdown outside the json block) with this shape:
 {
@@ -79,12 +82,15 @@ Rules:
 - Keep a professional, human tone — not salesy or urgent
 - Remove spam trigger words (FREE, ACT NOW, excessive caps, fake urgency)
 - Ensure the body has at least 2-3 short paragraphs of useful context (not attachment-only)
-- Preserve any {{{merge_tag}}} placeholders exactly
+- Preserve any {{{merge_tag}}} placeholders already in the draft exactly
+- Where natural, include available merge tags for personalization (greeting, mailbox confirmation, etc.)
 - Do not add fake legal text or misleading claims
 - Do not use Re:/Fwd: prefixes unless the original had them legitimately
 - Avoid URL shorteners; use full https:// links if links are needed
 - No hidden HTML (display:none, font-size:0)
 - Subject under 78 characters if possible
+
+${mergeTagsPromptSection(mergeTags)}
 
 Sender name: ${input.senderName || "(not set)"}
 Heuristic spam risk score (0-100): ${input.heuristicScore}

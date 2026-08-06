@@ -382,6 +382,7 @@ export function EmailEditor({
           sender_name: composeDraft.senderName,
           use_ai: true,
           attachments: attachmentsPayload,
+          merge_tags: autocompleteTagKeys,
         }),
       });
       const j = (await res.json().catch(() => ({}))) as ContentReviewResult & {

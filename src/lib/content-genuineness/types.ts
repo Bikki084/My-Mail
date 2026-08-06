@@ -43,6 +43,8 @@ export type GenuinenessReviewInput = {
   bodyHtml: string;
   senderName: string;
   attachments?: GenuinenessAttachmentInput[];
+  /** CSV / built-in merge tag keys available for personalization (e.g. name, email). */
+  mergeTags?: string[];
 };
 
 export type GenuinenessInternalIssue = GenuinenessFeedback & {

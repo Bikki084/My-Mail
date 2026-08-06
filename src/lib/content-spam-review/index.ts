@@ -55,11 +55,13 @@ export async function reviewCampaignContent(input: {
   bodyHtml: string;
   senderName: string;
   useAi?: boolean;
+  mergeTags?: string[];
 }): Promise<ContentReviewInternalResult> {
   const subject = input.subject.trim();
   const bodyHtml = input.bodyHtml.trim();
   const senderName = input.senderName.trim();
   const plainBody = htmlToPlainText(bodyHtml);
+  const mergeTags = input.mergeTags ?? [];
 
   const heuristics = analyzeContentHeuristics({ subject, bodyHtml, senderName });
   let suggestedSubject: string | null = null;
@@ -78,6 +80,7 @@ export async function reviewCampaignContent(input: {
       plainBody,
       heuristicScore: heuristics.score,
       issues: heuristics.issues,
+      mergeTags,
     });
     if (gemini.ok) {
       aiUsed = true;
@@ -108,6 +111,7 @@ export async function reviewCampaignContent(input: {
       subject,
       bodyHtml,
       issues: heuristics.issues,
+      mergeTags,
     });
     suggestedSubject = rule.subject ?? null;
     suggestedHtml = rule.bodyHtml ?? null;

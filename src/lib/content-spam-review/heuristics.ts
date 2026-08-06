@@ -214,9 +214,17 @@ export function heuristicSuggestions(input: {
   subject: string;
   bodyHtml: string;
   issues: HeuristicIssue[];
+  mergeTags?: string[];
 }): { subject?: string; bodyHtml?: string } {
   const plain = htmlToPlainText(input.bodyHtml).trim();
   const out: { subject?: string; bodyHtml?: string } = {};
+  const tags = (input.mergeTags ?? []).map((t) => t.trim()).filter(Boolean);
+  const nameKey = tags.find((t) => t.toLowerCase() === "name");
+  const emailKey = tags.find((t) => t.toLowerCase() === "email");
+  const greeting = nameKey ? `Hi {{{${nameKey}}}},` : "Hi,";
+  const emailLine = emailKey
+    ? `<p>This note is for {{{${emailKey}}}}.</p>`
+    : "";
 
   if (input.issues.some((i) => i.code === "subject_all_caps") && input.subject) {
     out.subject = input.subject
@@ -227,15 +235,16 @@ export function heuristicSuggestions(input: {
 
   if (input.issues.some((i) => i.code === "thin_body" || i.code === "attachment_pitch")) {
     const subj = input.subject.trim() || "Message from your sender";
-    out.bodyHtml = `<p>Hi {{{name}}},</p>
-<p>I hope you're doing well. I'm sharing the information below and have included a file for your review.</p>
-<p>If you have any questions, simply reply to this email.</p>
-<p>Thank you,<br>${subj.includes("{{{") ? "{{{name}}}" : "The team"}</p>`;
+    out.bodyHtml = `<p>${greeting}</p>
+<p>I'm sharing the information below and have included a file for your review.</p>
+${emailLine}<p>If you have any questions, simply reply to this email.</p>
+<p>Thank you,<br>${nameKey ? `{{{${nameKey}}}}` : "The team"}</p>`;
+    void subj;
   }
 
   if (input.issues.some((i) => i.code === "empty_body") && !out.bodyHtml) {
-    out.bodyHtml = `<p>Hi {{{name}}},</p>
-<p>Please find the details below.</p>
+    out.bodyHtml = `<p>${greeting}</p>
+${emailLine}<p>Please find the details below.</p>
 <p>Thank you.</p>`;
   }
 
