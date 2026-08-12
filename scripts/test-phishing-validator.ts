@@ -62,9 +62,24 @@ async function testA() {
     mismatches_found: result.mismatches_found,
     flags: result.flags,
     reasoning: result.reasoning,
+    error: result.error,
+    model: result.model,
   });
 
-  assert.equal(result.executed, true, "Gemini must execute for TEST A");
+  if (!result.executed) {
+    console.error(
+      "\nTEST A blocked: Gemini did not return a parseable verdict.\n" +
+        `  error: ${result.error ?? "(none)"}\n` +
+        "  Run: npx tsx scripts/check-gemini-key.ts\n" +
+        "  Common fixes: enable Generative Language API, check key restrictions, set up billing if quota exhausted.\n",
+    );
+  }
+
+  assert.equal(
+    result.executed,
+    true,
+    `Gemini must execute for TEST A — ${result.error ?? "unknown error"}`,
+  );
   assert.equal(result.status, "FAIL", "Known-bad mismatch must FAIL");
   assert.ok(
     result.mismatches_found.length >= 1,
