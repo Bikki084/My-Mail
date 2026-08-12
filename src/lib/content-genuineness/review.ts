@@ -19,7 +19,6 @@ import {
   type CanonicalContentFields,
 } from "@/lib/content-genuineness/canonical-fields";
 import {
-  assertCrossArtifactConsistency,
   assertFinalPersistedConsistency,
   assertPhishingIndicatorSanity,
 } from "@/lib/content-genuineness/consistency";
@@ -28,6 +27,11 @@ import {
   isGroundedRewriteConfigured,
   suggestGroundedRewrite,
 } from "@/lib/content-genuineness/gemini-grounded";
+import {
+  phishingVerdictBlocksSend,
+  runGeminiPhishingValidation,
+  type PhishingValidationResult,
+} from "@/lib/content-genuineness/gemini-phishing-validator";
 import { rewriteIntroducesUngroundedClaims } from "@/lib/content-genuineness/grounding";
 import type {
   GenuinenessFeedback,
@@ -55,6 +59,60 @@ function toPublicFeedback(issues: GenuinenessInternalIssue[]): GenuinenessFeedba
 function attachmentHtmlFromInput(input: GenuinenessReviewInput): string | null {
   const html = input.attachments?.find((a) => a.htmlText?.trim())?.htmlText?.trim();
   return html || null;
+}
+
+function applyPhishingVerdictToIssues(
+  issues: GenuinenessInternalIssue[],
+  verdict: PhishingValidationResult,
+): void {
+  if (!verdict.executed) {
+    issues.push({
+      code: "gemini_verification_error",
+      category: "attachment_mismatch",
+      message:
+        verdict.reasoning ||
+        "Verification could not be completed — send is blocked until this is resolved.",
+      locationHint: "Gemini validator",
+      blocks: true,
+    });
+    if (verdict.error) {
+      issues.push({
+        code: "gemini_api_error",
+        category: "attachment_mismatch",
+        message: verdict.error,
+        blocks: true,
+      });
+    }
+    return;
+  }
+
+  if (phishingVerdictBlocksSend(verdict)) {
+    for (const m of verdict.mismatches_found) {
+      issues.push({
+        code: "phishing_field_mismatch",
+        category: "attachment_mismatch",
+        message: `${m.field}: body "${m.body_value}" vs attachment "${m.attachment_value}"`,
+        locationHint: "Body + attachment",
+        blocks: true,
+      });
+    }
+    for (const flag of verdict.flags) {
+      issues.push({
+        code: "phishing_flag",
+        category: "spam_pattern",
+        message: flag,
+        blocks: true,
+      });
+    }
+    if (verdict.mismatches_found.length === 0 && verdict.flags.length === 0) {
+      issues.push({
+        code: "phishing_verdict_fail",
+        category: "attachment_mismatch",
+        message: verdict.reasoning || "Content failed phishing verification.",
+        blocks: true,
+      });
+    }
+  }
 }
 
 async function runConsistentRewrite(args: {
@@ -110,11 +168,13 @@ async function runConsistentRewrite(args: {
       };
     }
 
-    const consistency = assertCrossArtifactConsistency({
-      canonical: args.canonical,
+    const previewRecipient = buildPreviewRecipientRow(null);
+    const consistency = assertFinalPersistedConsistency({
       subject: gemini.suggestedSubject,
-      bodyHtmlOrText: `${gemini.suggestedHtml}\n${rewritePlain}`,
-      attachmentHtmlOrText: gemini.suggestedAttachmentHtml,
+      bodyHtml: gemini.suggestedHtml,
+      attachmentHtml: gemini.suggestedAttachmentHtml,
+      senderName: args.senderName,
+      previewRecipient,
     });
 
     const phishing = assertPhishingIndicatorSanity({
@@ -127,10 +187,7 @@ async function runConsistentRewrite(args: {
     if (consistency.ok && phishing.ok) {
       console.info("[content-genuineness] apply-ready rewrite", {
         canonicalId: canonicalFieldsAuditId(args.canonical),
-        canonical: args.canonical,
         subject: gemini.suggestedSubject,
-        bodyChars: gemini.suggestedHtml.length,
-        attachmentChars: gemini.suggestedAttachmentHtml?.length ?? 0,
       });
       return {
         ok: true,
@@ -144,11 +201,7 @@ async function runConsistentRewrite(args: {
 
     const parts: string[] = [];
     if (!consistency.ok) {
-      parts.push(
-        ...consistency.mismatches.map(
-          (m) => `- ${m.detail} (expected ${m.expected}; subject=${m.subject ?? "—"} body=${m.body ?? "—"} att=${m.attachment ?? "—"})`,
-        ),
-      );
+      parts.push(...consistency.mismatches.map((m) => `- ${m.detail}`));
     }
     if (!phishing.ok) {
       parts.push(...phishing.reasons.map((r) => `- ${r}`));
@@ -156,16 +209,9 @@ async function runConsistentRewrite(args: {
     retryNote = parts.join("\n");
 
     if (attempt === 1) {
-      console.warn("[content-genuineness] consistency check failed after retry", {
-        canonicalId: canonicalFieldsAuditId(args.canonical),
-        canonical: args.canonical,
-        mismatches: !consistency.ok ? consistency.mismatches : [],
-        phishingReasons: !phishing.ok ? phishing.reasons : [],
-      });
       return {
         ok: false,
-        reason:
-          "Consistency check failed — subject/body/attachment dynamic fields did not match. Please retry.",
+        reason: "Consistency check failed — subject/body/attachment dynamic fields did not match. Please retry.",
         canonicalFields: args.canonical,
       };
     }
@@ -179,8 +225,9 @@ async function runConsistentRewrite(args: {
 }
 
 /**
- * Full pre-send genuineness review. Hard-fail on any blocking issue.
- * AI suggestions are optional assists — never auto-approve.
+ * Full pre-send genuineness review.
+ * PASS requires a successful Gemini 2.5 Flash phishing verdict with status PASS
+ * and empty mismatches_found — never a heuristic-only rubber stamp.
  */
 export async function runGenuinenessReview(
   input: GenuinenessReviewInput,
@@ -192,10 +239,15 @@ export async function runGenuinenessReview(
   const plainBody = htmlToPlainText(bodyHtml).trim();
   const mergeTags = input.mergeTags ?? [];
   const attachmentHtml = attachmentHtmlFromInput(input);
+  const expectAttachment = input.expectAttachment === true;
 
   const { combined: attachmentCombined, perFile } = await collectAttachmentTexts(
     input.attachments,
   );
+
+  const attachmentPlain =
+    attachmentCombined.trim() ||
+    (attachmentHtml ? htmlToPlainText(attachmentHtml).trim() : "");
 
   const issues: GenuinenessInternalIssue[] = [
     ...checkSubjectGenuineness(subject),
@@ -204,10 +256,21 @@ export async function runGenuinenessReview(
     ...checkSenderTrust(senderName),
     ...checkHeuristicHardBlocks({ subject, bodyHtml, senderName }),
     ...checkAttachmentContent(perFile),
-    ...checkBodyAttachmentRelevance(plainBody, attachmentCombined),
+    ...checkBodyAttachmentRelevance(plainBody, attachmentPlain),
   ];
 
-  if (attachmentCombined && plainBody.split(/\s+/).filter(Boolean).length < 15) {
+  if (expectAttachment && !attachmentPlain) {
+    issues.push({
+      code: "attachment_missing_for_verify",
+      category: "attachment_mismatch",
+      message:
+        "An attachment is configured but no attachment text was provided for verification — send is blocked.",
+      locationHint: "Attachment",
+      blocks: true,
+    });
+  }
+
+  if (attachmentPlain && plainBody.split(/\s+/).filter(Boolean).length < 15) {
     issues.push({
       code: "thin_body_with_attachment",
       category: "body_quality",
@@ -218,8 +281,8 @@ export async function runGenuinenessReview(
     });
   }
 
-  // HARD gate: final persisted subject + body + attachment must have matching dynamic fields.
-  if (attachmentHtml || attachmentCombined) {
+  // Regex consistency backup (blocks before/alongside Gemini).
+  if (expectAttachment && attachmentPlain) {
     const previewRecipient = buildPreviewRecipientRow(input.previewRecipientEmail);
     const finalCheck = assertFinalPersistedConsistency({
       subject,
@@ -233,15 +296,24 @@ export async function runGenuinenessReview(
         issues.push({
           code: "field_consistency_mismatch",
           category: "attachment_mismatch",
-          message:
-            m.detail ||
-            "Could not verify consistency between email and attachment — please retry.",
+          message: m.detail,
           locationHint: "Body + attachment",
           blocks: true,
         });
       }
     }
   }
+
+  // MANDATORY Gemini 2.5 Flash phishing validation — never default PASS.
+  const phishingVerdict = await runGeminiPhishingValidation({
+    subject,
+    bodyPlain: plainBody,
+    attachmentPlain,
+    senderName,
+    hasAttachment: expectAttachment || Boolean(attachmentPlain),
+  });
+
+  applyPhishingVerdictToIssues(issues, phishingVerdict);
 
   const blocking = issues.filter((i) => i.blocks);
   const passed = blocking.length === 0;
@@ -253,16 +325,27 @@ export async function runGenuinenessReview(
   let canonicalFields: CanonicalContentFields | null = null;
   let aiUsed = false;
   let aiNote: string | null = null;
-  let summary = passed
-    ? "Content passed genuineness review — Send is unlocked for this message version."
-    : "Content did not pass review — fix the issues below or use AI-assisted rewrite, then re-check.";
 
-  const wantAi = opts?.useAi !== false && (!passed || (attachmentCombined && !plainBody));
+  let summary: string;
+  if (!phishingVerdict.executed) {
+    summary =
+      "Verification could not be completed — send is blocked until this is resolved.";
+  } else if (phishingVerdict.status === "PASS" && passed) {
+    summary = phishingVerdict.reasoning || "Content passed phishing verification.";
+  } else if (phishingVerdict.status === "FAIL" || !passed) {
+    summary =
+      phishingVerdict.reasoning ||
+      "Content did not pass phishing verification — fix issues and re-check.";
+  } else {
+    summary = "Content did not pass review — fix the issues below, then re-check.";
+  }
+
+  const wantAi = opts?.useAi !== false && !passed;
   if (wantAi && isGroundedRewriteConfigured()) {
     const canonical = buildCanonicalContentFields({
       subject,
       plainBody,
-      attachmentText: attachmentCombined || null,
+      attachmentText: attachmentPlain || null,
       senderName,
       mergeTags,
     });
@@ -273,7 +356,7 @@ export async function runGenuinenessReview(
       bodyHtml,
       senderName,
       plainBody,
-      attachmentCombined,
+      attachmentCombined: attachmentPlain,
       attachmentHtml,
       feedback,
       mergeTags,
@@ -285,33 +368,34 @@ export async function runGenuinenessReview(
       suggestedSubject = rewrite.suggestedSubject;
       suggestedHtml = rewrite.suggestedHtml;
       suggestedAttachmentHtml = rewrite.suggestedAttachmentHtml;
-      summary = passed ? summary : rewrite.summary;
     } else {
       aiNote = rewrite.reason;
     }
   } else if (wantAi && !isGroundedRewriteConfigured()) {
-    aiNote = "Add GEMINI_API_KEY for AI-assisted grounded rewrites.";
-  }
-
-  const blockingFinal = issues.filter((i) => i.blocks);
-  const passedFinal = blockingFinal.length === 0;
-  if (!passedFinal && blockingFinal.some((i) => i.code === "field_consistency_mismatch")) {
-    summary = "Could not verify consistency between email and attachment — please retry.";
+    aiNote = "Add GEMINI_API_KEY for AI-assisted rewrites.";
   }
 
   return {
-    passed: passedFinal,
-    feedback: toPublicFeedback(issues),
+    passed,
+    feedback,
     issues,
     summary,
-    attachmentTextExcerpt: attachmentCombined
-      ? attachmentCombined.slice(0, 2000)
-      : null,
+    attachmentTextExcerpt: attachmentPlain ? attachmentPlain.slice(0, 2000) : null,
     suggestedSubject,
     suggestedHtml,
     suggestedAttachmentHtml,
     canonicalFields,
     aiUsed,
     aiNote,
+    phishingVerdict: {
+      executed: phishingVerdict.executed,
+      status: phishingVerdict.status,
+      mismatches_found: phishingVerdict.mismatches_found,
+      flags: phishingVerdict.flags,
+      reasoning: phishingVerdict.reasoning,
+      rawResponse: phishingVerdict.rawResponse,
+      model: phishingVerdict.model,
+      error: phishingVerdict.error,
+    },
   };
 }

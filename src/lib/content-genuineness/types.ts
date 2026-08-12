@@ -49,6 +49,19 @@ export type GenuinenessReviewInput = {
   mergeTags?: string[];
   /** First CSV recipient email — expands merge tags for final consistency validation. */
   previewRecipientEmail?: string;
+  /** When true, attachment text is required and Gemini validates body vs attachment together. */
+  expectAttachment?: boolean;
+};
+
+export type PhishingVerdictPublic = {
+  executed: boolean;
+  status: "PASS" | "FAIL" | "ERROR";
+  mismatches_found: { field: string; body_value: string; attachment_value: string }[];
+  flags: string[];
+  reasoning: string;
+  rawResponse: string | null;
+  model: string | null;
+  error: string | null;
 };
 
 export type GenuinenessInternalIssue = GenuinenessFeedback & {
@@ -72,4 +85,6 @@ export type GenuinenessReviewResult = {
   canonicalFields: CanonicalContentFields | null;
   aiUsed: boolean;
   aiNote: string | null;
+  /** Gemini 2.5 Flash phishing verdict — PASS required to unlock send. */
+  phishingVerdict: PhishingVerdictPublic;
 };

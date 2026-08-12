@@ -2,7 +2,7 @@
 
 > **Purpose:** Single source of truth for AI agents and developers. Read this file **before** scanning the whole repo.  
 > **Maintainers:** Update this file whenever you add features, change limits, deploy steps, or infra — same as you would commit code.  
-> **Last updated:** 2026-08-12
+> **Last updated:** 2026-08-13
 
 ---
 
@@ -10,7 +10,7 @@
 
 | Date | Change |
 |------|--------|
-| 2026-08-12 | **SendGrid quota:** Refresh resets circuit; `.env.local` overwrites stale `SENDGRID_API_KEY` on restart; clearer 401 errors |
+| 2026-08-13 | **Phishing validator rebuild:** mandatory Gemini 2.5 Flash pass/fail gate (subject+body+attachment); no default PASS on error; Manual vs AI-Generate compose modes; blank default compose |
 | 2026-08-12 | **Blocking consistency gate:** final body vs attachment field check on every verify/apply; literals (not merge tags) for invoice/TXN/date; Apply re-verifies applied content |
 | 2026-08-12 | **Gemini models:** default `gemini-2.5-flash`; auto-remap retired `gemini-2.0-flash`; 404 fallbacks + thinkingBudget=0 (fix content verification 404) |
 | 2026-08-06 | **Favicon:** tab + Apple touch icons match header logo (emerald→teal mail mark) via `src/app/icon.svg` + `apple-icon.tsx` |

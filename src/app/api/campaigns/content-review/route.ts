@@ -19,6 +19,7 @@ import {
   runGenuinenessReview,
   type GenuinenessAttachmentInput,
 } from "@/lib/content-genuineness";
+import { generateCampaignFromBrief } from "@/lib/content-genuineness/ai-generate-campaign";
 import { analyzeContentHeuristics } from "@/lib/content-spam-review/heuristics";
 import { contentGenuinenessGateEnabled } from "@/lib/anti-spam-config";
 import { normalizeMergeTagKeys } from "@/lib/content-spam-review/merge-tags-prompt";
@@ -48,6 +49,11 @@ const bodySchema = z.object({
   merge_tags: z.array(z.string().max(64)).max(40).optional(),
   /** First CSV recipient — expands merge tags for final body/attachment consistency check. */
   preview_recipient_email: z.string().email().optional(),
+  /** True when composer has PDF/image attachment configured — attachment must be verified. */
+  expect_attachment: z.boolean().optional(),
+  /** manual = user-authored content; ai_generate = generate from ai_brief first. */
+  compose_mode: z.enum(["manual", "ai_generate"]).optional(),
+  ai_brief: z.string().max(4000).optional(),
 });
 
 export async function POST(req: Request) {
@@ -65,10 +71,63 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: formatZodError(parsed.error) }, { status: 400 });
   }
 
+  const composeMode = parsed.data.compose_mode ?? "manual";
+  const mergeTags = normalizeMergeTagKeys(parsed.data.merge_tags);
+
+  let subject = parsed.data.subject;
+  let bodyHtml = parsed.data.body_html;
+  const senderName = parsed.data.sender_name;
+  let attachments: GenuinenessAttachmentInput[] = (parsed.data.attachments ?? []).map((a) => ({
+    filename: a.filename,
+    contentBase64: a.contentBase64,
+    htmlText: a.htmlText,
+  }));
+  let generatedContent: {
+    subject: string;
+    bodyHtml: string;
+    attachmentHtml: string;
+  } | null = null;
+
+  if (composeMode === "ai_generate") {
+    const brief = (parsed.data.ai_brief ?? "").trim();
+    if (!brief) {
+      return NextResponse.json(
+        { error: "AI brief is required for AI-Generate mode.", passed: false, blocked: true },
+        { status: 400 },
+      );
+    }
+    const generated = await generateCampaignFromBrief({
+      brief,
+      senderName,
+      mergeTags,
+    });
+    if (!generated.ok) {
+      return NextResponse.json(
+        {
+          error: generated.reason,
+          passed: false,
+          blocked: true,
+          summary: "AI generation failed — send is blocked.",
+        },
+        { status: 502 },
+      );
+    }
+    subject = generated.subject;
+    bodyHtml = generated.bodyHtml;
+    attachments = [
+      { filename: "generated-html-attachment", htmlText: generated.attachmentHtml },
+    ];
+    generatedContent = {
+      subject: generated.subject,
+      bodyHtml: generated.bodyHtml,
+      attachmentHtml: generated.attachmentHtml,
+    };
+  }
+
   const compose = validateCampaignComposeRequired({
-    senderName: parsed.data.sender_name,
-    subject: parsed.data.subject,
-    bodyHtml: parsed.data.body_html,
+    senderName,
+    subject,
+    bodyHtml,
   });
   if (!compose.ok) {
     void logContentRejection(supabase, {
@@ -78,12 +137,6 @@ export async function POST(req: Request) {
     });
     return NextResponse.json({ error: compose.message, blocked: true, passed: false }, { status: 400 });
   }
-
-  const attachments: GenuinenessAttachmentInput[] = (parsed.data.attachments ?? []).map((a) => ({
-    filename: a.filename,
-    contentBase64: a.contentBase64,
-    htmlText: a.htmlText,
-  }));
 
   const attachmentBytes = attachments.reduce((sum, a) => {
     if (!a.contentBase64) return sum;
@@ -95,7 +148,7 @@ export async function POST(req: Request) {
   }, 0);
 
   const quality = validateContentQuality({
-    bodyHtml: parsed.data.body_html,
+    bodyHtml,
     attachmentTotalBytes: attachmentBytes,
   });
   if (!quality.ok) {
@@ -113,17 +166,16 @@ export async function POST(req: Request) {
 
   const attFp = attachmentListFingerprint(attachments);
   const fingerprint = messageContentFingerprint({
-    subject: parsed.data.subject,
-    bodyHtml: parsed.data.body_html,
-    senderName: parsed.data.sender_name,
+    subject,
+    bodyHtml,
+    senderName,
     attachmentFingerprint: attFp,
   });
 
-  // Keep legacy rescore fingerprint for rate-limit table compatibility
   const legacyFp = contentReviewFingerprint({
-    subject: parsed.data.subject,
-    bodyHtml: parsed.data.body_html,
-    senderName: parsed.data.sender_name,
+    subject,
+    bodyHtml,
+    senderName,
   });
 
   let service;
@@ -152,24 +204,28 @@ export async function POST(req: Request) {
     );
   }
 
-  const mergeTags = normalizeMergeTagKeys(parsed.data.merge_tags);
+  const expectAttachment =
+    parsed.data.expect_attachment === true ||
+    composeMode === "ai_generate" ||
+    attachments.some((a) => Boolean(a.htmlText?.trim() || a.contentBase64?.trim()));
 
   const genuineness = await runGenuinenessReview(
     {
-      subject: parsed.data.subject,
-      bodyHtml: parsed.data.body_html,
-      senderName: parsed.data.sender_name,
+      subject,
+      bodyHtml,
+      senderName,
       attachments,
       mergeTags,
       previewRecipientEmail: parsed.data.preview_recipient_email,
+      expectAttachment,
     },
     { useAi: parsed.data.use_ai },
   );
 
   const heuristics = analyzeContentHeuristics({
-    subject: parsed.data.subject,
-    bodyHtml: parsed.data.body_html,
-    senderName: parsed.data.sender_name,
+    subject,
+    bodyHtml,
+    senderName,
   });
 
   const gateOn = contentGenuinenessGateEnabled();
@@ -200,6 +256,8 @@ export async function POST(req: Request) {
       suggestedSubject: genuineness.suggestedSubject,
       suggestedHtmlChars: genuineness.suggestedHtml?.length ?? 0,
       suggestedAttachmentHtmlChars: genuineness.suggestedAttachmentHtml?.length ?? 0,
+      phishingStatus: genuineness.phishingVerdict.status,
+      phishingRawResponse: genuineness.phishingVerdict.rawResponse?.slice(0, 4000) ?? null,
     },
   });
 
@@ -223,6 +281,8 @@ export async function POST(req: Request) {
     canonicalFields: genuineness.canonicalFields,
     aiUsed: genuineness.aiUsed,
     aiNote: genuineness.aiNote,
+    phishingVerdict: genuineness.phishingVerdict,
+    generatedContent,
     rescoringRemaining: rateLimit.remaining,
     gateRequired: gateOn,
   });

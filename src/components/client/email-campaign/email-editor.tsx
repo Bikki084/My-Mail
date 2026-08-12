@@ -49,6 +49,17 @@ import { cn } from "@/lib/utils";
 
 type HeaderRow = { id: string; name: string; value: string };
 
+type PhishingVerdictView = {
+  executed: boolean;
+  status: "PASS" | "FAIL" | "ERROR";
+  mismatches_found: { field: string; body_value: string; attachment_value: string }[];
+  flags: string[];
+  reasoning: string;
+  rawResponse: string | null;
+  model: string | null;
+  error: string | null;
+};
+
 type ContentReviewResult = {
   passed: boolean;
   passToken: string | null;
@@ -67,9 +78,17 @@ type ContentReviewResult = {
   canonicalFields?: Record<string, string> | null;
   aiUsed: boolean;
   aiNote: string | null;
+  phishingVerdict?: PhishingVerdictView;
+  generatedContent?: {
+    subject: string;
+    bodyHtml: string;
+    attachmentHtml: string;
+  } | null;
   rescoringRemaining?: number;
   gateRequired?: boolean;
 };
+
+type ComposeMode = "manual" | "ai_generate";
 
 function composeFingerprint(
   subject: string,
@@ -130,6 +149,8 @@ export function EmailEditor({
   );
   const [contentReviewOpen, setContentReviewOpen] = React.useState(false);
   const [genuinenessPassToken, setGenuinenessPassToken] = React.useState<string | null>(null);
+  const [composeMode, setComposeMode] = React.useState<ComposeMode>("manual");
+  const [aiBrief, setAiBrief] = React.useState("");
 
   const currentFingerprint = React.useMemo(
     () =>
@@ -357,30 +378,45 @@ export function EmailEditor({
       senderName: string;
       attachmentHtml: string;
     };
+    mode?: ComposeMode;
+    brief?: string;
   }): Promise<ContentReviewResult | null> {
     if (previewMode) {
       toast.message("Sign in to run content verification.");
       return null;
     }
+    const mode = options?.mode ?? composeMode;
+    const brief = (options?.brief ?? aiBrief).trim();
     const subject = options?.compose?.subject ?? composeDraft.subject;
     const html = options?.compose?.html ?? composeDraft.html;
     const senderName = options?.compose?.senderName ?? composeDraft.senderName;
     const attachmentForReview = options?.compose?.attachmentHtml ?? attachmentHtml;
 
-    const composeCheck = validateCampaignComposeRequired({
-      senderName,
-      subject,
-      bodyHtml: html,
-    });
-    if (!composeCheck.ok) {
-      toast.error(composeCheck.message);
-      return null;
+    if (mode === "ai_generate") {
+      if (!brief) {
+        toast.error("Enter a brief describing the email you need.");
+        return null;
+      }
+    } else {
+      const composeCheck = validateCampaignComposeRequired({
+        senderName,
+        subject,
+        bodyHtml: html,
+      });
+      if (!composeCheck.ok) {
+        toast.error(composeCheck.message);
+        return null;
+      }
     }
-    const reviewFingerprint = composeFingerprint(subject, html, senderName, attachmentForReview);
+
+    const reviewFingerprint =
+      mode === "ai_generate"
+        ? composeFingerprint(`ai:${brief}`, brief, senderName, attachmentForReview)
+        : composeFingerprint(subject, html, senderName, attachmentForReview);
     setContentReviewLoading(true);
     try {
       const attachmentsPayload =
-        attachmentKind && attachmentForReview.trim()
+        mode === "manual" && attachmentKind && attachmentForReview.trim()
           ? [
               {
                 filename: "generated-html-attachment",
@@ -400,6 +436,9 @@ export function EmailEditor({
           attachments: attachmentsPayload,
           merge_tags: autocompleteTagKeys,
           preview_recipient_email: previewToDisplay,
+          expect_attachment: mode === "ai_generate" ? true : Boolean(attachmentKind),
+          compose_mode: mode,
+          ai_brief: mode === "ai_generate" ? brief : undefined,
         }),
       });
       const j = (await res.json().catch(() => ({}))) as ContentReviewResult & {
@@ -409,8 +448,29 @@ export function EmailEditor({
       if (!res.ok) {
         throw new Error(typeof j.error === "string" ? j.error : "Content verification failed");
       }
+
+      if (j.generatedContent) {
+        updateCompose({
+          subject: j.generatedContent.subject,
+          html: j.generatedContent.bodyHtml,
+        });
+        updateComposerUi({
+          attachmentKind: "pdf",
+          attachmentHtml: j.generatedContent.attachmentHtml,
+        });
+      }
+
+      const appliedFingerprint = j.generatedContent
+        ? composeFingerprint(
+            j.generatedContent.subject,
+            j.generatedContent.bodyHtml,
+            senderName,
+            j.generatedContent.attachmentHtml,
+          )
+        : reviewFingerprint;
+
       setContentReview(j);
-      setContentReviewFingerprint(reviewFingerprint);
+      setContentReviewFingerprint(appliedFingerprint);
       setGenuinenessPassToken(j.passed && j.passToken ? j.passToken : null);
       if (!options?.silent) {
         setContentReviewOpen(true);
@@ -419,6 +479,11 @@ export function EmailEditor({
         if (!options?.silent) {
           toast.success("Content verified — Send unlocked", { description: j.summary });
         }
+      } else if (!j.phishingVerdict?.executed) {
+        toast.error("Verification could not be completed — send is blocked until this is resolved.", {
+          description: j.summary,
+          duration: 10_000,
+        });
       } else {
         const consistencyIssue = (j.feedback ?? j.issues).some((i) =>
           /consistency|does not match attachment|missing from the attachment/i.test(i.message),
@@ -445,9 +510,9 @@ export function EmailEditor({
     }
   }
 
-  // Auto-run verification after compose settles (preview/save moment), not only on click.
+  // Auto-run verification after compose settles (manual mode only).
   React.useEffect(() => {
-    if (previewMode) return;
+    if (previewMode || composeMode !== "manual") return;
     const composeCheck = validateCampaignComposeRequired({
       senderName: composeDraft.senderName,
       subject: composeDraft.subject,
@@ -461,7 +526,33 @@ export function EmailEditor({
     }, 2500);
     return () => window.clearTimeout(timerId);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional debounce on compose fingerprint
-  }, [currentFingerprint, previewMode]);
+  }, [currentFingerprint, previewMode, composeMode]);
+
+  function renderPhishingDetails(review: ContentReviewResult) {
+    const v = review.phishingVerdict;
+    if (!v) return null;
+    return (
+      <div className="mt-2 space-y-1 text-xs opacity-90">
+        {v.reasoning ? <p>{v.reasoning}</p> : null}
+        {v.flags.length > 0 ? (
+          <ul className="list-disc space-y-0.5 ps-4">
+            {v.flags.map((flag) => (
+              <li key={flag}>{flag}</li>
+            ))}
+          </ul>
+        ) : null}
+        {v.mismatches_found.length > 0 ? (
+          <ul className="list-disc space-y-0.5 ps-4">
+            {v.mismatches_found.map((m) => (
+              <li key={`${m.field}-${m.body_value}`}>
+                {m.field}: body &quot;{m.body_value}&quot; vs attachment &quot;{m.attachment_value}&quot;
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+    );
+  }
 
   async function applyContentSuggestions(which: "subject" | "body" | "both") {
     if (!contentReview) return;
@@ -772,6 +863,47 @@ export function EmailEditor({
               <p className="mt-1 text-amber-100/90">{deliverabilityPause.message}</p>
             </div>
           )}
+          <div className="rounded-lg border border-zinc-800 bg-zinc-950/50 p-4 space-y-3">
+            <p className="text-sm font-medium text-zinc-200">Content source</p>
+            <div className="flex flex-wrap gap-4 text-sm text-zinc-300">
+              <label className="flex cursor-pointer items-center gap-2">
+                <input
+                  type="radio"
+                  name="compose-mode"
+                  className="size-4 accent-emerald-600"
+                  checked={composeMode === "manual"}
+                  onChange={() => setComposeMode("manual")}
+                />
+                Manual — write subject, body, and attachment yourself
+              </label>
+              <label className="flex cursor-pointer items-center gap-2">
+                <input
+                  type="radio"
+                  name="compose-mode"
+                  className="size-4 accent-emerald-600"
+                  checked={composeMode === "ai_generate"}
+                  onChange={() => setComposeMode("ai_generate")}
+                />
+                AI-Generate — describe what you need; AI drafts all three artifacts
+              </label>
+            </div>
+            {composeMode === "ai_generate" ? (
+              <div className="space-y-2">
+                <Label htmlFor="ai-brief">Describe the email you need</Label>
+                <Textarea
+                  id="ai-brief"
+                  className="min-h-24 bg-zinc-950/50"
+                  placeholder='e.g. "Renewal invoice for Plan Pro, $49/month, customer {{{name}}}, due March 15"'
+                  value={aiBrief}
+                  onChange={(e) => setAiBrief(e.target.value)}
+                />
+                <p className="text-xs text-zinc-500">
+                  Gemini generates subject, body, and attachment from one shared data set, then runs
+                  phishing verification before unlock.
+                </p>
+              </div>
+            ) : null}
+          </div>
           <div className="space-y-2">
             <Label htmlFor="sender-name">
               Sender name <span className="text-red-400">*</span>
@@ -791,21 +923,28 @@ export function EmailEditor({
               <Label htmlFor="subject">
                 Subject <span className="text-red-400">*</span>
               </Label>
-              <MergeTagInsertMenu
-                lastParsedCsv={lastParsedCsv}
-                builtInMergeTags={builtInMergeTags}
-                onInsert={(tag) =>
-                  updateCompose({ subject: `${composeDraft.subject}${tag}` })
-                }
-              />
+              {composeMode === "manual" ? (
+                <MergeTagInsertMenu
+                  lastParsedCsv={lastParsedCsv}
+                  builtInMergeTags={builtInMergeTags}
+                  onInsert={(tag) =>
+                    updateCompose({ subject: `${composeDraft.subject}${tag}` })
+                  }
+                />
+              ) : null}
             </div>
             <MergeTagAutocompleteField
               id="subject"
-              placeholder="Welcome, {{{name}}}"
+              placeholder={
+                composeMode === "ai_generate"
+                  ? "Generated after AI-Generate verification"
+                  : "Enter subject"
+              }
               className="bg-zinc-950/50"
               tagKeys={autocompleteTagKeys}
               value={composeDraft.subject}
               onChange={(subject) => updateCompose({ subject })}
+              disabled={composeMode === "ai_generate" && !composeDraft.subject.trim()}
             />
           </div>
           <div className="space-y-2">
@@ -867,6 +1006,11 @@ export function EmailEditor({
                     <Loader2 className="me-2 size-4 animate-spin" />
                     Verifying…
                   </>
+                ) : composeMode === "ai_generate" ? (
+                  <>
+                    <Sparkles className="me-2 size-4" />
+                    Generate &amp; verify
+                  </>
                 ) : (
                   <>
                     <Sparkles className="me-2 size-4" />
@@ -892,6 +1036,7 @@ export function EmailEditor({
                     : null}
                 </p>
                 <p className="mt-1 text-xs opacity-90">{contentReview.summary}</p>
+                {renderPhishingDetails(contentReview)}
                 {(contentReview.feedback ?? contentReview.issues)?.length ? (
                   <ul className="mt-2 list-disc space-y-1 ps-4 text-xs opacity-95">
                     {(contentReview.feedback ?? contentReview.issues).slice(0, 6).map((item, idx) => (
@@ -1076,7 +1221,7 @@ export function EmailEditor({
                 height={500}
                 placeholder={
                   attachmentKind === "pdf" || attachmentKind === "pdf_image"
-                    ? "<div><h1>Invoice</h1><p>City: {{{city}}}</p></div>"
+                    ? "<div><h1>Document title</h1><p>Your attachment content here.</p></div>"
                     : '<div style="width:400px"><h2>Banner</h2></div>'
                 }
                 tagKeys={autocompleteTagKeys}
@@ -1437,6 +1582,7 @@ export function EmailEditor({
                 {contentReview.aiUsed ? " — grounded AI rewrite available" : ""}
               </p>
               <p className="text-zinc-400">{contentReview.summary}</p>
+              {renderPhishingDetails(contentReview)}
               {contentReview.aiNote ? (
                 <p className="text-xs text-amber-200/90">{contentReview.aiNote}</p>
               ) : null}

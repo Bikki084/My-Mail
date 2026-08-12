@@ -219,6 +219,9 @@ export async function runGenuinenessPassGuard(
   }
 
   // Re-validate on server (no AI) so a stolen/stale token cannot bypass content rules.
+  const hasAttachment = (input.attachments ?? []).some(
+    (a) => Boolean(a.htmlText?.trim() || a.contentBase64?.trim()),
+  );
   const review = await runGenuinenessReview(
     {
       subject: input.subject,
@@ -229,6 +232,7 @@ export async function runGenuinenessPassGuard(
         contentBase64: a.contentBase64,
         htmlText: a.htmlText,
       })),
+      expectAttachment: hasAttachment,
     },
     { useAi: false },
   );
