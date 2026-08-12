@@ -10,6 +10,7 @@
 
 | Date | Change |
 |------|--------|
+| 2026-08-13 | **Verification persistence:** content-hash-keyed DB + localStorage; survives tab switch; distinct Not yet verified / Passed / Failed UI |
 | 2026-08-13 | **Phishing validator rebuild:** mandatory Gemini 2.5 Flash pass/fail gate (subject+body+attachment); no default PASS on error; Manual vs AI-Generate compose modes; blank default compose |
 | 2026-08-12 | **Blocking consistency gate:** final body vs attachment field check on every verify/apply; literals (not merge tags) for invoice/TXN/date; Apply re-verifies applied content |
 | 2026-08-12 | **Gemini models:** default `gemini-2.5-flash`; auto-remap retired `gemini-2.0-flash`; 404 fallbacks + thinkingBudget=0 (fix content verification 404) |

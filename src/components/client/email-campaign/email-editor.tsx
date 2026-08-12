@@ -35,6 +35,13 @@ import { validateCampaignComposeRequired } from "@/lib/campaign-compose-validati
 import { applyMergePreview, buildPreviewRecipient, htmlToPlainText } from "@/lib/html-email";
 import { randomId } from "@/lib/random-id";
 import { useEmailCampaign } from "./email-campaign-context";
+import {
+  cacheToContentReview,
+  composeContentKey,
+  reviewToVerificationCache,
+  type ContentReviewResult,
+  type VerificationStatus,
+} from "./content-verification-types";
 import { MergeTagAutocompleteField } from "./merge-tag-autocomplete-field";
 import { HtmlMergeTagEditor, type HtmlMergeTagEditorHandle } from "./html-merge-tag-editor";
 import { MergeTagInsertMenu } from "./merge-tag-insert";
@@ -49,55 +56,7 @@ import { cn } from "@/lib/utils";
 
 type HeaderRow = { id: string; name: string; value: string };
 
-type PhishingVerdictView = {
-  executed: boolean;
-  status: "PASS" | "FAIL" | "ERROR";
-  mismatches_found: { field: string; body_value: string; attachment_value: string }[];
-  flags: string[];
-  reasoning: string;
-  rawResponse: string | null;
-  model: string | null;
-  error: string | null;
-};
-
-type ContentReviewResult = {
-  passed: boolean;
-  passToken: string | null;
-  contentFingerprint?: string;
-  riskLevel: "low" | "medium" | "high";
-  feedback?: {
-    category: string;
-    message: string;
-    locationHint?: string;
-  }[];
-  issues: { code: string; message: string; locationHint?: string }[];
-  summary: string;
-  suggestedSubject: string | null;
-  suggestedHtml: string | null;
-  suggestedAttachmentHtml?: string | null;
-  canonicalFields?: Record<string, string> | null;
-  aiUsed: boolean;
-  aiNote: string | null;
-  phishingVerdict?: PhishingVerdictView;
-  generatedContent?: {
-    subject: string;
-    bodyHtml: string;
-    attachmentHtml: string;
-  } | null;
-  rescoringRemaining?: number;
-  gateRequired?: boolean;
-};
-
 type ComposeMode = "manual" | "ai_generate";
-
-function composeFingerprint(
-  subject: string,
-  html: string,
-  sender: string,
-  attachmentHtml: string,
-): string {
-  return `${subject.trim()}|${html.trim()}|${sender.trim()}|${attachmentHtml.trim()}`;
-}
 
 export function EmailEditor({
   previewMode = false,
@@ -115,6 +74,9 @@ export function EmailEditor({
     updateCompose,
     composerUi,
     updateComposerUi,
+    verification,
+    setVerificationCache,
+    clearVerificationCache,
   } = useEmailCampaign();
   const { timer } = useWalletState();
   const [sending, setSending] = React.useState(false);
@@ -143,18 +105,14 @@ export function EmailEditor({
     pausedUntil: string | null;
   }>({ paused: false, message: "", pausedUntil: null });
   const [contentReviewLoading, setContentReviewLoading] = React.useState(false);
-  const [contentReview, setContentReview] = React.useState<ContentReviewResult | null>(null);
-  const [contentReviewFingerprint, setContentReviewFingerprint] = React.useState<string | null>(
-    null,
-  );
   const [contentReviewOpen, setContentReviewOpen] = React.useState(false);
-  const [genuinenessPassToken, setGenuinenessPassToken] = React.useState<string | null>(null);
+  const [verificationHydrating, setVerificationHydrating] = React.useState(false);
   const [composeMode, setComposeMode] = React.useState<ComposeMode>("manual");
   const [aiBrief, setAiBrief] = React.useState("");
 
-  const currentFingerprint = React.useMemo(
+  const currentComposeKey = React.useMemo(
     () =>
-      composeFingerprint(
+      composeContentKey(
         composeDraft.subject,
         composeDraft.html,
         composeDraft.senderName,
@@ -163,19 +121,111 @@ export function EmailEditor({
     [composeDraft.subject, composeDraft.html, composeDraft.senderName, attachmentHtml],
   );
 
-  const contentVerifiedForSend = Boolean(
-    contentReview?.passed &&
-      genuinenessPassToken &&
-      contentReviewFingerprint === currentFingerprint,
+  const verificationStatus: VerificationStatus =
+    !verification || verification.composeKey !== currentComposeKey
+      ? "unverified"
+      : verification.status;
+
+  const contentReview = React.useMemo(
+    () =>
+      verification && verification.composeKey === currentComposeKey
+        ? cacheToContentReview(verification)
+        : null,
+    [verification, currentComposeKey],
   );
 
+  const contentVerifiedForSend = Boolean(
+    verificationStatus === "passed" &&
+      verification?.passed &&
+      verification.passToken &&
+      verification.composeKey === currentComposeKey,
+  );
+
+  // Invalidate stale verification when compose content changes.
   React.useEffect(() => {
-    if (contentReviewFingerprint && contentReviewFingerprint !== currentFingerprint) {
-      setContentReview(null);
-      setContentReviewFingerprint(null);
-      setGenuinenessPassToken(null);
+    if (verification && verification.composeKey !== currentComposeKey) {
+      clearVerificationCache();
     }
-  }, [contentReviewFingerprint, currentFingerprint]);
+  }, [verification, currentComposeKey, clearVerificationCache]);
+
+  // Restore persisted server verification for current content (no Gemini re-run).
+  React.useEffect(() => {
+    if (previewMode) return;
+    if (verificationStatus !== "unverified") return;
+    const composeCheck = validateCampaignComposeRequired({
+      senderName: composeDraft.senderName,
+      subject: composeDraft.subject,
+      bodyHtml: composeDraft.html,
+    });
+    if (!composeCheck.ok) return;
+
+    let cancelled = false;
+    const timerId = window.setTimeout(() => {
+      void (async () => {
+        setVerificationHydrating(true);
+        try {
+          const attachmentsPayload =
+            attachmentKind && attachmentHtml.trim()
+              ? [{ filename: "generated-html-attachment", htmlText: attachmentHtml.trim() }]
+              : [];
+          const res = await fetch("/api/campaigns/content-review/lookup", {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              subject: composeDraft.subject,
+              body_html: composeDraft.html,
+              sender_name: composeDraft.senderName,
+              attachments: attachmentsPayload,
+            }),
+          });
+          const j = (await res.json().catch(() => ({}))) as {
+            found?: boolean;
+            passed?: boolean;
+            passToken?: string | null;
+            contentFingerprint?: string;
+            summary?: string;
+            phishingVerdict?: ContentReviewResult["phishingVerdict"];
+            feedback?: ContentReviewResult["feedback"];
+            issues?: ContentReviewResult["issues"];
+            verifiedAt?: string;
+          };
+          if (cancelled || !res.ok || !j.found || !j.contentFingerprint) return;
+          setVerificationCache({
+            contentFingerprint: j.contentFingerprint,
+            composeKey: currentComposeKey,
+            status: j.passed ? "passed" : "failed",
+            passed: Boolean(j.passed),
+            passToken: j.passToken ?? null,
+            summary: j.summary ?? "",
+            phishingVerdict: j.phishingVerdict ?? null,
+            feedback: j.feedback,
+            issues: j.issues,
+            verifiedAt: j.verifiedAt,
+          });
+        } catch {
+          // ignore — stay unverified
+        } finally {
+          if (!cancelled) setVerificationHydrating(false);
+        }
+      })();
+    }, 400);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timerId);
+    };
+  }, [
+    previewMode,
+    verificationStatus,
+    composeDraft.subject,
+    composeDraft.html,
+    composeDraft.senderName,
+    attachmentKind,
+    attachmentHtml,
+    currentComposeKey,
+    setVerificationCache,
+  ]);
 
   React.useEffect(() => {
     if (previewMode) return;
@@ -409,10 +459,10 @@ export function EmailEditor({
       }
     }
 
-    const reviewFingerprint =
+    const reviewComposeKey =
       mode === "ai_generate"
-        ? composeFingerprint(`ai:${brief}`, brief, senderName, attachmentForReview)
-        : composeFingerprint(subject, html, senderName, attachmentForReview);
+        ? composeContentKey(`ai:${brief}`, brief, senderName, attachmentForReview)
+        : composeContentKey(subject, html, senderName, attachmentForReview);
     setContentReviewLoading(true);
     try {
       const attachmentsPayload =
@@ -460,18 +510,21 @@ export function EmailEditor({
         });
       }
 
-      const appliedFingerprint = j.generatedContent
-        ? composeFingerprint(
+      const appliedComposeKey = j.generatedContent
+        ? composeContentKey(
             j.generatedContent.subject,
             j.generatedContent.bodyHtml,
             senderName,
             j.generatedContent.attachmentHtml,
           )
-        : reviewFingerprint;
+        : reviewComposeKey;
 
-      setContentReview(j);
-      setContentReviewFingerprint(appliedFingerprint);
-      setGenuinenessPassToken(j.passed && j.passToken ? j.passToken : null);
+      setVerificationCache(
+        reviewToVerificationCache(
+          { ...j, contentFingerprint: j.contentFingerprint ?? "" },
+          appliedComposeKey,
+        ),
+      );
       if (!options?.silent) {
         setContentReviewOpen(true);
       }
@@ -500,7 +553,6 @@ export function EmailEditor({
       }
       return j;
     } catch (e) {
-      setGenuinenessPassToken(null);
       toast.error("Could not verify content", {
         description: e instanceof Error ? e.message : String(e),
       });
@@ -509,24 +561,6 @@ export function EmailEditor({
       setContentReviewLoading(false);
     }
   }
-
-  // Auto-run verification after compose settles (manual mode only).
-  React.useEffect(() => {
-    if (previewMode || composeMode !== "manual") return;
-    const composeCheck = validateCampaignComposeRequired({
-      senderName: composeDraft.senderName,
-      subject: composeDraft.subject,
-      bodyHtml: composeDraft.html,
-    });
-    if (!composeCheck.ok) return;
-    if (contentReviewFingerprint === currentFingerprint && contentReview) return;
-
-    const timerId = window.setTimeout(() => {
-      void handleContentReview();
-    }, 2500);
-    return () => window.clearTimeout(timerId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional debounce on compose fingerprint
-  }, [currentFingerprint, previewMode, composeMode]);
 
   function renderPhishingDetails(review: ContentReviewResult) {
     const v = review.phishingVerdict;
@@ -591,9 +625,7 @@ export function EmailEditor({
     }
 
     setContentReviewOpen(false);
-    setContentReview(null);
-    setContentReviewFingerprint(null);
-    setGenuinenessPassToken(null);
+    clearVerificationCache();
 
     console.info("[email-editor] Apply clicked", {
       which,
@@ -802,7 +834,7 @@ export function EmailEditor({
         htmlAttachment: htmlAttachmentPayload,
         smtpServerIds,
         rotationStrategy: "round_robin",
-        genuinenessPassToken,
+        genuinenessPassToken: verification?.passToken ?? null,
       });
       if (!res.ok) {
         throw new Error(res.error);
@@ -1019,22 +1051,41 @@ export function EmailEditor({
                 )}
               </Button>
             </div>
-            {contentReview && contentReviewFingerprint === currentFingerprint ? (
+            {verificationHydrating ? (
+              <p className="text-xs text-zinc-400">
+                <Loader2 className="me-1 inline size-3 animate-spin" />
+                Checking saved verification…
+              </p>
+            ) : verificationStatus === "passed" && contentReview ? (
               <div
                 className={cn(
                   "rounded-md border px-3 py-2 text-sm",
-                  contentReview.passed
-                    ? "border-emerald-900/60 bg-emerald-950/30 text-emerald-100"
-                    : "border-red-900/60 bg-red-950/30 text-red-100",
+                  "border-emerald-900/60 bg-emerald-950/30 text-emerald-100",
                 )}
               >
                 <p className="font-medium">
-                  {contentReview.passed ? "Passed — Send unlocked" : "Failed — Send locked"}
+                  Passed — Send unlocked
                   {contentReview.aiUsed ? " · AI suggestions available" : ""}
-                  {typeof contentReview.rescoringRemaining === "number"
-                    ? ` · ${contentReview.rescoringRemaining} rechecks left`
-                    : null}
                 </p>
+                <p className="mt-1 text-xs opacity-90">{contentReview.summary}</p>
+                {renderPhishingDetails(contentReview)}
+                <Button
+                  type="button"
+                  variant="link"
+                  className="mt-1 h-auto p-0 text-xs underline"
+                  onClick={() => setContentReviewOpen(true)}
+                >
+                  View details
+                </Button>
+              </div>
+            ) : verificationStatus === "failed" && contentReview ? (
+              <div
+                className={cn(
+                  "rounded-md border px-3 py-2 text-sm",
+                  "border-red-900/60 bg-red-950/30 text-red-100",
+                )}
+              >
+                <p className="font-medium">Failed — Send locked</p>
                 <p className="mt-1 text-xs opacity-90">{contentReview.summary}</p>
                 {renderPhishingDetails(contentReview)}
                 {(contentReview.feedback ?? contentReview.issues)?.length ? (
@@ -1049,20 +1100,18 @@ export function EmailEditor({
                     ))}
                   </ul>
                 ) : null}
-                {!contentReview.passed || contentReview.suggestedSubject || contentReview.suggestedHtml ? (
-                  <Button
-                    type="button"
-                    variant="link"
-                    className="mt-1 h-auto p-0 text-xs underline"
-                    onClick={() => setContentReviewOpen(true)}
-                  >
-                    {contentReview.passed ? "View details" : "View feedback & AI rewrite"}
-                  </Button>
-                ) : null}
+                <Button
+                  type="button"
+                  variant="link"
+                  className="mt-1 h-auto p-0 text-xs underline"
+                  onClick={() => setContentReviewOpen(true)}
+                >
+                  View feedback &amp; AI rewrite
+                </Button>
               </div>
             ) : (
-              <p className="text-xs text-amber-200/90">
-                Send is disabled until this message version passes verification.
+              <p className="rounded-md border border-zinc-700/80 bg-zinc-900/50 px-3 py-2 text-xs text-zinc-400">
+                Not yet verified — run Verify content (or Generate &amp; verify) before sending.
               </p>
             )}
           </div>

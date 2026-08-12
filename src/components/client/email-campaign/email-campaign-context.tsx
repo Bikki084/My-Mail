@@ -10,10 +10,13 @@ import { parsedCsvToRecipientRows } from "@/lib/csv-recipients";
 import type { ParsedCsv } from "@/lib/csv-types";
 import type { RecipientRow } from "@/lib/merge-tags";
 import { APP_DEFAULT_SENDER_NAME } from "@/lib/brand";
+import type { ContentVerificationCache } from "./content-verification-types";
 
-const STORAGE_V = 5 as const;
+const STORAGE_V = 6 as const;
 const csvStorageKey = (userId: string) => `mymail.campaign.csv.${STORAGE_V}.${userId}`;
 const composeStorageKey = (userId: string) => `mymail.campaign.compose.${STORAGE_V}.${userId}`;
+const verificationStorageKey = (userId: string) =>
+  `mymail.campaign.verification.${STORAGE_V}.${userId}`;
 
 export type AttachmentKind = "pdf" | "png" | "jpeg" | "pdf_image" | null;
 
@@ -58,6 +61,9 @@ type EmailCampaignContextValue = {
   composerUi: ComposerUiState;
   setComposerUi: React.Dispatch<React.SetStateAction<ComposerUiState>>;
   updateComposerUi: (partial: Partial<ComposerUiState>) => void;
+  verification: ContentVerificationCache | null;
+  setVerificationCache: (cache: ContentVerificationCache | null) => void;
+  clearVerificationCache: () => void;
 };
 
 const EmailCampaignContext = React.createContext<EmailCampaignContextValue | null>(null);
@@ -75,6 +81,7 @@ export function EmailCampaignProvider({
   );
   const [composeDraft, setComposeDraft] = React.useState<ComposeDraft>({ ...defaultCompose });
   const [composerUi, setComposerUi] = React.useState<ComposerUiState>({ ...defaultComposerUi });
+  const [verification, setVerification] = React.useState<ContentVerificationCache | null>(null);
   const [storageReady, setStorageReady] = React.useState(!persistenceUserId);
 
   const setParsedCsvData = React.useCallback((data: ParsedCsv | null) => {
@@ -99,6 +106,37 @@ export function EmailCampaignProvider({
   const updateComposerUi = React.useCallback((partial: Partial<ComposerUiState>) => {
     setComposerUi((u) => ({ ...u, ...partial }));
   }, []);
+
+  const persistVerification = React.useCallback(
+    (cache: ContentVerificationCache | null) => {
+      if (!persistenceUserId) return;
+      try {
+        if (!cache) {
+          localStorage.removeItem(verificationStorageKey(persistenceUserId));
+          return;
+        }
+        localStorage.setItem(
+          verificationStorageKey(persistenceUserId),
+          JSON.stringify({ v: STORAGE_V, verification: cache, savedAt: Date.now() }),
+        );
+      } catch {
+        // ignore
+      }
+    },
+    [persistenceUserId],
+  );
+
+  const setVerificationCache = React.useCallback(
+    (cache: ContentVerificationCache | null) => {
+      setVerification(cache);
+      persistVerification(cache);
+    },
+    [persistVerification],
+  );
+
+  const clearVerificationCache = React.useCallback(() => {
+    setVerificationCache(null);
+  }, [setVerificationCache]);
 
   /* eslint-disable react-hooks/set-state-in-effect */
   React.useEffect(() => {
@@ -137,6 +175,16 @@ export function EmailCampaignProvider({
             attachmentKind: c.composerUi.attachmentKind ?? null,
             attachmentHtml: c.composerUi.attachmentHtml ?? "",
           });
+        }
+      }
+      const rawVerification = localStorage.getItem(verificationStorageKey(persistenceUserId));
+      if (rawVerification) {
+        const v = JSON.parse(rawVerification) as {
+          v?: number;
+          verification?: ContentVerificationCache;
+        };
+        if (v.v === STORAGE_V && v.verification?.composeKey) {
+          setVerification(v.verification);
         }
       }
     } catch {
@@ -201,6 +249,9 @@ export function EmailCampaignProvider({
         composerUi,
         setComposerUi,
         updateComposerUi,
+        verification,
+        setVerificationCache,
+        clearVerificationCache,
       }) satisfies EmailCampaignContextValue,
     [
       campaignRecipients,
@@ -212,6 +263,9 @@ export function EmailCampaignProvider({
       updateCompose,
       composerUi,
       updateComposerUi,
+      verification,
+      setVerificationCache,
+      clearVerificationCache,
     ],
   );
 

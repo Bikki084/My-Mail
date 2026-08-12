@@ -20,6 +20,7 @@ import {
   type GenuinenessAttachmentInput,
 } from "@/lib/content-genuineness";
 import { generateCampaignFromBrief } from "@/lib/content-genuineness/ai-generate-campaign";
+import { upsertVerificationResult } from "@/lib/content-genuineness/verification-store";
 import { analyzeContentHeuristics } from "@/lib/content-spam-review/heuristics";
 import { contentGenuinenessGateEnabled } from "@/lib/anti-spam-config";
 import { normalizeMergeTagKeys } from "@/lib/content-spam-review/merge-tags-prompt";
@@ -259,6 +260,15 @@ export async function POST(req: Request) {
       phishingStatus: genuineness.phishingVerdict.status,
       phishingRawResponse: genuineness.phishingVerdict.rawResponse?.slice(0, 4000) ?? null,
     },
+  });
+
+  void upsertVerificationResult(service, {
+    userId: user.id,
+    contentFingerprint: fingerprint,
+    passed,
+    summary: genuineness.summary,
+    phishingVerdict: genuineness.phishingVerdict,
+    feedback: genuineness.feedback,
   });
 
   return NextResponse.json({
