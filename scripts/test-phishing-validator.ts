@@ -20,6 +20,20 @@ const { runGeminiPhishingValidation } = require("../src/lib/content-genuineness/
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { runGenuinenessReview } = require("../src/lib/content-genuineness/review");
 
+function keyLoaded(): boolean {
+  return Boolean(
+    (process.env.GEMINI_API_KEY ?? "").trim() ||
+      (process.env.GOOGLE_GENERATIVE_AI_API_KEY ?? "").trim(),
+  );
+}
+
+function logKeyStatus(label: string) {
+  const key = (process.env.GEMINI_API_KEY ?? process.env.GOOGLE_GENERATIVE_AI_API_KEY ?? "").trim();
+  console.log(
+    `${label}: ${key ? `yes (${key.length} chars, …${key.slice(-4)})` : "NO — check .env.local in project root"}`,
+  );
+}
+
 function log(title: string, data: unknown) {
   console.log(`\n=== ${title} ===`);
   console.log(typeof data === "string" ? data : JSON.stringify(data, null, 2));
@@ -88,6 +102,9 @@ async function testB() {
 }
 
 async function testC() {
+  console.log("\n=== TEST C — SIMULATED API failure (key intentionally removed) ===");
+  console.log("(The next 'GEMINI_API_KEY not configured' log is EXPECTED — not a misconfiguration.)");
+
   const savedKey = process.env.GEMINI_API_KEY;
   const savedGoogle = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
   delete process.env.GEMINI_API_KEY;
@@ -204,15 +221,23 @@ async function testE() {
 }
 
 async function main() {
-  if (!process.env.GEMINI_API_KEY && !process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
-    console.warn("WARNING: GEMINI_API_KEY not set — TEST A/B/E will fail at runtime.");
+  logKeyStatus("GEMINI_API_KEY loaded from .env.local");
+
+  if (!keyLoaded()) {
+    console.error(
+      "\nERROR: GEMINI_API_KEY not found after loading .env.local.\n" +
+        "  1. Ensure ~/mymail/.env.local contains: GEMINI_API_KEY=your-key\n" +
+        "  2. Run from project root: cd ~/mymail && npx tsx scripts/test-phishing-validator.ts\n" +
+        "  3. Quick check: node -e \"require('./scripts/load-env.cjs').loadProjectEnv(); console.log(!!process.env.GEMINI_API_KEY)\"\n",
+    );
+    process.exit(1);
   }
 
   testD();
-  await testC();
   await testA();
   await testB();
   await testE();
+  await testC();
   console.log("\nAll phishing validator proof tests passed.");
 }
 
