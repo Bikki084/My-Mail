@@ -1,5 +1,6 @@
 import "server-only";
 
+import { generateGeminiJsonText, resolveGeminiApiKey } from "@/lib/gemini/client";
 import { rewriteIntroducesUngroundedClaims } from "@/lib/content-genuineness/grounding";
 import type { GenuinenessFeedback } from "@/lib/content-genuineness/types";
 import { mergeTagsPromptSection } from "@/lib/content-spam-review/merge-tags-prompt";
@@ -12,15 +13,6 @@ export type GroundedRewriteResult =
       summary: string;
     }
   | { ok: false; reason: string };
-
-function geminiApiKey(): string | null {
-  const key = (process.env.GEMINI_API_KEY ?? process.env.GOOGLE_GENERATIVE_AI_API_KEY ?? "").trim();
-  return key.length > 0 ? key : null;
-}
-
-function geminiModel(): string {
-  return (process.env.GEMINI_CONTENT_REVIEW_MODEL ?? "gemini-2.0-flash").trim();
-}
 
 function parseJson(text: string): {
   summary?: string;
@@ -63,8 +55,7 @@ export async function suggestGroundedRewrite(input: {
   feedback: GenuinenessFeedback[];
   mergeTags?: string[];
 }): Promise<GroundedRewriteResult> {
-  const apiKey = geminiApiKey();
-  if (!apiKey) {
+  if (!resolveGeminiApiKey()) {
     return { ok: false, reason: "GEMINI_API_KEY not configured." };
   }
 
@@ -105,51 +96,26 @@ ${input.plainBody.slice(0, 4000)}
 Attachment excerpt (may be empty):
 ${(input.attachmentText ?? "").slice(0, 6000) || "(none)"}`;
 
-  const model = geminiModel();
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
-
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(45_000),
-      body: JSON.stringify({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: 0.25,
-          maxOutputTokens: 2048,
-          responseMimeType: "application/json",
-        },
-      }),
-    });
-
-    if (!res.ok) {
-      const errText = await res.text().catch(() => "");
-      return { ok: false, reason: `Gemini API error ${res.status}: ${errText.slice(0, 200)}` };
-    }
-
-    const data = (await res.json()) as {
-      candidates?: { content?: { parts?: { text?: string }[] } }[];
-    };
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-    const parsed = parseJson(text);
-    if (!parsed?.suggestedSubject || !parsed?.suggestedHtml) {
-      return { ok: false, reason: "Could not parse grounded rewrite." };
-    }
-
-    return {
-      ok: true,
-      suggestedSubject: parsed.suggestedSubject.trim(),
-      suggestedHtml: parsed.suggestedHtml.trim(),
-      summary: (parsed.summary ?? "Rewrote content while staying grounded in your draft.").trim(),
-    };
-  } catch (e) {
-    return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+  const result = await generateGeminiJsonText(prompt);
+  if (!result.ok) {
+    return { ok: false, reason: result.reason };
   }
+
+  const parsed = parseJson(result.text);
+  if (!parsed?.suggestedSubject || !parsed?.suggestedHtml) {
+    return { ok: false, reason: "Could not parse grounded rewrite." };
+  }
+
+  return {
+    ok: true,
+    suggestedSubject: parsed.suggestedSubject.trim(),
+    suggestedHtml: parsed.suggestedHtml.trim(),
+    summary: (parsed.summary ?? "Rewrote content while staying grounded in your draft.").trim(),
+  };
 }
 
 export function isGroundedRewriteConfigured(): boolean {
-  return geminiApiKey() != null;
+  return resolveGeminiApiKey() != null;
 }
 
 export { rewriteIntroducesUngroundedClaims } from "@/lib/content-genuineness/grounding";

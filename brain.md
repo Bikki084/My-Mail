@@ -2,7 +2,7 @@
 
 > **Purpose:** Single source of truth for AI agents and developers. Read this file **before** scanning the whole repo.  
 > **Maintainers:** Update this file whenever you add features, change limits, deploy steps, or infra — same as you would commit code.  
-> **Last updated:** 2026-08-06
+> **Last updated:** 2026-08-12
 
 ---
 
@@ -10,6 +10,7 @@
 
 | Date | Change |
 |------|--------|
+| 2026-08-12 | **Gemini models:** default `gemini-2.5-flash`; auto-remap retired `gemini-2.0-flash`; 404 fallbacks + thinkingBudget=0 (fix content verification 404) |
 | 2026-08-06 | **Favicon:** tab + Apple touch icons match header logo (emerald→teal mail mark) via `src/app/icon.svg` + `apple-icon.tsx` |
 | 2026-08-06 | **Domain cutover:** production app switched back to `bulkfirepro.com` (from `bulkprofire.com`) |
 | 2026-08-06 | **AI merge tags:** Gemini spam-free / genuineness rewrites personalize with CSV + built-in tags (`{{{name}}}`, `{{{email}}}`, …) |
@@ -226,7 +227,7 @@ Pre-send coach in **Email Composer → Verify content**:
 
 **Free AI key:** [Google AI Studio](https://aistudio.google.com/apikey) → `GEMINI_API_KEY` in `.env.local`
 
-**Env:** `GEMINI_API_KEY`, optional `GEMINI_CONTENT_REVIEW_MODEL` (default `gemini-2.0-flash`), `CONTENT_SPAM_BLOCK_*`
+**Env:** `GEMINI_API_KEY`, optional `GEMINI_CONTENT_REVIEW_MODEL` (default `gemini-2.5-flash`; retired `gemini-2.0-flash` remapped), `CONTENT_SPAM_BLOCK_*`
 
 ---
 
@@ -409,7 +410,7 @@ Governor: `src/lib/send-governor.ts` — disable with `SEND_GOVERNOR_DISABLE=1` 
 | `DELIVERABILITY_HARD_BOUNCE_THRESHOLD` | Hard bounces before freeze (default `5`) |
 | `DELIVERABILITY_SMTP_SPAM_REJECT_THRESHOLD` | SMTP spam rejects before freeze (default `2`) |
 | `GEMINI_API_KEY` | Google AI Studio key for spam-risk content rewrites (free tier) |
-| `GEMINI_CONTENT_REVIEW_MODEL` | Optional Gemini model (default `gemini-2.0-flash`) |
+| `GEMINI_CONTENT_REVIEW_MODEL` | Optional Gemini model (default `gemini-2.5-flash`; falls back if 404) |
 | `CONTENT_MIN_WORD_COUNT` | Min HTML body words (default `25`) |
 | `CONTENT_MIN_TEXT_CHARS_PER_ATTACHMENT_KB` | Body text vs attachment size ratio |
 | `CONTENT_RESCORE_MAX_ATTEMPTS` | Max spam rescoring attempts per fingerprint window |
