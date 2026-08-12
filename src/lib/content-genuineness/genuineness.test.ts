@@ -15,9 +15,10 @@ import {
   verifyGenuinenessPassToken,
 } from "./pass-token";
 import { rewriteIntroducesUngroundedClaims } from "./grounding";
-import { assertCrossArtifactConsistency } from "./consistency";
+import { assertCrossArtifactConsistency, assertFinalPersistedConsistency } from "./consistency";
 import { buildCanonicalContentFields } from "./canonical-fields";
 import { APP_NOREPLY_EMAIL } from "@/lib/brand";
+import { buildPreviewRecipientRow } from "./preview-recipient";
 
 describe("content-genuineness checks", () => {
   it("rejects deceptive subject/body mismatch", () => {
@@ -155,12 +156,41 @@ describe("canonical fields + consistency validator", () => {
         invoice_number: "INV-5911142",
         transaction_id: "734QHN0382",
         renewal_date: "2026-08-12",
+        company_name: "BulkProFire",
       },
       subject: "Subscription Invoice INV-5911142",
       bodyHtmlOrText:
-        `<p>Invoice INV-5911142 Transaction 734QHN0382 renewal 2026-08-12. Contact ${APP_NOREPLY_EMAIL}</p>`,
+        `<p>Invoice INV-5911142 Transaction 734QHN0382 renewal 2026-08-12. BulkProFire. Contact ${APP_NOREPLY_EMAIL}</p>`,
       attachmentHtmlOrText:
-        "<p>Invoice INV-5911142 TXN 734QHN0382 renewal 2026-08-12</p>",
+        "<p>Invoice INV-5911142 TXN 734QHN0382 renewal 2026-08-12. BulkProFire</p>",
+    });
+    assert.equal(good.ok, true);
+  });
+
+  it("TEST 1 — final gate blocks mismatched body vs attachment", () => {
+    const preview = buildPreviewRecipientRow("client@example.com");
+    const bad = assertFinalPersistedConsistency({
+      subject: "Subscription Invoice INV-5911142",
+      bodyHtml:
+        `<p>Invoice INV-5911142 Transaction 734QHN0382 renewal 08/12/2026. BulkProFire. ${APP_NOREPLY_EMAIL}</p>`,
+      attachmentHtml:
+        "<p>Invoice BFP-28194956 TXN-8119482 renewal 07/05/2026. BulkProFire</p>",
+      senderName: "BulkProFire",
+      previewRecipient: preview,
+    });
+    assert.equal(bad.ok, false);
+  });
+
+  it("TEST 2 — final gate passes when body and attachment match", () => {
+    const preview = buildPreviewRecipientRow("client@example.com");
+    const good = assertFinalPersistedConsistency({
+      subject: "Subscription Invoice INV-5911142",
+      bodyHtml:
+        `<p>Invoice INV-5911142 Transaction 734QHN0382 renewal 08/12/2026. BulkProFire. ${APP_NOREPLY_EMAIL}</p>`,
+      attachmentHtml:
+        "<p>Invoice INV-5911142 TXN 734QHN0382 renewal 08/12/2026. BulkProFire</p>",
+      senderName: "BulkProFire",
+      previewRecipient: preview,
     });
     assert.equal(good.ok, true);
   });

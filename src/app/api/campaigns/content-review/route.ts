@@ -46,9 +46,9 @@ const bodySchema = z.object({
   attachments: z.array(attachmentSchema).max(5).optional(),
   /** CSV / built-in merge tag keys for AI personalization (e.g. name, email). */
   merge_tags: z.array(z.string().max(64)).max(40).optional(),
+  /** First CSV recipient — expands merge tags for final body/attachment consistency check. */
+  preview_recipient_email: z.string().email().optional(),
 });
-
-export async function POST(req: Request) {
   const supabase = await createClient();
   const {
     data: { user },
@@ -159,6 +159,7 @@ export async function POST(req: Request) {
       senderName: parsed.data.sender_name,
       attachments,
       mergeTags,
+      previewRecipientEmail: parsed.data.preview_recipient_email,
     },
     { useAi: parsed.data.use_ai },
   );

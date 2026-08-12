@@ -20,8 +20,10 @@ import {
 } from "@/lib/content-genuineness/canonical-fields";
 import {
   assertCrossArtifactConsistency,
+  assertFinalPersistedConsistency,
   assertPhishingIndicatorSanity,
 } from "@/lib/content-genuineness/consistency";
+import { buildPreviewRecipientRow } from "@/lib/content-genuineness/preview-recipient";
 import {
   isGroundedRewriteConfigured,
   suggestGroundedRewrite,
@@ -216,6 +218,31 @@ export async function runGenuinenessReview(
     });
   }
 
+  // HARD gate: final persisted subject + body + attachment must have matching dynamic fields.
+  if (attachmentHtml || attachmentCombined) {
+    const previewRecipient = buildPreviewRecipientRow(input.previewRecipientEmail);
+    const finalCheck = assertFinalPersistedConsistency({
+      subject,
+      bodyHtml,
+      attachmentHtml,
+      senderName,
+      previewRecipient,
+    });
+    if (!finalCheck.ok) {
+      for (const m of finalCheck.mismatches.slice(0, 4)) {
+        issues.push({
+          code: "field_consistency_mismatch",
+          category: "attachment_mismatch",
+          message:
+            m.detail ||
+            "Could not verify consistency between email and attachment — please retry.",
+          locationHint: "Body + attachment",
+          blocks: true,
+        });
+      }
+    }
+  }
+
   const blocking = issues.filter((i) => i.blocks);
   const passed = blocking.length === 0;
   const feedback = toPublicFeedback(issues);
@@ -266,9 +293,15 @@ export async function runGenuinenessReview(
     aiNote = "Add GEMINI_API_KEY for AI-assisted grounded rewrites.";
   }
 
+  const blockingFinal = issues.filter((i) => i.blocks);
+  const passedFinal = blockingFinal.length === 0;
+  if (!passedFinal && blockingFinal.some((i) => i.code === "field_consistency_mismatch")) {
+    summary = "Could not verify consistency between email and attachment — please retry.";
+  }
+
   return {
-    passed,
-    feedback,
+    passed: passedFinal,
+    feedback: toPublicFeedback(issues),
     issues,
     summary,
     attachmentTextExcerpt: attachmentCombined

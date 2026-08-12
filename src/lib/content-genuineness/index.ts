@@ -28,6 +28,8 @@ export type {
 export type { CanonicalContentFields } from "@/lib/content-genuineness/canonical-fields";
 export {
   assertCrossArtifactConsistency,
+  assertFinalPersistedConsistency,
   assertPhishingIndicatorSanity,
 } from "@/lib/content-genuineness/consistency";
+export { buildPreviewRecipientRow } from "@/lib/content-genuineness/preview-recipient";
 export { buildCanonicalContentFields } from "@/lib/content-genuineness/canonical-fields";

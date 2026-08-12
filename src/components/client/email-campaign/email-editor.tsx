@@ -349,28 +349,42 @@ export function EmailEditor({
     setHeaderOpen(false);
   }
 
-  async function handleContentReview() {
+  async function handleContentReview(options?: {
+    silent?: boolean;
+    compose?: {
+      subject: string;
+      html: string;
+      senderName: string;
+      attachmentHtml: string;
+    };
+  }): Promise<ContentReviewResult | null> {
     if (previewMode) {
       toast.message("Sign in to run content verification.");
-      return;
+      return null;
     }
+    const subject = options?.compose?.subject ?? composeDraft.subject;
+    const html = options?.compose?.html ?? composeDraft.html;
+    const senderName = options?.compose?.senderName ?? composeDraft.senderName;
+    const attachmentForReview = options?.compose?.attachmentHtml ?? attachmentHtml;
+
     const composeCheck = validateCampaignComposeRequired({
-      senderName: composeDraft.senderName,
-      subject: composeDraft.subject,
-      bodyHtml: composeDraft.html,
+      senderName,
+      subject,
+      bodyHtml: html,
     });
     if (!composeCheck.ok) {
       toast.error(composeCheck.message);
-      return;
+      return null;
     }
+    const reviewFingerprint = composeFingerprint(subject, html, senderName, attachmentForReview);
     setContentReviewLoading(true);
     try {
       const attachmentsPayload =
-        attachmentKind && attachmentHtml.trim()
+        attachmentKind && attachmentForReview.trim()
           ? [
               {
                 filename: "generated-html-attachment",
-                htmlText: attachmentHtml.trim(),
+                htmlText: attachmentForReview.trim(),
               },
             ]
           : [];
@@ -379,12 +393,13 @@ export function EmailEditor({
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          subject: composeDraft.subject,
-          body_html: composeDraft.html,
-          sender_name: composeDraft.senderName,
+          subject,
+          body_html: html,
+          sender_name: senderName,
           use_ai: true,
           attachments: attachmentsPayload,
           merge_tags: autocompleteTagKeys,
+          preview_recipient_email: previewToDisplay,
         }),
       });
       const j = (await res.json().catch(() => ({}))) as ContentReviewResult & {
@@ -395,22 +410,36 @@ export function EmailEditor({
         throw new Error(typeof j.error === "string" ? j.error : "Content verification failed");
       }
       setContentReview(j);
-      setContentReviewFingerprint(currentFingerprint);
+      setContentReviewFingerprint(reviewFingerprint);
       setGenuinenessPassToken(j.passed && j.passToken ? j.passToken : null);
-      setContentReviewOpen(true);
-      if (j.passed) {
-        toast.success("Content verified — Send unlocked", { description: j.summary });
-      } else {
-        toast.error("Content did not pass verification", {
-          description: j.summary,
-          duration: 10_000,
-        });
+      if (!options?.silent) {
+        setContentReviewOpen(true);
       }
+      if (j.passed) {
+        if (!options?.silent) {
+          toast.success("Content verified — Send unlocked", { description: j.summary });
+        }
+      } else {
+        const consistencyIssue = (j.feedback ?? j.issues).some((i) =>
+          /consistency|does not match attachment|missing from the attachment/i.test(i.message),
+        );
+        toast.error(
+          consistencyIssue
+            ? "Could not verify consistency between email and attachment — please retry."
+            : "Content did not pass verification",
+          {
+            description: j.summary,
+            duration: 10_000,
+          },
+        );
+      }
+      return j;
     } catch (e) {
       setGenuinenessPassToken(null);
       toast.error("Could not verify content", {
         description: e instanceof Error ? e.message : String(e),
       });
+      return null;
     } finally {
       setContentReviewLoading(false);
     }
@@ -434,7 +463,7 @@ export function EmailEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional debounce on compose fingerprint
   }, [currentFingerprint, previewMode]);
 
-  function applyContentSuggestions(which: "subject" | "body" | "both") {
+  async function applyContentSuggestions(which: "subject" | "body" | "both") {
     if (!contentReview) return;
     if (contentReview.aiNote && /consistency check failed/i.test(contentReview.aiNote)) {
       toast.error("Consistency check failed — please retry.", {
@@ -442,14 +471,20 @@ export function EmailEditor({
       });
       return;
     }
-    const alignedAttachment = Boolean(
-      contentReview.suggestedAttachmentHtml?.trim() && attachmentKind,
-    );
-    // Always apply the shared attachment rewrite when present so partial Apply
-    // cannot leave body/subject IDs out of sync with the PDF HTML.
-    if (alignedAttachment && contentReview.suggestedAttachmentHtml) {
-      updateComposerUi({ attachmentHtml: contentReview.suggestedAttachmentHtml.trim() });
-    }
+
+    const nextSubject =
+      which === "subject" || which === "both"
+        ? contentReview.suggestedSubject ?? composeDraft.subject
+        : composeDraft.subject;
+    const nextHtml =
+      which === "body" || which === "both"
+        ? contentReview.suggestedHtml ?? composeDraft.html
+        : composeDraft.html;
+    const nextAttachmentHtml =
+      contentReview.suggestedAttachmentHtml?.trim() && attachmentKind
+        ? contentReview.suggestedAttachmentHtml.trim()
+        : attachmentHtml;
+
     if (which === "subject" || which === "both") {
       if (contentReview.suggestedSubject) {
         updateCompose({ subject: contentReview.suggestedSubject });
@@ -460,15 +495,38 @@ export function EmailEditor({
         updateCompose({ html: contentReview.suggestedHtml });
       }
     }
+    if (contentReview.suggestedAttachmentHtml?.trim() && attachmentKind) {
+      updateComposerUi({ attachmentHtml: contentReview.suggestedAttachmentHtml.trim() });
+    }
+
     setContentReviewOpen(false);
-    setGenuinenessPassToken(null);
     setContentReview(null);
     setContentReviewFingerprint(null);
-    toast.success(
-      alignedAttachment
-        ? "Subject/body/attachment aligned — verification will re-run."
-        : "Suggestions applied — verification will re-run automatically.",
-    );
+    setGenuinenessPassToken(null);
+
+    console.info("[email-editor] Apply clicked", {
+      which,
+      subject: nextSubject,
+      bodyLen: nextHtml.length,
+      attachmentLen: nextAttachmentHtml.length,
+      attachmentChanged:
+        Boolean(contentReview.suggestedAttachmentHtml?.trim()) &&
+        nextAttachmentHtml !== attachmentHtml,
+    });
+
+    // Re-verify immediately on the applied content (not stale React state).
+    const review = await handleContentReview({
+      silent: true,
+      compose: {
+        subject: nextSubject,
+        html: nextHtml,
+        senderName: composeDraft.senderName,
+        attachmentHtml: nextAttachmentHtml,
+      },
+    });
+    if (review?.passed) {
+      toast.success("Content verified — subject, body, and attachment are consistent.");
+    }
   }
 
   async function handlePreviewEmail() {

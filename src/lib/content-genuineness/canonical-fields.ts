@@ -213,33 +213,33 @@ export function buildCanonicalContentFields(input: {
   const amountFromMerge = mergeTagPlaceholder(mergeTags, ["amount", "total", "price"]);
   const planFromMerge = mergeTagPlaceholder(mergeTags, ["plan", "plan_name", "subscription"]);
 
-  // Prefer merge-tag placeholders when available so per-recipient send stays aligned.
-  // Otherwise lock one literal value for the whole rewrite.
+  // Tracked invoice/txn/date/amount MUST be identical literals in subject, body, and
+  // attachment — never merge-tag placeholders (those expand per-recipient and caused
+  // body/PDF mismatches in preview).
+  void invoiceFromMerge;
+  void txnFromMerge;
+  void dateFromMerge;
+  void amountFromMerge;
+  void planFromMerge;
+
   const invoice_number =
-    invoiceFromMerge ??
     pickPreferred(attC.invoice_number, bodyC.invoice_number, subjectC.invoice_number) ??
     generateInvoiceNumber(rng);
 
   const transaction_id =
-    txnFromMerge ??
     pickPreferred(attC.transaction_id, bodyC.transaction_id, subjectC.transaction_id) ??
     generateTransactionId(rng);
 
   const renewalRaw =
-    dateFromMerge ??
     pickPreferred(attC.renewal_date, bodyC.renewal_date, subjectC.renewal_date) ??
     formatTodayDateMmDdYyyy();
-  const renewal_date = dateFromMerge ? renewalRaw : toIsoDateHint(renewalRaw);
+  const renewal_date = toIsoDateHint(renewalRaw);
 
   const amount =
-    amountFromMerge ??
-    pickPreferred(attC.amount, bodyC.amount, subjectC.amount) ??
-    "";
+    pickPreferred(attC.amount, bodyC.amount, subjectC.amount) ?? "";
 
   const plan_name =
-    planFromMerge ??
-    pickPreferred(attC.plan_name, bodyC.plan_name, subjectC.plan_name) ??
-    "";
+    pickPreferred(attC.plan_name, bodyC.plan_name, subjectC.plan_name) ?? "";
 
   const company_name =
     (input.senderName || "").trim() || APP_BRAND_NAME;
