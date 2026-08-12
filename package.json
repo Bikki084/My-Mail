@@ -19,6 +19,8 @@
     "smoke-auth": "tsx scripts/smoke-test-auth.ts",
     "check": "tsx scripts/check-connections.ts",
     "check:secrets": "node scripts/check-secrets.mjs",
+    "check:gemini-env": "node scripts/check-gemini-env.cjs",
+    "check:gemini": "tsx scripts/check-gemini-key.ts",
     "db:migrate": "tsx scripts/apply-migrations.ts",
     "db:essential": "tsx scripts/apply-essential-sql.ts",
     "lightsail:ensure-primary": "tsx scripts/ensure-lightsail-primary.ts",
