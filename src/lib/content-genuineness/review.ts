@@ -14,6 +14,15 @@ import {
   collectAttachmentTexts,
 } from "@/lib/content-genuineness/attachment";
 import {
+  buildCanonicalContentFields,
+  canonicalFieldsAuditId,
+  type CanonicalContentFields,
+} from "@/lib/content-genuineness/canonical-fields";
+import {
+  assertCrossArtifactConsistency,
+  assertPhishingIndicatorSanity,
+} from "@/lib/content-genuineness/consistency";
+import {
   isGroundedRewriteConfigured,
   suggestGroundedRewrite,
 } from "@/lib/content-genuineness/gemini-grounded";
@@ -41,6 +50,132 @@ function toPublicFeedback(issues: GenuinenessInternalIssue[]): GenuinenessFeedba
   return out;
 }
 
+function attachmentHtmlFromInput(input: GenuinenessReviewInput): string | null {
+  const html = input.attachments?.find((a) => a.htmlText?.trim())?.htmlText?.trim();
+  return html || null;
+}
+
+async function runConsistentRewrite(args: {
+  subject: string;
+  bodyHtml: string;
+  senderName: string;
+  plainBody: string;
+  attachmentCombined: string;
+  attachmentHtml: string | null;
+  feedback: GenuinenessFeedback[];
+  mergeTags: string[];
+  canonical: CanonicalContentFields;
+}): Promise<{
+  ok: true;
+  suggestedSubject: string;
+  suggestedHtml: string;
+  suggestedAttachmentHtml: string | null;
+  summary: string;
+  canonicalFields: CanonicalContentFields;
+} | {
+  ok: false;
+  reason: string;
+  canonicalFields: CanonicalContentFields;
+}> {
+  let retryNote: string | null = null;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const gemini = await suggestGroundedRewrite({
+      subject: args.subject,
+      bodyHtml: args.bodyHtml,
+      senderName: args.senderName,
+      plainBody: args.plainBody,
+      attachmentHtml: args.attachmentHtml,
+      attachmentText: args.attachmentCombined || null,
+      feedback: args.feedback,
+      mergeTags: args.mergeTags,
+      canonical: args.canonical,
+      consistencyRetryNote: retryNote,
+    });
+
+    if (!gemini.ok) {
+      return { ok: false, reason: gemini.reason, canonicalFields: args.canonical };
+    }
+
+    const sources = `${args.subject}\n${args.plainBody}\n${args.attachmentCombined}`;
+    const rewritePlain = htmlToPlainText(gemini.suggestedHtml);
+    if (rewriteIntroducesUngroundedClaims(rewritePlain, sources)) {
+      return {
+        ok: false,
+        reason:
+          "AI rewrite looked like it added claims not present in your draft/attachment — suggestion withheld. Edit manually.",
+        canonicalFields: args.canonical,
+      };
+    }
+
+    const consistency = assertCrossArtifactConsistency({
+      canonical: args.canonical,
+      subject: gemini.suggestedSubject,
+      bodyHtmlOrText: `${gemini.suggestedHtml}\n${rewritePlain}`,
+      attachmentHtmlOrText: gemini.suggestedAttachmentHtml,
+    });
+
+    const phishing = assertPhishingIndicatorSanity({
+      canonical: args.canonical,
+      subject: gemini.suggestedSubject,
+      bodyHtmlOrText: `${gemini.suggestedHtml}\n${rewritePlain}`,
+      mergeTags: args.mergeTags,
+    });
+
+    if (consistency.ok && phishing.ok) {
+      console.info("[content-genuineness] apply-ready rewrite", {
+        canonicalId: canonicalFieldsAuditId(args.canonical),
+        canonical: args.canonical,
+        subject: gemini.suggestedSubject,
+        bodyChars: gemini.suggestedHtml.length,
+        attachmentChars: gemini.suggestedAttachmentHtml?.length ?? 0,
+      });
+      return {
+        ok: true,
+        suggestedSubject: gemini.suggestedSubject,
+        suggestedHtml: gemini.suggestedHtml,
+        suggestedAttachmentHtml: gemini.suggestedAttachmentHtml,
+        summary: gemini.summary,
+        canonicalFields: args.canonical,
+      };
+    }
+
+    const parts: string[] = [];
+    if (!consistency.ok) {
+      parts.push(
+        ...consistency.mismatches.map(
+          (m) => `- ${m.detail} (expected ${m.expected}; subject=${m.subject ?? "—"} body=${m.body ?? "—"} att=${m.attachment ?? "—"})`,
+        ),
+      );
+    }
+    if (!phishing.ok) {
+      parts.push(...phishing.reasons.map((r) => `- ${r}`));
+    }
+    retryNote = parts.join("\n");
+
+    if (attempt === 1) {
+      console.warn("[content-genuineness] consistency check failed after retry", {
+        canonicalId: canonicalFieldsAuditId(args.canonical),
+        canonical: args.canonical,
+        mismatches: !consistency.ok ? consistency.mismatches : [],
+        phishingReasons: !phishing.ok ? phishing.reasons : [],
+      });
+      return {
+        ok: false,
+        reason:
+          "Consistency check failed — subject/body/attachment dynamic fields did not match. Please retry.",
+        canonicalFields: args.canonical,
+      };
+    }
+  }
+
+  return {
+    ok: false,
+    reason: "Consistency check failed — please retry.",
+    canonicalFields: args.canonical,
+  };
+}
+
 /**
  * Full pre-send genuineness review. Hard-fail on any blocking issue.
  * AI suggestions are optional assists — never auto-approve.
@@ -53,6 +188,8 @@ export async function runGenuinenessReview(
   const bodyHtml = input.bodyHtml.trim();
   const senderName = input.senderName.trim();
   const plainBody = htmlToPlainText(bodyHtml).trim();
+  const mergeTags = input.mergeTags ?? [];
+  const attachmentHtml = attachmentHtmlFromInput(input);
 
   const { combined: attachmentCombined, perFile } = await collectAttachmentTexts(
     input.attachments,
@@ -68,7 +205,6 @@ export async function runGenuinenessReview(
     ...checkBodyAttachmentRelevance(plainBody, attachmentCombined),
   ];
 
-  // Attachment present but body minimal → block (even if quality min words somehow bypassed)
   if (attachmentCombined && plainBody.split(/\s+/).filter(Boolean).length < 15) {
     issues.push({
       code: "thin_body_with_attachment",
@@ -86,6 +222,8 @@ export async function runGenuinenessReview(
 
   let suggestedSubject: string | null = null;
   let suggestedHtml: string | null = null;
+  let suggestedAttachmentHtml: string | null = null;
+  let canonicalFields: CanonicalContentFields | null = null;
   let aiUsed = false;
   let aiNote: string | null = null;
   let summary = passed
@@ -94,29 +232,35 @@ export async function runGenuinenessReview(
 
   const wantAi = opts?.useAi !== false && (!passed || (attachmentCombined && !plainBody));
   if (wantAi && isGroundedRewriteConfigured()) {
-    const gemini = await suggestGroundedRewrite({
+    const canonical = buildCanonicalContentFields({
+      subject,
+      plainBody,
+      attachmentText: attachmentCombined || null,
+      senderName,
+      mergeTags,
+    });
+    canonicalFields = canonical;
+
+    const rewrite = await runConsistentRewrite({
       subject,
       bodyHtml,
       senderName,
       plainBody,
-      attachmentText: attachmentCombined || null,
+      attachmentCombined,
+      attachmentHtml,
       feedback,
-      mergeTags: input.mergeTags ?? [],
+      mergeTags,
+      canonical,
     });
-    if (gemini.ok) {
-      const sources = `${subject}\n${plainBody}\n${attachmentCombined}`;
-      const rewritePlain = htmlToPlainText(gemini.suggestedHtml);
-      if (rewriteIntroducesUngroundedClaims(rewritePlain, sources)) {
-        aiNote =
-          "AI rewrite looked like it added claims not present in your draft/attachment — suggestion withheld. Edit manually.";
-      } else {
-        aiUsed = true;
-        suggestedSubject = gemini.suggestedSubject;
-        suggestedHtml = gemini.suggestedHtml;
-        summary = passed ? summary : gemini.summary;
-      }
+
+    if (rewrite.ok) {
+      aiUsed = true;
+      suggestedSubject = rewrite.suggestedSubject;
+      suggestedHtml = rewrite.suggestedHtml;
+      suggestedAttachmentHtml = rewrite.suggestedAttachmentHtml;
+      summary = passed ? summary : rewrite.summary;
     } else {
-      aiNote = gemini.reason;
+      aiNote = rewrite.reason;
     }
   } else if (wantAi && !isGroundedRewriteConfigured()) {
     aiNote = "Add GEMINI_API_KEY for AI-assisted grounded rewrites.";
@@ -132,6 +276,8 @@ export async function runGenuinenessReview(
       : null,
     suggestedSubject,
     suggestedHtml,
+    suggestedAttachmentHtml,
+    canonicalFields,
     aiUsed,
     aiNote,
   };

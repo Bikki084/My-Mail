@@ -25,3 +25,9 @@ export type {
   GenuinenessCategory,
   GenuinenessAttachmentInput,
 } from "@/lib/content-genuineness/types";
+export type { CanonicalContentFields } from "@/lib/content-genuineness/canonical-fields";
+export {
+  assertCrossArtifactConsistency,
+  assertPhishingIndicatorSanity,
+} from "@/lib/content-genuineness/consistency";
+export { buildCanonicalContentFields } from "@/lib/content-genuineness/canonical-fields";

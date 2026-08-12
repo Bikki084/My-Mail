@@ -63,6 +63,8 @@ type ContentReviewResult = {
   summary: string;
   suggestedSubject: string | null;
   suggestedHtml: string | null;
+  suggestedAttachmentHtml?: string | null;
+  canonicalFields?: Record<string, string> | null;
   aiUsed: boolean;
   aiNote: string | null;
   rescoringRemaining?: number;
@@ -434,6 +436,20 @@ export function EmailEditor({
 
   function applyContentSuggestions(which: "subject" | "body" | "both") {
     if (!contentReview) return;
+    if (contentReview.aiNote && /consistency check failed/i.test(contentReview.aiNote)) {
+      toast.error("Consistency check failed — please retry.", {
+        description: contentReview.aiNote,
+      });
+      return;
+    }
+    const alignedAttachment = Boolean(
+      contentReview.suggestedAttachmentHtml?.trim() && attachmentKind,
+    );
+    // Always apply the shared attachment rewrite when present so partial Apply
+    // cannot leave body/subject IDs out of sync with the PDF HTML.
+    if (alignedAttachment && contentReview.suggestedAttachmentHtml) {
+      updateComposerUi({ attachmentHtml: contentReview.suggestedAttachmentHtml.trim() });
+    }
     if (which === "subject" || which === "both") {
       if (contentReview.suggestedSubject) {
         updateCompose({ subject: contentReview.suggestedSubject });
@@ -448,7 +464,11 @@ export function EmailEditor({
     setGenuinenessPassToken(null);
     setContentReview(null);
     setContentReviewFingerprint(null);
-    toast.success("Suggestions applied — verification will re-run automatically.");
+    toast.success(
+      alignedAttachment
+        ? "Subject/body/attachment aligned — verification will re-run."
+        : "Suggestions applied — verification will re-run automatically.",
+    );
   }
 
   async function handlePreviewEmail() {
@@ -1385,6 +1405,28 @@ export function EmailEditor({
                     className="min-h-40 font-mono text-xs bg-zinc-900/80"
                     value={contentReview.suggestedHtml}
                   />
+                </div>
+              ) : null}
+              {contentReview.suggestedAttachmentHtml ? (
+                <div className="space-y-1">
+                  <p className="text-xs font-medium uppercase text-zinc-500">
+                    Suggested attachment HTML (same IDs as body)
+                  </p>
+                  <Textarea
+                    readOnly
+                    className="min-h-28 font-mono text-xs bg-zinc-900/80"
+                    value={contentReview.suggestedAttachmentHtml}
+                  />
+                </div>
+              ) : null}
+              {contentReview.canonicalFields ? (
+                <div className="space-y-1">
+                  <p className="text-xs font-medium uppercase text-zinc-500">
+                    Canonical fields (locked for this rewrite)
+                  </p>
+                  <pre className="overflow-x-auto rounded border border-zinc-800 bg-zinc-900/80 p-2 font-mono text-[11px] text-zinc-300">
+                    {JSON.stringify(contentReview.canonicalFields, null, 2)}
+                  </pre>
                 </div>
               ) : null}
             </div>

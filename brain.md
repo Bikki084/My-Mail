@@ -10,6 +10,7 @@
 
 | Date | Change |
 |------|--------|
+| 2026-08-12 | **Canonical rewrite fields:** Apply subject/body/both share one invoice/TXN/date object + attachment HTML; consistency validator blocks phishing-like mismatches |
 | 2026-08-12 | **Gemini models:** default `gemini-2.5-flash`; auto-remap retired `gemini-2.0-flash`; 404 fallbacks + thinkingBudget=0 (fix content verification 404) |
 | 2026-08-06 | **Favicon:** tab + Apple touch icons match header logo (emerald→teal mail mark) via `src/app/icon.svg` + `apple-icon.tsx` |
 | 2026-08-06 | **Domain cutover:** production app switched back to `bulkfirepro.com` (from `bulkprofire.com`) |
@@ -203,7 +204,7 @@ Pre-send coach in **Email Composer → Verify content**:
 |-------|----------------|
 | **Local heuristics** | Instant score 0–100: caps, spam phrases, thin body, attachment-only pitch, link count |
 | **Genuineness gate** | Hard pass/fail on subject quality, body specificity, subject↔body alignment, attachment text, body↔attachment relevance |
-| **Gemini AI** (optional) | Grounded rewrite of subject + HTML from draft/PDF text; personalizes with CSV merge tags (`{{{name}}}`, `{{{email}}}`, …); preserves existing tags; never auto-approved |
+| **Gemini AI** (optional) | Grounded rewrite of subject + HTML + attachment HTML from one **canonical fields** object (invoice/TXN/date/company/support); consistency validator blocks mismatched IDs; personalizes with CSV merge tags; never auto-approved |
 
 **API:** `POST /api/campaigns/content-review` (authenticated)
 

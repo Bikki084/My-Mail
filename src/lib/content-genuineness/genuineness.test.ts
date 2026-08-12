@@ -15,6 +15,9 @@ import {
   verifyGenuinenessPassToken,
 } from "./pass-token";
 import { rewriteIntroducesUngroundedClaims } from "./grounding";
+import { assertCrossArtifactConsistency } from "./consistency";
+import { buildCanonicalContentFields } from "./canonical-fields";
+import { APP_NOREPLY_EMAIL } from "@/lib/brand";
 
 describe("content-genuineness checks", () => {
   it("rejects deceptive subject/body mismatch", () => {
@@ -96,6 +99,68 @@ describe("content-genuineness checks", () => {
       token,
       userId: "user-1",
       fingerprint: a,
+    });
+    assert.equal(good.ok, true);
+  });
+});
+
+describe("canonical fields + consistency validator", () => {
+  it("locks one invoice when body and PDF disagree", () => {
+    const body =
+      "Invoice INV-5911142 TXN 734QHN0382 renewal 08/12/2026 for BulkProFire plan.";
+    const attachment =
+      "Invoice BFP-28194956 Transaction TXN-8119482 renewal date 07/05/2026 amount $49.00";
+    const canonical = buildCanonicalContentFields({
+      subject: "Your subscription invoice",
+      plainBody: body,
+      attachmentText: attachment,
+      senderName: "BulkProFire",
+      mergeTags: ["name", "email"],
+      seed: "test-seed-1",
+    });
+    // Attachment wins as document of record when values conflict.
+    assert.equal(canonical.invoice_number, "BFP-28194956");
+    assert.match(canonical.transaction_id, /TXN-8119482|8119482/i);
+    assert.ok(canonical.support_contact.includes(APP_NOREPLY_EMAIL));
+    assert.equal(canonical.recipient_name, "{{{name}}}");
+  });
+
+  it("blocks mismatched mock data like the BulkFirePro phishing example", () => {
+    const canonical = buildCanonicalContentFields({
+      subject: "Subscription Invoice",
+      plainBody:
+        "Invoice INV-5911142 / TXN 734QHN0382 / renewal 08/12/2026 company BulkProFire",
+      attachmentText:
+        "Invoice BFP-28194956 / TXN-8119482 / renewal 07/05/2026 company BulkProFire",
+      senderName: "BulkProFire",
+      seed: "mismatch-case",
+    });
+
+    const bad = assertCrossArtifactConsistency({
+      canonical,
+      subject: "Subscription Invoice INV-5911142",
+      bodyHtmlOrText:
+        "<p>Invoice INV-5911142 Transaction 734QHN0382 renewal 08/12/2026</p>",
+      attachmentHtmlOrText:
+        "<p>Invoice BFP-28194956 TXN-8119482 renewal 07/05/2026</p>",
+    });
+    assert.equal(bad.ok, false);
+    if (!bad.ok) {
+      assert.ok(bad.mismatches.some((m) => m.field === "invoice_number"));
+    }
+
+    const good = assertCrossArtifactConsistency({
+      canonical: {
+        ...canonical,
+        invoice_number: "INV-5911142",
+        transaction_id: "734QHN0382",
+        renewal_date: "2026-08-12",
+      },
+      subject: "Subscription Invoice INV-5911142",
+      bodyHtmlOrText:
+        `<p>Invoice INV-5911142 Transaction 734QHN0382 renewal 2026-08-12. Contact ${APP_NOREPLY_EMAIL}</p>`,
+      attachmentHtmlOrText:
+        "<p>Invoice INV-5911142 TXN 734QHN0382 renewal 2026-08-12</p>",
     });
     assert.equal(good.ok, true);
   });

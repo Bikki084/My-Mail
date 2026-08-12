@@ -193,6 +193,10 @@ export async function POST(req: Request) {
     metadata: {
       issueCodes: genuineness.issues.map((i) => i.code),
       advisoryRiskLevel: heuristics.level,
+      canonicalFields: genuineness.canonicalFields,
+      suggestedSubject: genuineness.suggestedSubject,
+      suggestedHtmlChars: genuineness.suggestedHtml?.length ?? 0,
+      suggestedAttachmentHtmlChars: genuineness.suggestedAttachmentHtml?.length ?? 0,
     },
   });
 
@@ -212,6 +216,8 @@ export async function POST(req: Request) {
     summary: genuineness.summary,
     suggestedSubject: genuineness.suggestedSubject,
     suggestedHtml: genuineness.suggestedHtml,
+    suggestedAttachmentHtml: genuineness.suggestedAttachmentHtml,
+    canonicalFields: genuineness.canonicalFields,
     aiUsed: genuineness.aiUsed,
     aiNote: genuineness.aiNote,
     rescoringRemaining: rateLimit.remaining,

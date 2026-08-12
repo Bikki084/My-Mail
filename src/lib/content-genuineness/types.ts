@@ -12,6 +12,8 @@
  * volume-related risk; this gate is the primary defense against content-quality risk.
  */
 
+import type { CanonicalContentFields } from "@/lib/content-genuineness/canonical-fields";
+
 export type GenuinenessCategory =
   | "subject_quality"
   | "body_quality"
@@ -62,6 +64,10 @@ export type GenuinenessReviewResult = {
   attachmentTextExcerpt: string | null;
   suggestedSubject: string | null;
   suggestedHtml: string | null;
+  /** Rewritten attachment HTML sharing the same canonical dynamic fields. */
+  suggestedAttachmentHtml: string | null;
+  /** Single source of truth for IDs/dates used across subject/body/attachment. */
+  canonicalFields: CanonicalContentFields | null;
   aiUsed: boolean;
   aiNote: string | null;
 };
