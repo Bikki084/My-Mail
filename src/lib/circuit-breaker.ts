@@ -63,6 +63,15 @@ export class CircuitBreaker {
     this.defaultTimeoutMs = Math.max(0, options.timeoutMs ?? 0);
   }
 
+  /** Force-closed after ops like key rotation / admin Refresh. */
+  reset(): void {
+    this.state = "closed";
+    this.failures = 0;
+    this.lastFailureAt = 0;
+    this.openedAt = 0;
+    this.halfOpenInFlight = false;
+  }
+
   isOpen(): boolean {
     this.syncStateForHalfOpen();
     return this.state === "open";

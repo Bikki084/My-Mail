@@ -3,11 +3,15 @@
 const { readFileSync, existsSync } = require("node:fs");
 const { join } = require("node:path");
 
-/** Load .env.local / .env into process.env (does not overwrite existing). */
+/** Load .env.local / .env into process.env.
+ *  `.env.local` overwrites existing values (so key rotations take effect on restart).
+ *  `.env` only fills keys that are still unset.
+ */
 function loadProjectEnv(cwd = process.cwd()) {
-  for (const name of [".env.local", ".env"]) {
+  for (const name of [".env", ".env.local"]) {
     const path = join(cwd, name);
     if (!existsSync(path)) continue;
+    const overwrite = name === ".env.local";
     for (const line of readFileSync(path, "utf8").split(/\r?\n/)) {
       const m = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/.exec(line);
       if (!m) continue;
@@ -18,7 +22,9 @@ function loadProjectEnv(cwd = process.cwd()) {
       ) {
         v = v.slice(1, -1);
       }
-      if (process.env[m[1]] == null) process.env[m[1]] = v;
+      if (overwrite || process.env[m[1]] == null) {
+        process.env[m[1]] = v;
+      }
     }
   }
 }

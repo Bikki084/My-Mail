@@ -201,13 +201,24 @@ export async function fetchSendGridQuota(options?: {
 }): Promise<SendGridQuotaSnapshot> {
   const force = options?.force === true;
   const now = Date.now();
-  if (!force && cache && now - cache.at < CACHE_TTL_MS) {
+  if (force) {
+    cache = null;
+    sendgridCircuit.reset();
+  } else if (cache && now - cache.at < CACHE_TTL_MS) {
     return cache.data;
   }
 
   const apiKey = process.env.SENDGRID_API_KEY?.trim();
   if (!apiKey) {
     const snap = notConfigured();
+    cache = { at: now, data: snap };
+    return snap;
+  }
+
+  if (!apiKey.startsWith("SG.")) {
+    const snap = notConfigured(
+      "SENDGRID_API_KEY looks invalid (expected a key starting with SG.). Check .env.local and restart PM2.",
+    );
     cache = { at: now, data: snap };
     return snap;
   }
@@ -227,6 +238,21 @@ export async function fetchSendGridQuota(options?: {
         const planType = accountRes.ok
           ? (accountRes.data.type ?? "unknown").toLowerCase()
           : "unknown";
+
+        // Auth failures should not stay hidden behind "circuit open".
+        if (!creditsRes.ok && (creditsRes.status === 401 || creditsRes.status === 403)) {
+          const errSnap: SendGridQuotaSnapshot = {
+            configured: true,
+            live: false,
+            error: `SendGrid rejected the API key (HTTP ${creditsRes.status}). Create a key with Read access and set SENDGRID_API_KEY in .env.local, then: pm2 restart mymail-web --update-env`,
+            accountEmail,
+            planType,
+            planLabel: labelForPlanType(planType),
+            fetchedAt,
+          };
+          cache = { at: now, data: errSnap };
+          return errSnap;
+        }
 
         if (creditsRes.ok) {
           const c = creditsRes.data;
@@ -307,7 +333,8 @@ export async function fetchSendGridQuota(options?: {
           return {
             configured: true,
             live: false,
-            error: "SendGrid API temporarily unavailable (circuit open). Try again shortly.",
+            error:
+              "SendGrid API temporarily unavailable (circuit open). Click Refresh, or restart: pm2 restart mymail-web --update-env",
             fetchedAt,
           };
         },
