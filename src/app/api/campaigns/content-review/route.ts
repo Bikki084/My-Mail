@@ -49,6 +49,8 @@ const bodySchema = z.object({
   /** First CSV recipient — expands merge tags for final body/attachment consistency check. */
   preview_recipient_email: z.string().email().optional(),
 });
+
+export async function POST(req: Request) {
   const supabase = await createClient();
   const {
     data: { user },
