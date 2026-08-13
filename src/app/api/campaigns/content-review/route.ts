@@ -88,6 +88,8 @@ export async function POST(req: Request) {
     bodyHtml: string;
     attachmentHtml: string;
   } | null = null;
+  let generateAttempts: unknown[] = [];
+  let generateContentType: string | null = null;
 
   if (composeMode === "ai_generate") {
     const brief = (parsed.data.ai_brief ?? "").trim();
@@ -123,6 +125,8 @@ export async function POST(req: Request) {
       bodyHtml: generated.bodyHtml,
       attachmentHtml: generated.attachmentHtml,
     };
+    generateAttempts = generated.attempts;
+    generateContentType = generated.contentType;
   }
 
   const compose = validateCampaignComposeRequired({
@@ -293,6 +297,8 @@ export async function POST(req: Request) {
     aiNote: genuineness.aiNote,
     phishingVerdict: genuineness.phishingVerdict,
     generatedContent,
+    generateContentType,
+    generateAttempts,
     rescoringRemaining: rateLimit.remaining,
     gateRequired: gateOn,
   });

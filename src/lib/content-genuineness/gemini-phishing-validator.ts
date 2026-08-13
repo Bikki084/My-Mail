@@ -76,6 +76,8 @@ Return FAIL if ANY of the following are true:
 - There is urgency/pressure language, vague or missing support contact details, or mismatched/placeholder transaction identifiers that appear auto-generated rather than pulled from a real record.
 - Any monetary amount, plan name, or renewal date appears inconsistent across the subject, body, or attachment.
 - The content overall resembles a known phishing/invoice-scam pattern (fake renewal notice, fake payment confirmation designed to induce a support callback).
+- The attachment topic does not match the email body (e.g. a connectivity-test email with an invoice PDF).
+- Financial fields (invoice number, transaction ID, amount, renewal date) appear in a non-billing email.
 
 Verified support contact for this platform: ${APP_NOREPLY_EMAIL} · ${APP_PUBLIC_URL}
 Sender display name on file: ${input.senderName || "(not set)"}

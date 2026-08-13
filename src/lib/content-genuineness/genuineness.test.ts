@@ -106,6 +106,19 @@ describe("content-genuineness checks", () => {
 });
 
 describe("canonical fields + consistency validator", () => {
+  it("does not invent invoice fields for a connectivity-test draft", () => {
+    const canonical = buildCanonicalContentFields({
+      subject: "Connectivity test",
+      plainBody: "Hi {{{name}}}, this is a connectivity test from BulkProFire. Status OK.",
+      attachmentText: "Connectivity test summary. Status OK. Support listed.",
+      senderName: "BulkProFire",
+      seed: "conn-test",
+    });
+    assert.equal(canonical.invoice_number, "");
+    assert.equal(canonical.transaction_id, "");
+    assert.equal(canonical.amount, "");
+  });
+
   it("locks one invoice when body and PDF disagree", () => {
     const body =
       "Invoice INV-5911142 TXN 734QHN0382 renewal 08/12/2026 for BulkProFire plan.";

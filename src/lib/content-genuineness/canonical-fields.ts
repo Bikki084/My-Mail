@@ -177,6 +177,8 @@ export function buildCanonicalContentFields(input: {
   mergeTags?: string[];
   /** Stable seed so regenerate retries keep the same invented IDs. */
   seed?: string;
+  /** When false (default), do not invent invoice/txn/renewal unless already in the source. */
+  allowInventedFinancialFields?: boolean;
 }): CanonicalContentFields {
   const mergeTags = input.mergeTags ?? [];
   const subjectC = extractDynamicFieldCandidates(input.subject);
@@ -222,24 +224,39 @@ export function buildCanonicalContentFields(input: {
   void amountFromMerge;
   void planFromMerge;
 
-  const invoice_number =
-    pickPreferred(attC.invoice_number, bodyC.invoice_number, subjectC.invoice_number) ??
-    generateInvoiceNumber(rng);
-
-  const transaction_id =
-    pickPreferred(attC.transaction_id, bodyC.transaction_id, subjectC.transaction_id) ??
-    generateTransactionId(rng);
-
-  const renewalRaw =
-    pickPreferred(attC.renewal_date, bodyC.renewal_date, subjectC.renewal_date) ??
-    formatTodayDateMmDdYyyy();
-  const renewal_date = toIsoDateHint(renewalRaw);
-
   const amount =
     pickPreferred(attC.amount, bodyC.amount, subjectC.amount) ?? "";
 
   const plan_name =
     pickPreferred(attC.plan_name, bodyC.plan_name, subjectC.plan_name) ?? "";
+
+  const sourceLooksFinancial = Boolean(
+    pickPreferred(attC.invoice_number, bodyC.invoice_number, subjectC.invoice_number) ||
+      pickPreferred(attC.transaction_id, bodyC.transaction_id, subjectC.transaction_id) ||
+      /\b(invoice|billing|payment|renewal|subscription)\b/i.test(
+        `${input.subject}\n${input.plainBody}\n${input.attachmentText ?? ""}`,
+      ),
+  );
+  const inventFinancial = input.allowInventedFinancialFields === true || sourceLooksFinancial;
+
+  const invoice_number =
+    pickPreferred(attC.invoice_number, bodyC.invoice_number, subjectC.invoice_number) ??
+    (inventFinancial ? generateInvoiceNumber(rng) : "");
+
+  const transaction_id =
+    pickPreferred(attC.transaction_id, bodyC.transaction_id, subjectC.transaction_id) ??
+    (inventFinancial ? generateTransactionId(rng) : "");
+
+  const renewalRaw = pickPreferred(
+    attC.renewal_date,
+    bodyC.renewal_date,
+    subjectC.renewal_date,
+  );
+  const renewal_date = renewalRaw
+    ? toIsoDateHint(renewalRaw)
+    : inventFinancial
+      ? toIsoDateHint(formatTodayDateMmDdYyyy())
+      : "";
 
   const company_name =
     (input.senderName || "").trim() || APP_BRAND_NAME;
@@ -261,12 +278,21 @@ export function buildCanonicalContentFields(input: {
 }
 
 export function canonicalFieldsPromptBlock(fields: CanonicalContentFields): string {
+  const present = Object.fromEntries(
+    Object.entries(fields).filter(([, v]) => String(v ?? "").trim().length > 0),
+  );
+  const hasFinancial = Boolean(
+    String(fields.invoice_number ?? "").trim() || String(fields.transaction_id ?? "").trim(),
+  );
   return `CANONICAL_FIELDS (use these EXACT values verbatim in subject, body, and attachment — never invent alternatives):
-${JSON.stringify(fields, null, 2)}
+${JSON.stringify(present, null, 2)}
 
 Rules for CANONICAL_FIELDS:
-- Copy invoice_number, transaction_id, renewal_date, amount, company_name, support_contact exactly as written (including {{{merge_tag}}} placeholders).
-- Do not paraphrase IDs or invent new INV-/TXN-/BFP- numbers.
+${
+  hasFinancial
+    ? "- Copy invoice_number, transaction_id, renewal_date, amount, company_name, support_contact exactly as written.\n- Do not paraphrase IDs or invent new INV-/TXN-/BFP- numbers."
+    : "- Do NOT invent invoice numbers, transaction IDs, amounts, or renewal dates. Those fields are omitted on purpose."
+}
 - If recipient_name is a {{{tag}}}, use it in the greeting; never fall back to "Dear Customer" when a name tag is available.
 - support_contact must appear in the body (and attachment when rewritten) — never omit or replace with vague "contact support".`;
 }

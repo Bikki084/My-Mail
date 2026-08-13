@@ -87,7 +87,7 @@ CRITICAL GROUNDING RULES:
 - If the body is empty/minimal but attachment text exists, draft a short genuine subject + body that accurately summarizes what the attachment contains using CANONICAL_FIELDS — still no invented commercial claims.
 - Return HTML body with simple <p> tags only.
 - Subject under 78 characters.
-${wantAttachment ? "- suggestedAttachmentHtml must be valid standalone HTML for a PDF/image attachment and must contain the SAME invoice_number, transaction_id, renewal_date, amount, and company_name as the body." : "- Set suggestedAttachmentHtml to null."}
+${wantAttachment ? "- suggestedAttachmentHtml must be valid standalone HTML that matches the body topic and uses the same CANONICAL_FIELDS. If CANONICAL_FIELDS has no invoice/txn/amount, the attachment MUST NOT be an invoice." : "- Set suggestedAttachmentHtml to null."}
 
 PHISHING INDICATORS TO AVOID:
 - Mismatched IDs between body and attachment
