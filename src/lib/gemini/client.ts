@@ -10,12 +10,19 @@ const MODEL_ALIASES: Record<string, string> = {
   "gemini-flash-latest": "gemini-2.5-flash",
 };
 
-/** Tried in order when the preferred model returns 404 / NOT_FOUND. */
+/** Tried in order when the preferred model returns 404 / NOT_FOUND / quota. */
 const FALLBACK_MODELS = [
   "gemini-2.5-flash",
+  "gemini-2.5-flash-lite",
   "gemini-3.5-flash",
   "gemini-3.1-flash-lite",
+] as const;
+
+const LITE_FIRST_MODELS = [
   "gemini-2.5-flash-lite",
+  "gemini-2.5-flash",
+  "gemini-3.1-flash-lite",
+  "gemini-3.5-flash",
 ] as const;
 
 export const DEFAULT_GEMINI_CONTENT_REVIEW_MODEL = "gemini-2.5-flash";
@@ -39,7 +46,7 @@ function normalizeModelId(raw: string): string {
 }
 
 /** Preferred model + unique fallbacks (retired IDs remapped). */
-export function resolveGeminiModelCandidates(): string[] {
+export function resolveGeminiModelCandidates(opts?: { preferLite?: boolean }): string[] {
   const preferred = normalizeModelId(
     envGet("GEMINI_CONTENT_REVIEW_MODEL") || DEFAULT_GEMINI_CONTENT_REVIEW_MODEL,
   );
@@ -48,9 +55,34 @@ export function resolveGeminiModelCandidates(): string[] {
     const n = normalizeModelId(id);
     if (n && !out.includes(n)) out.push(n);
   };
+  if (opts?.preferLite) {
+    for (const id of LITE_FIRST_MODELS) push(id);
+    push(preferred);
+    return out;
+  }
   push(preferred);
   for (const id of FALLBACK_MODELS) push(id);
   return out;
+}
+
+export function humanizeGeminiFailure(reason: string): string {
+  const lower = reason.toLowerCase();
+  if (
+    /429|resource_exhausted|quota|rate.?limit|exceeded your current quota|free.?tier|billing/i.test(
+      lower,
+    )
+  ) {
+    return (
+      "Gemini free-tier quota is used up for today. It resets around midnight Pacific time. " +
+      "There is no unlimited free Google plan — either wait for the daily reset, or click " +
+      "Set up billing in Google AI Studio (pay-as-you-go; Flash-Lite is typically fractions of a cent). " +
+      "Until then, use Manual mode to write the email; verification also needs Gemini and will stay blocked."
+    );
+  }
+  if (/401|403|api.?key|permission|unauthor/i.test(lower)) {
+    return "Gemini API key was rejected. Check GEMINI_API_KEY in .env.local and that the key has no HTTP-referrer restriction.";
+  }
+  return reason;
 }
 
 export type GeminiGenerateResult =
@@ -80,13 +112,16 @@ function isModelMissingError(status: number, body: string): boolean {
  * Call Gemini generateContent with model fallbacks and thinking disabled
  * (avoids empty JSON when thinking tokens eat the budget).
  */
-export async function generateGeminiJsonText(prompt: string): Promise<GeminiGenerateResult> {
+export async function generateGeminiJsonText(
+  prompt: string,
+  opts?: { preferLite?: boolean },
+): Promise<GeminiGenerateResult> {
   const apiKey = resolveGeminiApiKey();
   if (!apiKey) {
     return { ok: false, reason: "GEMINI_API_KEY not configured." };
   }
 
-  const models = resolveGeminiModelCandidates();
+  const models = resolveGeminiModelCandidates({ preferLite: opts?.preferLite });
   let lastReason = "Gemini request failed.";
 
   for (const model of models) {
@@ -116,7 +151,9 @@ export async function generateGeminiJsonText(prompt: string): Promise<GeminiGene
 
         if (!res.ok) {
           const errText = await res.text().catch(() => "");
-          lastReason = `Gemini API error ${res.status} (${model}): ${errText.slice(0, 220)}`;
+          lastReason = humanizeGeminiFailure(
+            `Gemini API error ${res.status} (${model}): ${errText.slice(0, 220)}`,
+          );
           if (isModelMissingError(res.status, errText)) break;
           if (
             withThinking &&
@@ -125,9 +162,12 @@ export async function generateGeminiJsonText(prompt: string): Promise<GeminiGene
           ) {
             continue;
           }
-          // Auth / quota: stop immediately
-          if (res.status === 401 || res.status === 403 || res.status === 429) {
+          // Auth: stop. Quota (429): try the next model (Lite often still has free quota).
+          if (res.status === 401 || res.status === 403) {
             return { ok: false, reason: lastReason };
+          }
+          if (res.status === 429) {
+            break;
           }
           if (!withThinking) break;
           continue;
@@ -148,5 +188,5 @@ export async function generateGeminiJsonText(prompt: string): Promise<GeminiGene
     }
   }
 
-  return { ok: false, reason: lastReason };
+  return { ok: false, reason: humanizeGeminiFailure(lastReason) };
 }

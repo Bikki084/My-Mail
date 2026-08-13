@@ -1,7 +1,7 @@
 import "server-only";
 
 import { APP_NOREPLY_EMAIL, APP_PUBLIC_URL } from "@/lib/brand";
-import { generateGeminiJsonText } from "@/lib/gemini/client";
+import { generateGeminiJsonText, humanizeGeminiFailure } from "@/lib/gemini/client";
 
 export type PhishingMismatch = {
   field: string;
@@ -113,16 +113,19 @@ export async function runGeminiPhishingValidation(input: {
   const gemini = await generateGeminiJsonText(prompt);
 
   if (!gemini.ok) {
-    console.error("[phishing-validator] Gemini call failed:", gemini.reason);
+    const error = humanizeGeminiFailure(gemini.reason);
+    console.error("[phishing-validator] Gemini call failed:", error);
     return {
       executed: false,
       status: "ERROR",
       mismatches_found: [],
       flags: [],
-      reasoning: "Verification could not be completed — send is blocked until this is resolved.",
+      reasoning: error.includes("quota")
+        ? error
+        : "Verification could not be completed — send is blocked until this is resolved.",
       rawResponse: null,
       model: null,
-      error: gemini.reason,
+      error,
     };
   }
 

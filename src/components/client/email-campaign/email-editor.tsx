@@ -930,8 +930,10 @@ export function EmailEditor({
                   onChange={(e) => setAiBrief(e.target.value)}
                 />
                 <p className="text-xs text-zinc-500">
-                  Gemini generates subject, body, and attachment from one shared data set, then runs
-                  phishing verification before unlock.
+                  Gemini writes subject, body, and attachment together, then runs phishing
+                  verification. Vague briefs (e.g. “simple mail, no spam”) often fail — be specific.
+                  If you see a quota error, the Google free tier is used up for today (resets nightly);
+                  Manual mode still works for writing, but verification needs Gemini.
                 </p>
               </div>
             ) : null}
