@@ -72,7 +72,10 @@ async function main() {
     ["password_reset", d2],
     ["generic", d3],
   ] as const) {
-    assert.equal(r.ok, true, `${name} must generate`);
+    if (!r.ok) {
+      log(`TEST D ${name} FAILED to generate`, { reason: r.reason, attempts: r.attempts });
+      assert.fail(`${name} must generate: ${r.reason}`);
+    }
     const blob = `${r.subject}\n${r.bodyHtml}\n${r.attachmentHtml}`;
     assert.equal(textHasFinancialFields(blob), false, `${name} must not invent financial fields`);
     console.log(`TEST D ${name}: content_type=${r.contentType} passedVerification=${r.passedVerification}`);

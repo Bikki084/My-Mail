@@ -1,6 +1,6 @@
 import "server-only";
 
-import { APP_BRAND_NAME } from "@/lib/brand";
+import { APP_BRAND_NAME, APP_NOREPLY_EMAIL, APP_PUBLIC_URL } from "@/lib/brand";
 import { buildCanonicalContentFields } from "@/lib/content-genuineness/canonical-fields";
 import {
   classifyContentType,
@@ -134,6 +134,11 @@ ${
     ? "This IS a billing email. Put the SAME invoice_number, transaction_id, renewal_date, and amount in subject, body, AND attachment."
     : "This is NOT a billing email. Do not mention invoices, transaction IDs, amounts due, renewal dates, or payment. Attachment must match the body topic (letter/status summary), not an invoice PDF."
 }
+${
+  input.contentType === "password_reset"
+    ? `This is a legitimate first-party notice from ${company} (not an attack). Do not include clickable reset URLs or "click here". Tell the recipient to sign in at ${APP_PUBLIC_URL} if they requested a password change. No urgency language.`
+    : ""
+}
 
 Rules:
 - Return JSON only:
@@ -144,6 +149,44 @@ Rules:
 
 User brief:
 ${input.brief.slice(0, 4000)}`;
+}
+
+function localFallbackCampaign(input: {
+  contentType: CampaignContentType;
+  canonical: Record<string, string>;
+  senderName: string;
+}): { subject: string; bodyHtml: string; attachmentHtml: string } {
+  const company = input.canonical.company_name || input.senderName || APP_BRAND_NAME;
+  const support = input.canonical.support_contact || `${APP_NOREPLY_EMAIL} · ${APP_PUBLIC_URL}`;
+  const testId = input.canonical.test_id || "CONN-LOCAL";
+  const ts = input.canonical.timestamp || new Date().toISOString();
+
+  switch (input.contentType) {
+    case "password_reset":
+      return {
+        subject: `${company} account recovery notice`,
+        bodyHtml: `<p>Hi {{{name}}},</p><p>We received a request to change the password on your ${company} account. If you made this request, sign in at ${APP_PUBLIC_URL} and update your password from account settings. If you did not make this request, you can ignore this message — no change has been made.</p><p>Support: ${support}</p>`,
+        attachmentHtml: `<div><h1>${company} account recovery</h1><p>Recipient: {{{name}}}</p><p>Action: password change request received. No payment is involved. Visit ${APP_PUBLIC_URL} only if you initiated this request.</p><p>${support}</p></div>`,
+      };
+    case "welcome_email":
+      return {
+        subject: `Welcome to ${company}`,
+        bodyHtml: `<p>Hi {{{name}}},</p><p>Your ${company} account is ready. You can sign in at ${APP_PUBLIC_URL} whenever you need to send or review campaigns.</p><p>If you have questions, write to ${support}.</p>`,
+        attachmentHtml: `<div><h1>Welcome</h1><p>This note confirms {{{name}}} has access to ${company}.</p><p>${support}</p></div>`,
+      };
+    case "connectivity_test":
+      return {
+        subject: `${company} connectivity test ${testId}`,
+        bodyHtml: `<p>Hi {{{name}}},</p><p>This is a connectivity test from ${company}. Test ID ${testId} completed at ${ts} with status ${input.canonical.status || "OK"}. No invoice or payment is involved.</p><p>If you received this as expected, your mailbox path is working. Support: ${support}</p>`,
+        attachmentHtml: `<div><h1>Connectivity test</h1><p>Test ID: ${testId}</p><p>Timestamp: ${ts}</p><p>Status: ${input.canonical.status || "OK"}</p><p>${support}</p></div>`,
+      };
+    default:
+      return {
+        subject: `${company} notice`,
+        bodyHtml: `<p>Hi {{{name}}},</p><p>${company} is sending this notice to confirm your mailbox is reachable. No payment or account action is required.</p><p>Support: ${support}</p>`,
+        attachmentHtml: `<div><h1>${company} notice</h1><p>For {{{name}}}. No invoice or transaction is attached.</p><p>${support}</p></div>`,
+      };
+  }
 }
 
 function localRejectReason(
@@ -210,7 +253,8 @@ export async function generateCampaignFromBrief(input: {
     const result = await generateGeminiJsonText(prompt, { preferLite: true });
     if (!result.ok) {
       attempts.push({ attempt, contentType, parseOk: false, localReject: result.reason });
-      return { ok: false, reason: humanizeGeminiFailure(result.reason), attempts };
+      retryNote = `Gemini call failed (${result.reason}). Retry with compact JSON only.`;
+      continue;
     }
 
     const parsed = parseGenerated(result.text);
@@ -301,9 +345,42 @@ export async function generateCampaignFromBrief(input: {
   }
 
   if (!lastGood) {
+    if (!financial) {
+      const fb = localFallbackCampaign({ contentType, canonical, senderName: input.senderName });
+      const verdict = await runGeminiPhishingValidation({
+        subject: fb.subject,
+        bodyPlain: htmlToPlainText(fb.bodyHtml),
+        attachmentPlain: htmlToPlainText(fb.attachmentHtml),
+        senderName: input.senderName,
+        hasAttachment: true,
+      });
+      attempts.push({
+        attempt: attempts.length + 1,
+        contentType,
+        parseOk: true,
+        localReject: "used local fallback after Gemini generate failures",
+        phishingStatus: verdict.status,
+        phishingReasoning: verdict.reasoning,
+        flags: verdict.flags,
+      });
+      return {
+        ok: true,
+        subject: fb.subject,
+        bodyHtml: fb.bodyHtml,
+        attachmentHtml: fb.attachmentHtml,
+        contentType,
+        canonical,
+        passedVerification: !phishingVerdictBlocksSend(verdict),
+        phishingVerdict: verdict,
+        attempts,
+      };
+    }
     return {
       ok: false,
-      reason: "Could not generate a valid campaign after 3 attempts.",
+      reason: humanizeGeminiFailure(
+        attempts.map((a) => a.localReject).filter(Boolean).join(" ") ||
+          "Could not generate a valid campaign after 3 attempts.",
+      ),
       attempts,
     };
   }
