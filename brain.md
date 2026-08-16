@@ -8,6 +8,7 @@
 
 ## Changelog (recent)
 
+| 2026-08-16 | **Brand display:** UI name is `MailShooter` (logo/favicon unchanged) |
 | 2026-08-16 | **nginx cutover:** strip duplicate `gzip_vary` so mailshooter.in HTTPS setup can reload |
 | 2026-08-16 | **Domain cutover:** site + sending → `mailshooter.in` / Mailshooter; script `setup-mailshooter-lightsail.sh` |
 | 2026-08-13 | **Brand lock:** canonical display name is `Bulkfirepro` (`APP_BRAND_NAME`); `BulkProFire` is the wrong letter-order and is rewritten; UI/sender/generate/verify share one constant |
@@ -34,7 +35,7 @@
 
 | Item | Value |
 |------|--------|
-| **Brand** | Mailshooter (`APP_BRAND_NAME` in `src/lib/brand.ts`) |
+| **Brand** | MailShooter (`APP_BRAND_NAME` in `src/lib/brand.ts`) |
 | **Domain** | `mailshooter.in` |
 | **Repo** | GitHub `Bikki084/My-Mail` |
 | **Stack** | Next.js 16 App Router, React 19, Tailwind v4, Supabase, BullMQ + Redis, Nodemailer |

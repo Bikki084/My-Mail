@@ -17,12 +17,12 @@ export const APP_DOMAIN_SLUG = APP_DOMAIN.replace(/\./g, "");
  * User-facing product / company display name — the only source of truth for
  * `company_name` in generation, verification, UI, and default sender.
  */
-export const APP_BRAND_NAME = "Mailshooter";
+export const APP_BRAND_NAME = "MailShooter";
 
 /** Legacy / wrong-order names that must rewrite to APP_BRAND_NAME. */
 export const APP_BRAND_WRONG_LETTER_ORDER = "BulkProFire";
 
-const LEGACY_BRAND_ALIASES = ["BulkProFire", "Bulkfirepro", "BulkFirePro"] as const;
+const LEGACY_BRAND_ALIASES = ["BulkProFire", "Bulkfirepro", "BulkFirePro", "Mailshooter"] as const;
 
 /** Default campaign From display name when the user leaves sender name empty. */
 export const APP_DEFAULT_SENDER_NAME = APP_BRAND_NAME;
