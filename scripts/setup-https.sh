@@ -40,7 +40,8 @@ fi
 
 echo ""
 echo "3) Write nginx site config..."
-# Ensure hardened proxy snippet exists before referencing it.
+# Write the proxy snippet without requiring a full nginx reload (old gzip
+# duplicates on the server used to abort harden and leave no mailshooter vhost).
 bash "${SCRIPT_DIR}/harden-nginx-proxy.sh" || true
 
 cat > "${NGINX_SITE}" <<EOF

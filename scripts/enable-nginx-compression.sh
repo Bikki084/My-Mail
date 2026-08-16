@@ -32,6 +32,10 @@ echo ""
 
 echo "1) Install gzip snippet..."
 cp scripts/nginx-compression.conf "${GZIP_CONF}"
+sed -i -E \
+  -e 's/^\s*gzip on;/# gzip on;  # already in nginx.conf/' \
+  -e 's/^\s*gzip_vary on;/# gzip_vary on;  # already in nginx.conf/' \
+  "${GZIP_CONF}"
 chmod 644 "${GZIP_CONF}"
 
 echo ""

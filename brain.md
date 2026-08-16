@@ -8,6 +8,7 @@
 
 ## Changelog (recent)
 
+| 2026-08-16 | **nginx cutover:** strip duplicate `gzip_vary` so mailshooter.in HTTPS setup can reload |
 | 2026-08-16 | **Domain cutover:** site + sending → `mailshooter.in` / Mailshooter; script `setup-mailshooter-lightsail.sh` |
 | 2026-08-13 | **Brand lock:** canonical display name is `Bulkfirepro` (`APP_BRAND_NAME`); `BulkProFire` is the wrong letter-order and is rewritten; UI/sender/generate/verify share one constant |
 | 2026-08-13 | **Gemini generate:** Flash-Lite first + 429 fallback; human quota errors; no fake invoice fields for simple-mail briefs; retry unparseable JSON |

@@ -57,14 +57,13 @@ EOF
 chmod 644 "${PROXY_SNIPPET}"
 echo "1) Wrote ${PROXY_SNIPPET}"
 
-# Fix duplicate gzip on; — Ubuntu nginx.conf already has `gzip on;`
+# Ubuntu nginx.conf already has `gzip on;` and `gzip_vary on;`
 if [[ -f "${GZIP_CONF}" ]]; then
-  if grep -qE '^\s*gzip on;' "${GZIP_CONF}"; then
-    sed -i 's/^\s*gzip on;/# gzip on;  # already enabled in nginx.conf — duplicate breaks nginx -t/' "${GZIP_CONF}"
-    echo "2) Removed duplicate gzip on from ${GZIP_CONF}"
-  else
-    echo "2) Compression conf OK (no duplicate gzip on)"
-  fi
+  sed -i -E \
+    -e 's/^\s*gzip on;/# gzip on;  # already in nginx.conf/' \
+    -e 's/^\s*gzip_vary on;/# gzip_vary on;  # already in nginx.conf/' \
+    "${GZIP_CONF}"
+  echo "2) Stripped duplicate gzip / gzip_vary from ${GZIP_CONF}"
 else
   echo "2) No compression conf — skipping"
 fi
@@ -105,6 +104,7 @@ PY
 
 echo "3) Patching site configs..."
 for site in \
+  /etc/nginx/sites-available/mailshooter.in \
   /etc/nginx/sites-available/bulkfirepro \
   /etc/nginx/sites-available/bulkfirepro.com; do
   patch_site "$site"
@@ -117,5 +117,5 @@ systemctl reload nginx
 
 echo ""
 echo "=== nginx hardened ==="
-echo "Probe: curl -I https://bulkfirepro.com/"
+echo "Probe: curl -I https://mailshooter.in/"
 echo ""
