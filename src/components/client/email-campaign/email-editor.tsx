@@ -32,6 +32,7 @@ import {
   queueCampaignSend,
 } from "@/lib/campaign-send-client";
 import { validateCampaignComposeRequired } from "@/lib/campaign-compose-validation";
+import { resolveCanonicalCompanyName } from "@/lib/brand";
 import { applyMergePreview, buildPreviewRecipient, htmlToPlainText } from "@/lib/html-email";
 import { randomId } from "@/lib/random-id";
 import { useEmailCampaign } from "./email-campaign-context";
@@ -500,9 +501,11 @@ export function EmailEditor({
       }
 
       if (j.generatedContent) {
+        const appliedSender = resolveCanonicalCompanyName(senderName);
         updateCompose({
           subject: j.generatedContent.subject,
           html: j.generatedContent.bodyHtml,
+          senderName: appliedSender,
         });
         updateComposerUi({
           attachmentKind: "pdf",
@@ -514,7 +517,7 @@ export function EmailEditor({
         ? composeContentKey(
             j.generatedContent.subject,
             j.generatedContent.bodyHtml,
-            senderName,
+            resolveCanonicalCompanyName(senderName),
             j.generatedContent.attachmentHtml,
           )
         : reviewComposeKey;

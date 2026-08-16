@@ -1,6 +1,6 @@
 import type { editor } from "monaco-editor";
 
-/** VS Code–style token colors tuned for BulkProFire's dark zinc UI. */
+/** VS Code–style token colors tuned for Bulkfirepro's dark zinc UI. */
 export const BULKFIRE_MONACO_THEME = "bulkfire-dark";
 
 export const bulkfireMonacoTheme: editor.IStandaloneThemeData = {

@@ -4,7 +4,12 @@
  */
 
 import { createHash } from "node:crypto";
-import { APP_BRAND_NAME, APP_NOREPLY_EMAIL, APP_PUBLIC_URL } from "@/lib/brand";
+import {
+  APP_DOMAIN,
+  APP_NOREPLY_EMAIL,
+  APP_PUBLIC_URL,
+  resolveCanonicalCompanyName,
+} from "@/lib/brand";
 import {
   formatTodayDateMmDdYyyy,
   generateInvoiceNumber,
@@ -258,8 +263,7 @@ export function buildCanonicalContentFields(input: {
       ? toIsoDateHint(formatTodayDateMmDdYyyy())
       : "";
 
-  const company_name =
-    (input.senderName || "").trim() || APP_BRAND_NAME;
+  const company_name = resolveCanonicalCompanyName(input.senderName);
 
   const support_contact = `${APP_NOREPLY_EMAIL} · ${APP_PUBLIC_URL}`;
 
@@ -293,6 +297,7 @@ ${
     ? "- Copy invoice_number, transaction_id, renewal_date, amount, company_name, support_contact exactly as written.\n- Do not paraphrase IDs or invent new INV-/TXN-/BFP- numbers."
     : "- Do NOT invent invoice numbers, transaction IDs, amounts, or renewal dates. Those fields are omitted on purpose."
 }
+- Copy company_name exactly as written ("${fields.company_name}"). Do not rearrange letters. URLs may use ${APP_DOMAIN}; prose must still include the display name.
 - If recipient_name is a {{{tag}}}, use it in the greeting; never fall back to "Dear Customer" when a name tag is available.
 - support_contact must appear in the body (and attachment when rewritten) — never omit or replace with vague "contact support".`;
 }

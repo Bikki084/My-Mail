@@ -17,7 +17,7 @@ import {
 import { rewriteIntroducesUngroundedClaims } from "./grounding";
 import { assertCrossArtifactConsistency, assertFinalPersistedConsistency } from "./consistency";
 import { buildCanonicalContentFields } from "./canonical-fields";
-import { APP_NOREPLY_EMAIL } from "@/lib/brand";
+import { APP_BRAND_NAME, APP_BRAND_WRONG_LETTER_ORDER, APP_NOREPLY_EMAIL, APP_PUBLIC_URL, applyCanonicalBrandName, resolveCanonicalCompanyName, textMentionsCompanyName } from "@/lib/brand";
 import { buildPreviewRecipientRow } from "./preview-recipient";
 
 describe("content-genuineness checks", () => {
@@ -109,9 +109,9 @@ describe("canonical fields + consistency validator", () => {
   it("does not invent invoice fields for a connectivity-test draft", () => {
     const canonical = buildCanonicalContentFields({
       subject: "Connectivity test",
-      plainBody: "Hi {{{name}}}, this is a connectivity test from BulkProFire. Status OK.",
+      plainBody: `Hi {{{name}}}, this is a connectivity test from ${APP_BRAND_NAME}. Status OK.`,
       attachmentText: "Connectivity test summary. Status OK. Support listed.",
-      senderName: "BulkProFire",
+      senderName: APP_BRAND_NAME,
       seed: "conn-test",
     });
     assert.equal(canonical.invoice_number, "");
@@ -121,14 +121,14 @@ describe("canonical fields + consistency validator", () => {
 
   it("locks one invoice when body and PDF disagree", () => {
     const body =
-      "Invoice INV-5911142 TXN 734QHN0382 renewal 08/12/2026 for BulkProFire plan.";
+      `Invoice INV-5911142 TXN 734QHN0382 renewal 08/12/2026 for ${APP_BRAND_NAME} plan.`;
     const attachment =
       "Invoice BFP-28194956 Transaction TXN-8119482 renewal date 07/05/2026 amount $49.00";
     const canonical = buildCanonicalContentFields({
       subject: "Your subscription invoice",
       plainBody: body,
       attachmentText: attachment,
-      senderName: "BulkProFire",
+      senderName: APP_BRAND_NAME,
       mergeTags: ["name", "email"],
       seed: "test-seed-1",
     });
@@ -139,14 +139,14 @@ describe("canonical fields + consistency validator", () => {
     assert.equal(canonical.recipient_name, "{{{name}}}");
   });
 
-  it("blocks mismatched mock data like the BulkFirePro phishing example", () => {
+  it("blocks mismatched invoice numbers between body and attachment", () => {
     const canonical = buildCanonicalContentFields({
       subject: "Subscription Invoice",
       plainBody:
-        "Invoice INV-5911142 / TXN 734QHN0382 / renewal 08/12/2026 company BulkProFire",
+        `Invoice INV-5911142 / TXN 734QHN0382 / renewal 08/12/2026 company ${APP_BRAND_NAME}`,
       attachmentText:
-        "Invoice BFP-28194956 / TXN-8119482 / renewal 07/05/2026 company BulkProFire",
-      senderName: "BulkProFire",
+        `Invoice BFP-28194956 / TXN-8119482 / renewal 07/05/2026 company ${APP_BRAND_NAME}`,
+      senderName: APP_BRAND_NAME,
       seed: "mismatch-case",
     });
 
@@ -169,13 +169,13 @@ describe("canonical fields + consistency validator", () => {
         invoice_number: "INV-5911142",
         transaction_id: "734QHN0382",
         renewal_date: "2026-08-12",
-        company_name: "BulkProFire",
+        company_name: APP_BRAND_NAME,
       },
       subject: "Subscription Invoice INV-5911142",
       bodyHtmlOrText:
-        `<p>Invoice INV-5911142 Transaction 734QHN0382 renewal 2026-08-12. BulkProFire. Contact ${APP_NOREPLY_EMAIL}</p>`,
+        `<p>Invoice INV-5911142 Transaction 734QHN0382 renewal 2026-08-12. ${APP_BRAND_NAME}. Contact ${APP_NOREPLY_EMAIL}</p>`,
       attachmentHtmlOrText:
-        "<p>Invoice INV-5911142 TXN 734QHN0382 renewal 2026-08-12. BulkProFire</p>",
+        `<p>Invoice INV-5911142 TXN 734QHN0382 renewal 2026-08-12. ${APP_BRAND_NAME}</p>`,
     });
     assert.equal(good.ok, true);
   });
@@ -185,10 +185,10 @@ describe("canonical fields + consistency validator", () => {
     const bad = assertFinalPersistedConsistency({
       subject: "Subscription Invoice INV-5911142",
       bodyHtml:
-        `<p>Invoice INV-5911142 Transaction 734QHN0382 renewal 08/12/2026. BulkProFire. ${APP_NOREPLY_EMAIL}</p>`,
+        `<p>Invoice INV-5911142 Transaction 734QHN0382 renewal 08/12/2026. ${APP_BRAND_NAME}. ${APP_NOREPLY_EMAIL}</p>`,
       attachmentHtml:
-        "<p>Invoice BFP-28194956 TXN-8119482 renewal 07/05/2026. BulkProFire</p>",
-      senderName: "BulkProFire",
+        `<p>Invoice BFP-28194956 TXN-8119482 renewal 07/05/2026. ${APP_BRAND_NAME}</p>`,
+      senderName: APP_BRAND_NAME,
       previewRecipient: preview,
     });
     assert.equal(bad.ok, false);
@@ -199,10 +199,55 @@ describe("canonical fields + consistency validator", () => {
     const good = assertFinalPersistedConsistency({
       subject: "Subscription Invoice INV-5911142",
       bodyHtml:
-        `<p>Invoice INV-5911142 Transaction 734QHN0382 renewal 08/12/2026. BulkProFire. ${APP_NOREPLY_EMAIL}</p>`,
+        `<p>Invoice INV-5911142 Transaction 734QHN0382 renewal 08/12/2026. ${APP_BRAND_NAME}. ${APP_NOREPLY_EMAIL}</p>`,
       attachmentHtml:
-        "<p>Invoice INV-5911142 TXN 734QHN0382 renewal 08/12/2026. BulkProFire</p>",
-      senderName: "BulkProFire",
+        `<p>Invoice INV-5911142 TXN 734QHN0382 renewal 08/12/2026. ${APP_BRAND_NAME}</p>`,
+      senderName: APP_BRAND_NAME,
+      previewRecipient: preview,
+    });
+    assert.equal(good.ok, true);
+  });
+
+  it("maps wrong-order and off-casing sender names to APP_BRAND_NAME", () => {
+    const wrong = APP_BRAND_WRONG_LETTER_ORDER;
+    assert.equal(resolveCanonicalCompanyName(wrong), APP_BRAND_NAME);
+    assert.equal(resolveCanonicalCompanyName("BulkFirePro"), APP_BRAND_NAME);
+    assert.equal(resolveCanonicalCompanyName("bulkfirepro"), APP_BRAND_NAME);
+    assert.equal(resolveCanonicalCompanyName("Acme Corp"), "Acme Corp");
+    const rewritten = applyCanonicalBrandName(
+      `Update regarding your ${wrong} account. Contact ${APP_NOREPLY_EMAIL} · ${APP_PUBLIC_URL}/`,
+    );
+    assert.ok(rewritten.includes(`your ${APP_BRAND_NAME} account`));
+    assert.ok(rewritten.includes(APP_NOREPLY_EMAIL));
+    assert.ok(rewritten.includes(APP_PUBLIC_URL));
+    assert.equal(textMentionsCompanyName(`Hello ${wrong}`, APP_BRAND_NAME), false);
+    assert.equal(textMentionsCompanyName(`Hello ${APP_BRAND_NAME}`, APP_BRAND_NAME), true);
+    assert.equal(
+      textMentionsCompanyName(`Contact ${APP_NOREPLY_EMAIL}`, APP_BRAND_NAME),
+      false,
+    );
+  });
+
+  it("TEST C — wrong letter-order company spelling still fails the verifier check", () => {
+    const preview = buildPreviewRecipientRow("client@example.com");
+    const wrong = APP_BRAND_WRONG_LETTER_ORDER;
+    const bad = assertFinalPersistedConsistency({
+      subject: `Update regarding your ${wrong} account`,
+      bodyHtml: `<p>Hi {{{name}}}, this is a status update from ${wrong}. No payment is due. Support listed here.</p>`,
+      attachmentHtml: `<p>${wrong} status summary. Mailbox reachable. Support listed here.</p>`,
+      senderName: APP_BRAND_NAME,
+      previewRecipient: preview,
+    });
+    assert.equal(bad.ok, false);
+    if (!bad.ok) {
+      assert.ok(bad.mismatches.some((m) => m.field === "company_name"));
+    }
+
+    const good = assertFinalPersistedConsistency({
+      subject: `Update regarding your ${APP_BRAND_NAME} account`,
+      bodyHtml: `<p>Hi {{{name}}}, this is a status update from ${APP_BRAND_NAME}. No payment is due. ${APP_NOREPLY_EMAIL}</p>`,
+      attachmentHtml: `<p>${APP_BRAND_NAME} status summary. Mailbox reachable. ${APP_NOREPLY_EMAIL}</p>`,
+      senderName: APP_BRAND_NAME,
       previewRecipient: preview,
     });
     assert.equal(good.ok, true);

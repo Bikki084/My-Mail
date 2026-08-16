@@ -14,6 +14,7 @@ require("module").Module._cache[require.resolve("server-only")] = {
 
 const { generateCampaignFromBrief } = require("../src/lib/content-genuineness/ai-generate-campaign");
 const { textHasFinancialFields } = require("../src/lib/content-genuineness/content-type");
+const { APP_BRAND_NAME } = require("../src/lib/brand");
 
 function log(title: string, data: unknown) {
   console.log(`\n=== ${title} ===`);
@@ -23,7 +24,7 @@ function log(title: string, data: unknown) {
 async function runPrompt(label: string, brief: string) {
   const result = await generateCampaignFromBrief({
     brief,
-    senderName: "BulkProFire",
+    senderName: APP_BRAND_NAME,
     mergeTags: ["name", "email"],
   });
   log(label, result);
@@ -64,7 +65,7 @@ async function main() {
   assert.ok(c.attempts.length >= 1, "TEST C recorded attempts");
   console.log("TEST C: logged attempts (pass or honest fail after retries)");
 
-  const d1 = await runPrompt("TEST D — welcome email", "write a welcome email for new customers joining BulkProFire");
+  const d1 = await runPrompt("TEST D — welcome email", `write a welcome email for new customers joining ${APP_BRAND_NAME}`);
   const d2 = await runPrompt("TEST D — password reset", "write a password reset notice with a support contact, no payment info");
   const d3 = await runPrompt("TEST D — generic notification", "notify users that scheduled maintenance is complete and systems are back online");
   for (const [name, r] of [

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { APP_NOREPLY_EMAIL, APP_PUBLIC_URL } from "@/lib/brand";
+import { APP_BRAND_NAME, APP_DOMAIN, APP_NOREPLY_EMAIL, APP_PUBLIC_URL, resolveCanonicalCompanyName } from "@/lib/brand";
 import { generateGeminiJsonText, humanizeGeminiFailure } from "@/lib/gemini/client";
 
 export type PhishingMismatch = {
@@ -66,21 +66,26 @@ function buildPhishingPrompt(input: {
   const attachmentSection = input.hasAttachment
     ? input.attachmentPlain.trim() || "(attachment present but no extractable text)"
     : "(no attachment provided)";
+  const company = resolveCanonicalCompanyName(input.senderName);
 
   return `You are a phishing and scam-content detector reviewing an email BEFORE it is sent. You will be given: (1) subject line, (2) email body, (3) extracted text from a PDF attachment. Analyze all three together as a single unit — do not evaluate them in isolation.
 
 Return FAIL if ANY of the following are true:
 - Any factual field (invoice number, transaction ID, reference number, date, amount, recipient name, company name) differs between the email body and the PDF attachment.
 - The email uses a generic/impersonal greeting ("Dear Customer") while addressing what claims to be a specific individual's account or transaction.
-- The sender company/brand name cannot be matched to a real, verified entity in our system records (flag as suspicious rather than assume legitimacy).
+- The company display name in the content is missing or uses a different letter-order than "${company}" (a Pro/Fire swap is a mismatch). A hostname like ${APP_DOMAIN} in a URL or email address is expected and is not a substitute for omitting the display name in prose.
 - There is urgency/pressure language, vague or missing support contact details, or mismatched/placeholder transaction identifiers that appear auto-generated rather than pulled from a real record.
 - Any monetary amount, plan name, or renewal date appears inconsistent across the subject, body, or attachment.
 - The content overall resembles a known phishing/invoice-scam pattern (fake renewal notice, fake payment confirmation designed to induce a support callback).
 - The attachment topic does not match the email body (e.g. a connectivity-test email with an invoice PDF).
 - Financial fields (invoice number, transaction ID, amount, renewal date) appear in a non-billing email.
 
+Do NOT fail because links or From addresses use ${APP_DOMAIN} — that is the verified hostname for ${APP_BRAND_NAME}.
+Do NOT fail a genuine status/connectivity notice solely as a subject/body mismatch when both describe the same operational event.
+Do NOT copy example phrases from this prompt (such as "act now") into flags unless those phrases actually appear in the subject/body/attachment.
+
 Verified support contact for this platform: ${APP_NOREPLY_EMAIL} · ${APP_PUBLIC_URL}
-Sender display name on file: ${input.senderName || "(not set)"}
+Company display name on file: ${company}
 
 Respond ONLY in this JSON structure, nothing else:
 {

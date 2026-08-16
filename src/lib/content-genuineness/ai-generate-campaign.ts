@@ -1,6 +1,14 @@
 import "server-only";
 
-import { APP_BRAND_NAME, APP_NOREPLY_EMAIL, APP_PUBLIC_URL } from "@/lib/brand";
+import {
+  APP_BRAND_NAME,
+  APP_BRAND_WRONG_LETTER_ORDER,
+  APP_DOMAIN,
+  APP_NOREPLY_EMAIL,
+  APP_PUBLIC_URL,
+  applyCanonicalBrandName,
+  resolveCanonicalCompanyName,
+} from "@/lib/brand";
 import { buildCanonicalContentFields } from "@/lib/content-genuineness/canonical-fields";
 import {
   classifyContentType,
@@ -21,6 +29,7 @@ import {
   humanizeGeminiFailure,
 } from "@/lib/gemini/client";
 import { htmlToPlainText } from "@/lib/html-email";
+import { checkSubjectBodyAlignment } from "@/lib/content-genuineness/checks";
 
 export type GenerateAttemptLog = {
   attempt: number;
@@ -114,7 +123,9 @@ function buildGeneratePrompt(input: {
   canonical: Record<string, string>;
   retryNote?: string;
 }): string {
-  const company = input.senderName || APP_BRAND_NAME;
+  const company = resolveCanonicalCompanyName(
+    input.canonical.company_name || input.senderName || APP_BRAND_NAME,
+  );
   const financial = contentTypeAllowsFinancialFields(input.contentType);
   const retry = input.retryNote
     ? `\nPREVIOUS ATTEMPT FAILED VERIFICATION. Fix these issues and regenerate ALL three artifacts from the same canonical object:\n${input.retryNote}\n`
@@ -126,6 +137,13 @@ Allowed canonical keys for this type: ${fieldSetForContentType(input.contentType
 ${retry}
 Use this canonical object as the single source of truth (you may fill empty non-financial details, but you MUST keep these keys; do not add invoice/txn/amount/renewal unless content_type is invoice or renewal_notice):
 ${JSON.stringify(input.canonical, null, 2)}
+
+COMPANY NAME (verbatim — copy this exact string everywhere):
+"${company}"
+- Do not rearrange letters. Never write "${APP_BRAND_WRONG_LETTER_ORDER}" or any other permutation.
+- Use this exact capitalization in subject, body, and attachment prose.
+- URLs and email addresses may use ${APP_DOMAIN}; that is the hostname, not a substitute for omitting "${company}" in the text.
+- Do not append Inc., Ltd., or shorten the name.
 
 ${SHARED_PHISHING_CONSTRAINTS}
 
@@ -144,7 +162,8 @@ Rules:
 - Return JSON only:
   {"canonical":{...},"subject":"...","bodyHtml":"<p>...</p>","attachmentHtml":"<div>...</div>"}
 - Greet with {{{name}}}, never "Dear Customer".
-- Company/sender: ${company}
+- Company/sender display name must appear exactly as: ${company}
+- Reuse the same topic words in the subject and the body (do not write a subject about one event and a body about another).
 - Keep HTML compact. Attachment must describe the same event as the body.
 
 User brief:
@@ -156,7 +175,9 @@ function localFallbackCampaign(input: {
   canonical: Record<string, string>;
   senderName: string;
 }): { subject: string; bodyHtml: string; attachmentHtml: string } {
-  const company = input.canonical.company_name || input.senderName || APP_BRAND_NAME;
+  const company = resolveCanonicalCompanyName(
+    input.canonical.company_name || input.senderName || APP_BRAND_NAME,
+  );
   const support = input.canonical.support_contact || `${APP_NOREPLY_EMAIL} · ${APP_PUBLIC_URL}`;
   const testId = input.canonical.test_id || "CONN-LOCAL";
   const ts = input.canonical.timestamp || new Date().toISOString();
@@ -178,7 +199,7 @@ function localFallbackCampaign(input: {
       return {
         subject: `${company} connectivity test ${testId}`,
         bodyHtml: `<p>Hi {{{name}}},</p><p>This is a connectivity test from ${company}. Test ID ${testId} completed at ${ts} with status ${input.canonical.status || "OK"}. No invoice or payment is involved.</p><p>If you received this as expected, your mailbox path is working. Support: ${support}</p>`,
-        attachmentHtml: `<div><h1>Connectivity test</h1><p>Test ID: ${testId}</p><p>Timestamp: ${ts}</p><p>Status: ${input.canonical.status || "OK"}</p><p>${support}</p></div>`,
+        attachmentHtml: `<div><h1>${company} connectivity test</h1><p>Test ID: ${testId}</p><p>Timestamp: ${ts}</p><p>Status: ${input.canonical.status || "OK"}</p><p>${support}</p></div>`,
       };
     default:
       return {
@@ -202,7 +223,31 @@ function localRejectReason(
   if (contentTypeAllowsFinancialFields(type) && !textHasFinancialFields(blob)) {
     return `content_type is ${type} but invoice/amount fields are missing from body or attachment.`;
   }
+  const align = checkSubjectBodyAlignment(subject, bodyHtml);
+  if (align.length > 0) {
+    return `${align[0]!.message} Put the same topic words in the subject and the body.`;
+  }
   return null;
+}
+
+function applySeededBrand(
+  seededCompany: string,
+  canonical: Record<string, string>,
+  subject: string,
+  bodyHtml: string,
+  attachmentHtml: string,
+): {
+  canonical: Record<string, string>;
+  subject: string;
+  bodyHtml: string;
+  attachmentHtml: string;
+} {
+  return {
+    canonical: { ...canonical, company_name: seededCompany },
+    subject: applyCanonicalBrandName(subject, seededCompany),
+    bodyHtml: applyCanonicalBrandName(bodyHtml, seededCompany),
+    attachmentHtml: applyCanonicalBrandName(attachmentHtml, seededCompany),
+  };
 }
 
 /**
@@ -215,6 +260,7 @@ export async function generateCampaignFromBrief(input: {
 }): Promise<AiGeneratedCampaign> {
   const contentType = await classifyContentType(input.brief);
   const financial = contentTypeAllowsFinancialFields(contentType);
+  const seededCompany = resolveCanonicalCompanyName(input.senderName);
 
   let canonical: Record<string, string> = financial
     ? (buildCanonicalContentFields({
@@ -228,8 +274,10 @@ export async function generateCampaignFromBrief(input: {
     : seedCanonicalForType({
         type: contentType,
         brief: input.brief,
-        senderName: input.senderName,
+        senderName: seededCompany,
       });
+
+  canonical.company_name = seededCompany;
 
   const attempts: GenerateAttemptLog[] = [];
   let lastGood: {
@@ -244,7 +292,7 @@ export async function generateCampaignFromBrief(input: {
   for (let attempt = 1; attempt <= 3; attempt++) {
     const prompt = buildGeneratePrompt({
       brief: input.brief,
-      senderName: input.senderName,
+      senderName: seededCompany,
       contentType,
       canonical,
       retryNote,
@@ -269,32 +317,41 @@ export async function generateCampaignFromBrief(input: {
       canonical = { ...canonical, ...parsed.canonical };
     }
 
-    const local = localRejectReason(
-      contentType,
+    const branded = applySeededBrand(
+      seededCompany,
+      canonical,
       parsed.subject,
       parsed.bodyHtml,
       parsed.attachmentHtml,
+    );
+    canonical = branded.canonical;
+
+    const local = localRejectReason(
+      contentType,
+      branded.subject,
+      branded.bodyHtml,
+      branded.attachmentHtml,
     );
     if (local) {
       attempts.push({ attempt, contentType, parseOk: true, localReject: local });
       retryNote = local;
       lastGood = {
-        subject: parsed.subject,
-        bodyHtml: parsed.bodyHtml,
-        attachmentHtml: parsed.attachmentHtml,
+        subject: branded.subject,
+        bodyHtml: branded.bodyHtml,
+        attachmentHtml: branded.attachmentHtml,
         canonical,
         verdict: null,
       };
       continue;
     }
 
-    const bodyPlain = htmlToPlainText(parsed.bodyHtml);
-    const attachmentPlain = htmlToPlainText(parsed.attachmentHtml);
+    const bodyPlain = htmlToPlainText(branded.bodyHtml);
+    const attachmentPlain = htmlToPlainText(branded.attachmentHtml);
     const verdict = await runGeminiPhishingValidation({
-      subject: parsed.subject,
+      subject: branded.subject,
       bodyPlain,
       attachmentPlain,
-      senderName: input.senderName,
+      senderName: seededCompany,
       hasAttachment: true,
     });
 
@@ -308,9 +365,9 @@ export async function generateCampaignFromBrief(input: {
     });
 
     lastGood = {
-      subject: parsed.subject,
-      bodyHtml: parsed.bodyHtml,
-      attachmentHtml: parsed.attachmentHtml,
+      subject: branded.subject,
+      bodyHtml: branded.bodyHtml,
+      attachmentHtml: branded.attachmentHtml,
       canonical,
       verdict,
     };
@@ -318,9 +375,9 @@ export async function generateCampaignFromBrief(input: {
     if (!phishingVerdictBlocksSend(verdict)) {
       return {
         ok: true,
-        subject: parsed.subject.trim(),
-        bodyHtml: parsed.bodyHtml.trim(),
-        attachmentHtml: parsed.attachmentHtml.trim(),
+        subject: branded.subject.trim(),
+        bodyHtml: branded.bodyHtml.trim(),
+        attachmentHtml: branded.attachmentHtml.trim(),
         contentType,
         canonical,
         passedVerification: true,
@@ -346,12 +403,20 @@ export async function generateCampaignFromBrief(input: {
 
   if (!lastGood) {
     if (!financial) {
-      const fb = localFallbackCampaign({ contentType, canonical, senderName: input.senderName });
+      const fb = localFallbackCampaign({ contentType, canonical, senderName: seededCompany });
+      const brandedFb = applySeededBrand(
+        seededCompany,
+        canonical,
+        fb.subject,
+        fb.bodyHtml,
+        fb.attachmentHtml,
+      );
+      canonical = brandedFb.canonical;
       const verdict = await runGeminiPhishingValidation({
-        subject: fb.subject,
-        bodyPlain: htmlToPlainText(fb.bodyHtml),
-        attachmentPlain: htmlToPlainText(fb.attachmentHtml),
-        senderName: input.senderName,
+        subject: brandedFb.subject,
+        bodyPlain: htmlToPlainText(brandedFb.bodyHtml),
+        attachmentPlain: htmlToPlainText(brandedFb.attachmentHtml),
+        senderName: seededCompany,
         hasAttachment: true,
       });
       attempts.push({
@@ -365,9 +430,9 @@ export async function generateCampaignFromBrief(input: {
       });
       return {
         ok: true,
-        subject: fb.subject,
-        bodyHtml: fb.bodyHtml,
-        attachmentHtml: fb.attachmentHtml,
+        subject: brandedFb.subject,
+        bodyHtml: brandedFb.bodyHtml,
+        attachmentHtml: brandedFb.attachmentHtml,
         contentType,
         canonical,
         passedVerification: !phishingVerdictBlocksSend(verdict),

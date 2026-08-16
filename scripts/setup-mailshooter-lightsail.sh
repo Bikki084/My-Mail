@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
-# Single Lightsail instance cutover for bulkfirepro.com
+# Single Lightsail instance cutover for mailshooter.in
 #
 # Instance: Ubuntu-1 (Mumbai) — public IPv4 13.203.176.51
-# Domain DNS (Lightsail): A @ → 13.203.176.51, CNAME www → bulkfirepro.com
+# Domain DNS (Lightsail zone mailshooter.in):
+#   A @ → 13.203.176.51
+#   CNAME www → mailshooter.in
 #
-# Run ON the Lightsail instance (browser SSH or ssh ubuntu@13.203.176.51):
-#   cd ~/mymail && git pull && bash scripts/setup-bulkfirepro-lightsail.sh
+# Hostinger must use Lightsail nameservers (or Hostinger A record → this IP).
+#
+# Run ON the Lightsail instance:
+#   cd ~/mymail && git pull && bash scripts/setup-mailshooter-lightsail.sh
 #
 # Requires: .env.local with Supabase + SMTP_ENCRYPTION_KEY (+ REDIS_URL for queue)
 set -euo pipefail
@@ -13,11 +17,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "${SCRIPT_DIR}/.."
 
-export BULK_DOMAIN="bulkfirepro.com"
+export BULK_DOMAIN="mailshooter.in"
 export LIGHTSAIL_PUBLIC_IP="13.203.176.51"
 
 echo ""
-echo "=== Bulkfirepro — single Lightsail instance (${LIGHTSAIL_PUBLIC_IP}) ==="
+echo "=== Mailshooter — Lightsail cutover (${LIGHTSAIL_PUBLIC_IP}) ==="
 echo "    Domain: https://${BULK_DOMAIN}"
 echo ""
 
@@ -31,19 +35,15 @@ ensure_env() {
   local key="$1"
   local value="$2"
   if grep -q "^${key}=" .env.local 2>/dev/null; then
-    if grep -q "^${key}=.*bulkprofire" .env.local 2>/dev/null; then
-      sed -i.bak "s|^${key}=.*|${key}=${value}|" .env.local
-      echo "   updated ${key} (was bulkprofire.com)"
-    else
-      echo "   ${key} already set"
-    fi
+    sed -i.bak "s|^${key}=.*|${key}=${value}|" .env.local
+    echo "   updated ${key}"
   else
     echo "${key}=${value}" >> .env.local
     echo "   appended ${key}"
   fi
 }
 
-echo "1) Ensure production domain in .env.local..."
+echo "1) Point production URLs at ${BULK_DOMAIN} in .env.local..."
 ensure_env "NEXT_PUBLIC_APP_URL" "https://${BULK_DOMAIN}"
 ensure_env "MAILER_PUBLIC_URL" "https://${BULK_DOMAIN}"
 ensure_env "DKIM_DOMAIN" "${BULK_DOMAIN}"
@@ -79,20 +79,24 @@ fi
 cat <<EOF
 
 ============================================================
-Single-instance configuration complete.
+mailshooter.in cutover script finished.
 
 Lightsail DNS zone for ${BULK_DOMAIN}:
   A     @    ${LIGHTSAIL_PUBLIC_IP}
   CNAME www  ${BULK_DOMAIN}
 
+Hostinger: set nameservers to the Lightsail NS shown on the mailshooter.in DNS zone
+(or keep Hostinger DNS and create A @ → ${LIGHTSAIL_PUBLIC_IP} there instead).
+
 Supabase → Authentication → URL Configuration:
   Site URL: https://${BULK_DOMAIN}
   Redirect: https://${BULK_DOMAIN}/auth/update-password
 
-SendGrid DNS (Lightsail → ${BULK_DOMAIN}) — required for inbox:
+SendGrid (existing account) → Settings → Sender Authentication:
+  Authenticate ${BULK_DOMAIN}
+  Copy CNAME records into the Lightsail DNS zone
   TXT  @    v=spf1 include:sendgrid.net ~all
-  CNAME em*, s1._domainkey, s2._domainkey → copy from SendGrid Sender Authentication
-  Run: bash scripts/fix-bulkfirepro-deliverability.sh  (checks DNS + redeploys)
+  TXT  _dmarc  v=DMARC1; p=none; rua=mailto:noreply@${BULK_DOMAIN}
 
 SendGrid Event Webhook URL:
   https://${BULK_DOMAIN}/api/webhooks/email-events

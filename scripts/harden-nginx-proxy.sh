@@ -25,7 +25,7 @@ echo ""
 mkdir -p /etc/nginx/snippets
 
 cat > "${PROXY_SNIPPET}" <<'EOF'
-# Shared upstream settings for Next.js on :3000 (BulkProFire)
+# Shared upstream settings for Next.js on :3000 (Bulkfirepro)
 proxy_pass http://127.0.0.1:3000;
 proxy_http_version 1.1;
 proxy_set_header Upgrade $http_upgrade;

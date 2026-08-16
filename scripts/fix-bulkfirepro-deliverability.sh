@@ -11,7 +11,7 @@ PUBLIC_IP="${LIGHTSAIL_PUBLIC_IP:-13.203.176.51}"
 SPF_VALUE="v=spf1 include:sendgrid.net ~all"
 
 echo ""
-echo "=== BulkProFire deliverability fix (${DOMAIN}) ==="
+echo "=== Bulkfirepro deliverability fix (${DOMAIN}) ==="
 echo ""
 
 if [[ ! -f .env.local ]]; then
@@ -39,7 +39,7 @@ echo "1) Ensure production mail env in .env.local..."
 ensure_env "NEXT_PUBLIC_APP_URL" "https://${DOMAIN}"
 ensure_env "MAILER_PUBLIC_URL" "https://${DOMAIN}"
 ensure_env "DKIM_DOMAIN" "${DOMAIN}"
-ensure_env "MAILER_POSTAL_ADDRESS" "BulkProFire, India"
+ensure_env "MAILER_POSTAL_ADDRESS" "Bulkfirepro, India"
 
 echo ""
 echo "2) Check DNS (public resolvers)..."

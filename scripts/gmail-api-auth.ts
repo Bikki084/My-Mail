@@ -66,7 +66,7 @@ async function main(): Promise<void> {
 
   if (!payload.refresh_token) {
     throw new Error(
-      "Missing refresh_token. Remove BulkProFire from Google Account permissions and re-run npm run gmail:auth.",
+      "Missing refresh_token. Remove the app from Google Account permissions and re-run npm run gmail:auth.",
     );
   }
 

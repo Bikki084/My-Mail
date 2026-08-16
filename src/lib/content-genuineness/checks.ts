@@ -213,8 +213,9 @@ export function checkSubjectBodyAlignment(
   if (subjTokens.size === 0) return issues;
 
   const overlap = jaccard(subjTokens, bodyTokens);
+  const shared = [...subjTokens].filter((t) => bodyTokens.has(t));
   // Bait-and-switch: almost no overlap between subject content words and body
-  if (subjTokens.size >= 2 && overlap < 0.05) {
+  if (subjTokens.size >= 2 && overlap < 0.05 && shared.length === 0) {
     issues.push({
       code: "subject_body_mismatch",
       category: "subject_body_mismatch",

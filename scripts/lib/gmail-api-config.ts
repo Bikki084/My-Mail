@@ -118,7 +118,7 @@ export function assertGmailSendScope(scope: string | undefined | null): void {
     "Gmail token is missing the gmail.send scope.\n" +
       "Fix in Google Cloud → Google Auth Platform → Data Access → Add scope → Gmail API → " +
       "https://www.googleapis.com/auth/gmail.send\n" +
-      "Then revoke BulkProFire at https://myaccount.google.com/permissions and run: npm run gmail:auth",
+      "Then revoke the app at https://myaccount.google.com/permissions and run: npm run gmail:auth",
   );
 }
 

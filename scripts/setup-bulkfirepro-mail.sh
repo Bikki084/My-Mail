@@ -52,7 +52,7 @@ fi
 cat <<EOF
 
 ============================================================
-Postfix is ready for BulkProFire.
+Postfix is ready for Bulkfirepro.
 
 NEXT — in the app (https://${DOMAIN}/client → SMTP Configuration):
 
@@ -70,7 +70,7 @@ NEXT — .env.local on this server (from Deliverability page):
   DKIM_DOMAIN=${DOMAIN}
   DKIM_KEY_SELECTOR=mail
   DKIM_PRIVATE_KEY="..."   # copy from /client/deliverability
-  MAILER_POSTAL_ADDRESS=BulkProFire, Your City, Country
+  MAILER_POSTAL_ADDRESS=Bulkfirepro, Your City, Country
 
   npm run build && pm2 restart mymail-web mymail-worker
 

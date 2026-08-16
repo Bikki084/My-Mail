@@ -1,6 +1,6 @@
 import "server-only";
 
-import { APP_BRAND_NAME, APP_NOREPLY_EMAIL, APP_PUBLIC_URL } from "@/lib/brand";
+import { APP_NOREPLY_EMAIL, APP_PUBLIC_URL, resolveCanonicalCompanyName } from "@/lib/brand";
 import { generateGeminiJsonText } from "@/lib/gemini/client";
 
 export const CONTENT_TYPES = [
@@ -33,6 +33,8 @@ export const SHARED_PHISHING_CONSTRAINTS = `ANTI-PHISHING CONSTRAINTS (generatio
 - Do not use generic greetings ("Dear Customer", "Dear User") when {{{name}}} is available — greet with {{{name}}}.
 - No urgency/pressure language ("act now", "immediately", "account will be suspended", "limited time").
 - Include the real support contact exactly: ${APP_NOREPLY_EMAIL} · ${APP_PUBLIC_URL}
+- Use company_name from the canonical object verbatim in subject, body, and attachment (exact capitalization). Do not rearrange letters.
+- Subject and body must be the same topic — reuse at least some of the same content words.
 - Attachment content must be the same topic as the body (not an unrelated invoice, PDF bait, or placeholder).
 - Do not invent mismatched invoice numbers, transaction IDs, amounts, or dates.
 - Do not produce a fake renewal notice / fake payment confirmation designed to induce a support callback.
@@ -132,7 +134,7 @@ export function seedCanonicalForType(input: {
   brief: string;
   senderName: string;
 }): Record<string, string> {
-  const company = input.senderName.trim() || APP_BRAND_NAME;
+  const company = resolveCanonicalCompanyName(input.senderName);
   const support = `${APP_NOREPLY_EMAIL} · ${APP_PUBLIC_URL}`;
   const stamp = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
   const idTail = Math.abs(hashBrief(input.brief)).toString(36).slice(0, 6).toUpperCase();

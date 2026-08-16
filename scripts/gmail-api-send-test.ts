@@ -10,6 +10,7 @@
  *
  * CSV: first column with header "email" (or first column = email addresses).
  */
+import { APP_BRAND_NAME } from "../src/lib/brand";
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { google } from "googleapis";
@@ -59,10 +60,10 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const limit = Math.max(1, Math.min(500, parseInt(args.limit ?? "40", 10) || 40));
   const delayMs = Math.max(500, parseInt(args.delay ?? "1500", 10) || 1500);
-  const subject = args.subject ?? "BulkProFire Gmail API deliverability test";
+  const subject = args.subject ?? `${APP_BRAND_NAME} Gmail API deliverability test`;
   const html =
     args.body ??
-    `<p>Hello,</p><p>This is a small <strong>Gmail API</strong> deliverability test from BulkProFire.</p><p>If this landed in spam, the issue is sender reputation/content — not SMTP vs API.</p><p>Please reply if you received this in inbox.</p>`;
+    `<p>Hello,</p><p>This is a small <strong>Gmail API</strong> deliverability test from ${APP_BRAND_NAME}.</p><p>If this landed in spam, the issue is sender reputation/content — not SMTP vs API.</p><p>Please reply if you received this in inbox.</p>`;
 
   let recipients: string[] = [];
   if (args.csv) {
@@ -122,7 +123,7 @@ async function main(): Promise<void> {
   const senderEmail = profile.data.emailAddress;
   if (!senderEmail) throw new Error("Could not read sender Gmail address.");
 
-  const from = args.from ?? `BulkProFire Test <${senderEmail}>`;
+  const from = args.from ?? `${APP_BRAND_NAME} Test <${senderEmail}>`;
 
   console.log("\n=== Gmail API send test ===");
   console.log(`Sender:  ${senderEmail}`);

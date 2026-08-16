@@ -24,6 +24,7 @@ import { upsertVerificationResult } from "@/lib/content-genuineness/verification
 import { analyzeContentHeuristics } from "@/lib/content-spam-review/heuristics";
 import { contentGenuinenessGateEnabled } from "@/lib/anti-spam-config";
 import { normalizeMergeTagKeys } from "@/lib/content-spam-review/merge-tags-prompt";
+import { resolveCanonicalCompanyName } from "@/lib/brand";
 import { z } from "zod";
 import { formatZodError } from "@/lib/validation";
 
@@ -77,7 +78,10 @@ export async function POST(req: Request) {
 
   let subject = parsed.data.subject;
   let bodyHtml = parsed.data.body_html;
-  const senderName = parsed.data.sender_name;
+  const senderName =
+    composeMode === "ai_generate"
+      ? resolveCanonicalCompanyName(parsed.data.sender_name)
+      : parsed.data.sender_name;
   let attachments: GenuinenessAttachmentInput[] = (parsed.data.attachments ?? []).map((a) => ({
     filename: a.filename,
     contentBase64: a.contentBase64,

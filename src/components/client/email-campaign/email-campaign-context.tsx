@@ -9,7 +9,7 @@ import {
 import { parsedCsvToRecipientRows } from "@/lib/csv-recipients";
 import type { ParsedCsv } from "@/lib/csv-types";
 import type { RecipientRow } from "@/lib/merge-tags";
-import { APP_DEFAULT_SENDER_NAME } from "@/lib/brand";
+import { APP_DEFAULT_SENDER_NAME, resolveCanonicalCompanyName } from "@/lib/brand";
 import type { ContentVerificationCache } from "./content-verification-types";
 
 const STORAGE_V = 6 as const;
@@ -167,7 +167,9 @@ export function EmailCampaignProvider({
           composerUi?: ComposerUiState;
         };
         if (c.v === STORAGE_V && c.compose) {
-          setComposeDraft({ ...defaultCompose, ...c.compose });
+          const restored = { ...defaultCompose, ...c.compose };
+          restored.senderName = resolveCanonicalCompanyName(restored.senderName);
+          setComposeDraft(restored);
         }
         if (c.v === STORAGE_V && c.composerUi) {
           setComposerUi({

@@ -1,16 +1,15 @@
-# BulkProFire — Project Brain
+# Mailshooter — Project Brain
 
 > **Purpose:** Single source of truth for AI agents and developers. Read this file **before** scanning the whole repo.  
 > **Maintainers:** Update this file whenever you add features, change limits, deploy steps, or infra — same as you would commit code.  
-> **Last updated:** 2026-08-13
+> **Last updated:** 2026-08-16
 
 ---
 
 ## Changelog (recent)
 
-| Date | Change |
-|------|--------|
-| 2026-08-13 | **Generate+verify pipeline:** classify content_type first; no invoice fields unless billing; shared phishing constraints; auto-retry verifier failures (2×) |
+| 2026-08-16 | **Domain cutover:** site + sending → `mailshooter.in` / Mailshooter; script `setup-mailshooter-lightsail.sh` |
+| 2026-08-13 | **Brand lock:** canonical display name is `Bulkfirepro` (`APP_BRAND_NAME`); `BulkProFire` is the wrong letter-order and is rewritten; UI/sender/generate/verify share one constant |
 | 2026-08-13 | **Gemini generate:** Flash-Lite first + 429 fallback; human quota errors; no fake invoice fields for simple-mail briefs; retry unparseable JSON |
 | 2026-08-13 | **Verification persistence:** content-hash-keyed DB + localStorage; survives tab switch; distinct Not yet verified / Passed / Failed UI |
 | 2026-08-13 | **Phishing validator rebuild:** mandatory Gemini 2.5 Flash pass/fail gate (subject+body+attachment); no default PASS on error; Manual vs AI-Generate compose modes; blank default compose |
@@ -34,8 +33,8 @@
 
 | Item | Value |
 |------|--------|
-| **Brand** | BulkProFire |
-| **Domain** | `bulkfirepro.com` |
+| **Brand** | Mailshooter (`APP_BRAND_NAME` in `src/lib/brand.ts`) |
+| **Domain** | `mailshooter.in` |
 | **Repo** | GitHub `Bikki084/My-Mail` |
 | **Stack** | Next.js 16 App Router, React 19, Tailwind v4, Supabase, BullMQ + Redis, Nodemailer |
 | **Production host** | AWS Lightsail (Mumbai), nginx → PM2 |
@@ -51,9 +50,9 @@ Brand constants: `src/lib/brand.ts`
 # SSH → app directory
 cd ~/mymail
 
-# Domain cutover (bulkfirepro.com)
-git pull && bash scripts/setup-bulkfirepro-lightsail.sh
-# Or HTTPS-only fix: sudo bash scripts/fix-bulkfirepro-https.sh && bash scripts/deploy-production.sh
+# Domain cutover (mailshooter.in)
+git pull && bash scripts/setup-mailshooter-lightsail.sh
+# Or HTTPS-only: sudo BULK_DOMAIN=mailshooter.in bash scripts/setup-https.sh && bash scripts/deploy-production.sh
 
 # Deploy (pull + build + PM2 reload)
 git pull && bash scripts/deploy-production.sh
@@ -62,7 +61,7 @@ git pull && bash scripts/deploy-production.sh
 npm run db:migrate
 
 # Health check
-curl -sf https://bulkfirepro.com/api/health
+curl -sf https://mailshooter.in/api/health
 
 # PM2
 pm2 status
@@ -140,7 +139,7 @@ Works with **any SMTP** — not tied to SendGrid APIs for validation.
 **SendGrid Event Webhook setup:**
 
 1. SendGrid → Settings → Mail Settings → Event Webhook  
-2. URL: `https://bulkfirepro.com/api/webhooks/email-events`  
+2. URL: `https://mailshooter.in/api/webhooks/email-events`  
 3. Events: **Bounce**, **Blocked**, **Spam Report**, **Dropped**  
 4. Optional header: `X-Webhook-Secret: <EMAIL_WEBHOOK_SECRET>` (set same value in `.env.local`)  
 5. Optional header: `X-Webhook-Provider: sendgrid`
@@ -446,20 +445,20 @@ Full list: `.env.example`
 | Port | **587** (not 25 on Lightsail) |
 | Username | `apikey` |
 | Password | SendGrid API key `SG.…` |
-| From | Verified domain e.g. `noreply@bulkfirepro.com` |
+| From | Verified domain e.g. `noreply@mailshooter.in` |
 
 From resolution: `src/lib/smtp/from-address.ts` (Mailjet, SendGrid, Brevo host detection).
 
 ---
 
-## Deliverability / DNS (bulkfirepro.com)
+## Deliverability / DNS (mailshooter.in)
 
 - SPF: `v=spf1 include:sendgrid.net ~all` (merge providers if multi-relay)
-- SendGrid DKIM + domain authentication in Twilio console
+- SendGrid DKIM + domain authentication in Twilio console for `mailshooter.in`
 - DMARC recommended
 - Warm-up: start 20–50/day on new domain; UI mentions ~5k/day guidance
 
-Scripts: `scripts/fix-bulkfirepro-deliverability.sh`, `scripts/setup-bulkfirepro-lightsail.sh`
+Scripts: `scripts/setup-mailshooter-lightsail.sh`
 
 ---
 

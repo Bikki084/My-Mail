@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { assertFinalPersistedConsistency, extractPersistedFieldSets } from "../src/lib/content-genuineness/consistency";
 import { buildPreviewRecipientRow } from "../src/lib/content-genuineness/preview-recipient";
-import { APP_NOREPLY_EMAIL } from "../src/lib/brand";
+import { APP_BRAND_NAME, APP_NOREPLY_EMAIL } from "../src/lib/brand";
 
 function sha256(text: string): string {
   return createHash("sha256").update(text).digest("hex");
@@ -18,7 +18,7 @@ function log(title: string, data: unknown) {
 }
 
 const preview = buildPreviewRecipientRow("client@example.com");
-const sender = "BulkProFire";
+const sender = APP_BRAND_NAME;
 
 console.log("Consistency E2E tests\n");
 

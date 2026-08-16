@@ -4,10 +4,10 @@ import {
   canonicalFieldsPromptBlock,
   type CanonicalContentFields,
 } from "@/lib/content-genuineness/canonical-fields";
-import { rewriteIntroducesUngroundedClaims } from "@/lib/content-genuineness/grounding";
 import type { GenuinenessFeedback } from "@/lib/content-genuineness/types";
 import { generateGeminiJsonText, resolveGeminiApiKey } from "@/lib/gemini/client";
 import { mergeTagsPromptSection } from "@/lib/content-spam-review/merge-tags-prompt";
+import { applyCanonicalBrandName, resolveCanonicalCompanyName } from "@/lib/brand";
 
 export type GroundedRewriteResult =
   | {
@@ -83,6 +83,7 @@ CRITICAL GROUNDING RULES:
 - Where natural, include available merge tags (greeting with name, referencing email, etc.).
 - Never use "Dear Customer" / "Dear User" when recipient_name is a {{{name}}} (or similar) merge tag — use that tag.
 - Include the exact support_contact from CANONICAL_FIELDS in the body (and attachment footer when rewriting attachment).
+- Copy company_name from CANONICAL_FIELDS verbatim in subject, body, and attachment. Do not paraphrase it or derive a name from the sending domain.
 - Avoid vague unverifiable company names; use company_name from CANONICAL_FIELDS.
 - If the body is empty/minimal but attachment text exists, draft a short genuine subject + body that accurately summarizes what the attachment contains using CANONICAL_FIELDS — still no invented commercial claims.
 - Return HTML body with simple <p> tags only.
@@ -185,13 +186,19 @@ export async function suggestGroundedRewrite(input: {
     }
   }
 
+  const company = resolveCanonicalCompanyName(
+    input.canonical.company_name || input.senderName,
+  );
+
   return {
     ok: true,
-    suggestedSubject: parsed.suggestedSubject.trim(),
-    suggestedHtml: parsed.suggestedHtml.trim(),
-    suggestedAttachmentHtml,
+    suggestedSubject: applyCanonicalBrandName(parsed.suggestedSubject.trim(), company),
+    suggestedHtml: applyCanonicalBrandName(parsed.suggestedHtml.trim(), company),
+    suggestedAttachmentHtml: suggestedAttachmentHtml
+      ? applyCanonicalBrandName(suggestedAttachmentHtml, company)
+      : null,
     summary: (parsed.summary ?? "Rewrote content while staying grounded in your draft.").trim(),
-    canonicalFields: input.canonical,
+    canonicalFields: { ...input.canonical, company_name: company },
   };
 }
 

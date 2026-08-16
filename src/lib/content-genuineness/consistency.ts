@@ -4,6 +4,7 @@
 
 import { htmlToPlainText } from "@/lib/html-email";
 import { applyMergeTags, type RecipientRow } from "@/lib/merge-tags";
+import { resolveCanonicalCompanyName, textMentionsCompanyName } from "@/lib/brand";
 import {
   TRACKED_KEYS,
   type CanonicalContentFields,
@@ -180,10 +181,10 @@ export function assertFinalPersistedConsistency(input: {
     });
   }
 
-  const company = (input.senderName || "").trim();
+  const company = resolveCanonicalCompanyName(input.senderName);
   if (company && bodyPlain && attachmentText) {
-    const combined = `${bodyPlain}\n${attachmentText}`.toLowerCase();
-    if (!combined.includes(company.toLowerCase())) {
+    const combined = `${bodyPlain}\n${attachmentText}`;
+    if (!textMentionsCompanyName(combined, company)) {
       mismatches.push({
         field: "company_name",
         body: company,

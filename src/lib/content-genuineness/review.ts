@@ -1,5 +1,6 @@
 import "server-only";
 
+import { resolveCanonicalCompanyName } from "@/lib/brand";
 import { htmlToPlainText } from "@/lib/html-email";
 import {
   checkBodyGenuineness,
@@ -235,7 +236,7 @@ export async function runGenuinenessReview(
 ): Promise<GenuinenessReviewResult> {
   const subject = input.subject.trim();
   const bodyHtml = input.bodyHtml.trim();
-  const senderName = input.senderName.trim();
+  const senderName = resolveCanonicalCompanyName(input.senderName);
   const plainBody = htmlToPlainText(bodyHtml).trim();
   const mergeTags = input.mergeTags ?? [];
   const attachmentHtml = attachmentHtmlFromInput(input);

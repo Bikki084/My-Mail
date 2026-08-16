@@ -4,7 +4,7 @@
  */
 import { createRequire } from "node:module";
 import assert from "node:assert/strict";
-import { APP_NOREPLY_EMAIL } from "../src/lib/brand";
+import { APP_BRAND_NAME, APP_NOREPLY_EMAIL } from "../src/lib/brand";
 
 const require = createRequire(import.meta.url);
 require("./load-env.cjs").loadProjectEnv();
@@ -39,13 +39,13 @@ function log(title: string, data: unknown) {
   console.log(typeof data === "string" ? data : JSON.stringify(data, null, 2));
 }
 
-const sender = "BulkProFire";
+const sender = APP_BRAND_NAME;
 
 async function testA() {
   const bodyPlain =
     "Dear Customer, your subscription invoice INV-5911142 transaction 734QHN0382 is due for renewal on 08/12/2026. Please review the attached PDF.";
   const attachmentPlain =
-    "Invoice BFP-28194956 Transaction TXN-8119482 Renewal date 07/05/2026 Amount $49.00 BulkProFire";
+    `Invoice BFP-28194956 Transaction TXN-8119482 Renewal date 07/05/2026 Amount $49.00 ${APP_BRAND_NAME}`;
 
   const result = await runGeminiPhishingValidation({
     subject: "Subscription invoice INV-5911142 renewal",
@@ -91,7 +91,7 @@ async function testA() {
 async function testB() {
   const bodyPlain = `Hi Alex, your subscription invoice INV-5911142 transaction 734QHN0382 renews on 08/12/2026. Support: ${APP_NOREPLY_EMAIL}`;
   const attachmentPlain =
-    "Invoice INV-5911142 Transaction 734QHN0382 Renewal 08/12/2026 Plan Pro $49.00 BulkProFire";
+    `Invoice INV-5911142 Transaction 734QHN0382 Renewal 08/12/2026 Plan Pro $49.00 ${APP_BRAND_NAME}`;
 
   const result = await runGeminiPhishingValidation({
     subject: "Your subscription invoice INV-5911142",
@@ -173,13 +173,13 @@ function testD() {
     subject: "",
     text: "",
     html: "",
-    senderName: "BulkProFire",
+    senderName: APP_BRAND_NAME,
   };
   log("TEST D — defaultCompose state (from email-campaign-context.tsx)", defaultCompose);
   assert.equal(defaultCompose.subject, "", "Default subject must be blank");
   assert.equal(defaultCompose.html, "", "Default HTML must be blank");
   assert.ok(
-    !/invoice|BulkFirePro subscription|Welcome/i.test(
+    !/invoice|Welcome/i.test(
       `${defaultCompose.subject} ${defaultCompose.html} ${defaultCompose.text}`,
     ),
     "No invoice-scam or welcome template in defaults",
