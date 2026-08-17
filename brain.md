@@ -8,7 +8,7 @@
 
 ## Changelog (recent)
 
-| 2026-08-18 | **Body-only send:** Gemini no longer flags an intentionally cleared attachment or name merge-tag greeting |
+| 2026-08-18 | **Body-only send:** clearing a verified attachment keeps Send valid and skips redundant attachment-policy recheck |
 | 2026-08-17 | **Clear attachment:** keep verification pass; re-verify only if subject/body/attachment HTML changes |
 | 2026-08-17 | **Phishing validator:** salvage truncated Gemini PASS JSON + compact retry (fixes false send blocks) |
 | 2026-08-16 | **Old domains:** nginx drops `bulkfirepro.com` / `bulkprofire.com`; site is `mailshooter.in` only |

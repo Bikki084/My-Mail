@@ -91,7 +91,11 @@ export function issueGenuinenessPassToken(input: {
 }
 
 export type PassTokenVerifyResult =
-  | { ok: true; fingerprint: string }
+  | {
+      ok: true;
+      fingerprint: string;
+      verifiedAttachmentFingerprint: string | null;
+    }
   | { ok: false; reason: string };
 
 export function verifyGenuinenessPassToken(input: {
@@ -133,7 +137,11 @@ export function verifyGenuinenessPassToken(input: {
     if (!checkHmac(payload, sig)) {
       return { ok: false, reason: "Invalid verification token." };
     }
-    return { ok: true, fingerprint: bodyFp };
+    return {
+      ok: true,
+      fingerprint: bodyFp,
+      verifiedAttachmentFingerprint: storedAtt === "-" ? null : storedAtt,
+    };
   }
 
   // Legacy v1: exact fingerprint match (body + attachment baked into one hash).
@@ -155,5 +163,9 @@ export function verifyGenuinenessPassToken(input: {
   if (!checkHmac(payload, sig)) {
     return { ok: false, reason: "Invalid verification token." };
   }
-  return { ok: true, fingerprint: fp };
+  return {
+    ok: true,
+    fingerprint: fp,
+    verifiedAttachmentFingerprint: null,
+  };
 }

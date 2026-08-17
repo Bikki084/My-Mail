@@ -127,6 +127,9 @@ describe("content-genuineness checks", () => {
       attachmentFingerprint: "",
     });
     assert.equal(cleared.ok, true);
+    if (cleared.ok) {
+      assert.equal(cleared.verifiedAttachmentFingerprint, att);
+    }
     const edited = verifyGenuinenessPassToken({
       token,
       userId: "user-1",

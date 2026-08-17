@@ -218,6 +218,14 @@ export async function runGenuinenessPassGuard(
     return { ok: false, message: verified.reason, code: "genuineness_required", status: 400 };
   }
 
+  // Removing a verified attachment cannot add harmful content. The v2 token
+  // still binds the unchanged subject/body and records that an attachment was
+  // present at verification time, so allow this exact clear-attachment flow
+  // without asking Gemini to require the now-intentionally-omitted document.
+  if (!attFp && verified.verifiedAttachmentFingerprint) {
+    return { ok: true };
+  }
+
   // Re-validate on server (no AI) so a stolen/stale token cannot bypass content rules.
   const hasAttachment = (input.attachments ?? []).some(
     (a) => Boolean(a.htmlText?.trim() || a.contentBase64?.trim()),
