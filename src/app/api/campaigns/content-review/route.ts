@@ -15,6 +15,7 @@ import {
 import {
   attachmentListFingerprint,
   issueGenuinenessPassToken,
+  messageBodyContentFingerprint,
   messageContentFingerprint,
   runGenuinenessReview,
   type GenuinenessAttachmentInput,
@@ -174,6 +175,11 @@ export async function POST(req: Request) {
   }
 
   const attFp = attachmentListFingerprint(attachments);
+  const bodyFingerprint = messageBodyContentFingerprint({
+    subject,
+    bodyHtml,
+    senderName,
+  });
   const fingerprint = messageContentFingerprint({
     subject,
     bodyHtml,
@@ -242,7 +248,11 @@ export async function POST(req: Request) {
 
   const passToken =
     passed
-      ? issueGenuinenessPassToken({ userId: user.id, fingerprint })
+      ? issueGenuinenessPassToken({
+          userId: user.id,
+          fingerprint: bodyFingerprint,
+          attachmentFingerprint: attFp,
+        })
       : null;
 
   void logContentRescoreAttempt(service, {

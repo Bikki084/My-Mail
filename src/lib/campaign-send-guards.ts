@@ -24,7 +24,7 @@ import {
 } from "@/lib/anti-spam-config";
 import {
   attachmentListFingerprint,
-  messageContentFingerprint,
+  messageBodyContentFingerprint,
   runGenuinenessReview,
   verifyGenuinenessPassToken,
 } from "@/lib/content-genuineness";
@@ -182,11 +182,10 @@ export async function runGenuinenessPassGuard(
       htmlText: a.htmlText,
     })),
   );
-  const fingerprint = messageContentFingerprint({
+  const fingerprint = messageBodyContentFingerprint({
     subject: input.subject,
     bodyHtml: input.bodyHtml,
     senderName: input.senderName,
-    attachmentFingerprint: attFp,
   });
 
   const token = (input.passToken ?? "").trim();
@@ -206,6 +205,7 @@ export async function runGenuinenessPassGuard(
     token,
     userId,
     fingerprint,
+    attachmentFingerprint: attFp,
   });
   if (!verified.ok) {
     void logContentRejection(supabase, {

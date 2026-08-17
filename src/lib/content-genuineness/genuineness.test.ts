@@ -11,8 +11,10 @@ import {
 } from "./checks";
 import {
   issueGenuinenessPassToken,
+  messageBodyContentFingerprint,
   messageContentFingerprint,
   verifyGenuinenessPassToken,
+  attachmentListFingerprint,
 } from "./pass-token";
 import { rewriteIntroducesUngroundedClaims } from "./grounding";
 import { assertCrossArtifactConsistency, assertFinalPersistedConsistency } from "./consistency";
@@ -20,6 +22,7 @@ import { buildCanonicalContentFields } from "./canonical-fields";
 import { APP_BRAND_NAME, APP_BRAND_WRONG_LETTER_ORDER, APP_NOREPLY_EMAIL, APP_PUBLIC_URL, applyCanonicalBrandName, resolveCanonicalCompanyName, textMentionsCompanyName } from "@/lib/brand";
 import { buildPreviewRecipientRow } from "./preview-recipient";
 import { parsePhishingVerdictJson } from "./phishing-verdict-parse";
+import { reviewToVerificationCache, verificationStillValid } from "@/components/client/email-campaign/content-verification-types";
 
 describe("content-genuineness checks", () => {
   it("rejects deceptive subject/body mismatch", () => {
@@ -103,6 +106,47 @@ describe("content-genuineness checks", () => {
       fingerprint: a,
     });
     assert.equal(good.ok, true);
+  });
+
+  it("keeps a pass token valid after the attachment is cleared", () => {
+    const body = messageBodyContentFingerprint({
+      subject: "Hello",
+      bodyHtml: "<p>One</p>",
+      senderName: "Acme",
+    });
+    const att = attachmentListFingerprint([{ filename: "doc.html", htmlText: "<h1>Doc</h1>" }]);
+    const token = issueGenuinenessPassToken({
+      userId: "user-1",
+      fingerprint: body,
+      attachmentFingerprint: att,
+    });
+    const cleared = verifyGenuinenessPassToken({
+      token,
+      userId: "user-1",
+      fingerprint: body,
+      attachmentFingerprint: "",
+    });
+    assert.equal(cleared.ok, true);
+    const edited = verifyGenuinenessPassToken({
+      token,
+      userId: "user-1",
+      fingerprint: body,
+      attachmentFingerprint: attachmentListFingerprint([
+        { filename: "doc.html", htmlText: "<h1>Changed</h1>" },
+      ]),
+    });
+    assert.equal(edited.ok, false);
+    const bodyEdited = verifyGenuinenessPassToken({
+      token,
+      userId: "user-1",
+      fingerprint: messageBodyContentFingerprint({
+        subject: "Hello",
+        bodyHtml: "<p>Two</p>",
+        senderName: "Acme",
+      }),
+      attachmentFingerprint: att,
+    });
+    assert.equal(bodyEdited.ok, false);
   });
 });
 
@@ -276,5 +320,44 @@ describe("canonical fields + consistency validator", () => {
     const parsed = parsePhishingVerdictJson(json);
     assert.ok(parsed);
     assert.equal(parsed!.status, "PASS");
+  });
+});
+
+describe("verification cache after clear attachment", () => {
+  const review = {
+    passed: true,
+    passToken: "tok",
+    contentFingerprint: "fp",
+    riskLevel: "low" as const,
+    issues: [],
+    summary: "ok",
+    suggestedSubject: null,
+    suggestedHtml: null,
+    aiUsed: false,
+    aiNote: null,
+  };
+
+  it("keeps a pass when attachment is cleared and invalidates body or attachment edits", () => {
+    const cache = reviewToVerificationCache(
+      review,
+      "Subj|<p>Body</p>|MailShooter",
+      "<div>PDF</div>",
+    );
+    assert.equal(
+      verificationStillValid(cache, "Subj", "<p>Body</p>", "MailShooter", "<div>PDF</div>"),
+      true,
+    );
+    assert.equal(
+      verificationStillValid(cache, "Subj", "<p>Body</p>", "MailShooter", ""),
+      true,
+    );
+    assert.equal(
+      verificationStillValid(cache, "Subj", "<p>Edited</p>", "MailShooter", "<div>PDF</div>"),
+      false,
+    );
+    assert.equal(
+      verificationStillValid(cache, "Subj", "<p>Body</p>", "MailShooter", "<div>Edited</div>"),
+      false,
+    );
   });
 });

@@ -8,6 +8,7 @@
 
 ## Changelog (recent)
 
+| 2026-08-17 | **Clear attachment:** keep verification pass; re-verify only if subject/body/attachment HTML changes |
 | 2026-08-17 | **Phishing validator:** salvage truncated Gemini PASS JSON + compact retry (fixes false send blocks) |
 | 2026-08-16 | **Old domains:** nginx drops `bulkfirepro.com` / `bulkprofire.com`; site is `mailshooter.in` only |
 | 2026-08-16 | **Brand display:** UI name is `MailShooter` (logo/favicon unchanged) |

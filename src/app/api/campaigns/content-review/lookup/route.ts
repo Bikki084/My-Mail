@@ -3,6 +3,8 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/admin";
 import {
   attachmentListFingerprint,
+  issueGenuinenessPassToken,
+  messageBodyContentFingerprint,
   messageContentFingerprint,
 } from "@/lib/content-genuineness";
 import { getVerificationResult } from "@/lib/content-genuineness/verification-store";
@@ -47,6 +49,11 @@ export async function POST(req: Request) {
   }));
 
   const attFp = attachmentListFingerprint(attachments);
+  const bodyFingerprint = messageBodyContentFingerprint({
+    subject: parsed.data.subject,
+    bodyHtml: parsed.data.body_html,
+    senderName: parsed.data.sender_name,
+  });
   const contentFingerprint = messageContentFingerprint({
     subject: parsed.data.subject,
     bodyHtml: parsed.data.body_html,
@@ -71,12 +78,21 @@ export async function POST(req: Request) {
     });
   }
 
+  const passToken =
+    stored.passed
+      ? issueGenuinenessPassToken({
+          userId: user.id,
+          fingerprint: bodyFingerprint,
+          attachmentFingerprint: attFp,
+        })
+      : null;
+
   return NextResponse.json({
     found: true,
     contentFingerprint,
     status: stored.passed ? ("passed" as const) : ("failed" as const),
     passed: stored.passed,
-    passToken: stored.passToken,
+    passToken,
     summary: stored.summary,
     phishingVerdict: stored.phishingVerdict,
     feedback: stored.feedback,

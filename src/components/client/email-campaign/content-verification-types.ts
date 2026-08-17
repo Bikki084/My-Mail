@@ -39,21 +39,30 @@ export type ContentReviewResult = {
   gateRequired?: boolean;
 };
 
-/** Client-side compose key for instant invalidation when user edits. */
+/** Subject + body + sender — edits here always require re-verification. */
+export function composeBodyKey(subject: string, html: string, sender: string): string {
+  return `${subject.trim()}|${html.trim()}|${sender.trim()}`;
+}
+
+/** Legacy full compose key (includes attachment HTML). */
 export function composeContentKey(
   subject: string,
   html: string,
   sender: string,
   attachmentHtml: string,
 ): string {
-  return `${subject.trim()}|${html.trim()}|${sender.trim()}|${attachmentHtml.trim()}`;
+  return `${composeBodyKey(subject, html, sender)}|${attachmentHtml.trim()}`;
 }
 
 export type VerificationStatus = "unverified" | "passed" | "failed";
 
 export type ContentVerificationCache = {
   contentFingerprint: string;
+  /** @deprecated use bodyComposeKey — kept for persisted localStorage rows */
   composeKey: string;
+  bodyComposeKey: string;
+  /** Attachment HTML at verify time (empty when verified without attachment). */
+  verifiedAttachmentHtml: string;
   status: VerificationStatus;
   passed: boolean;
   passToken: string | null;
@@ -70,13 +79,43 @@ export type ContentVerificationCache = {
   verifiedAt?: string;
 };
 
+/**
+ * Verification stays valid when body is unchanged and attachment is unchanged OR cleared.
+ * Any body edit or attachment content edit requires re-verify.
+ */
+export function verificationStillValid(
+  cache: ContentVerificationCache,
+  subject: string,
+  html: string,
+  sender: string,
+  attachmentHtml: string,
+): boolean {
+  const bodyKey = composeBodyKey(subject, html, sender);
+  const cachedBodyKey =
+    cache.bodyComposeKey ||
+    (cache.composeKey.includes("|")
+      ? cache.composeKey.split("|").slice(0, 3).join("|")
+      : cache.composeKey);
+  if (bodyKey !== cachedBodyKey) return false;
+
+  const currentAttachment = attachmentHtml.trim();
+  const verifiedAttachment = (cache.verifiedAttachmentHtml ?? "").trim();
+  if (currentAttachment === verifiedAttachment) return true;
+  // Cleared attachment after verify-with-attachment — still valid.
+  if (verifiedAttachment !== "" && currentAttachment === "") return true;
+  return false;
+}
+
 export function reviewToVerificationCache(
   review: ContentReviewResult,
-  composeKey: string,
+  bodyComposeKey: string,
+  verifiedAttachmentHtml: string,
 ): ContentVerificationCache {
   return {
     contentFingerprint: review.contentFingerprint ?? "",
-    composeKey,
+    composeKey: bodyComposeKey,
+    bodyComposeKey,
+    verifiedAttachmentHtml: verifiedAttachmentHtml.trim(),
     status: review.passed ? "passed" : "failed",
     passed: review.passed,
     passToken: review.passToken,

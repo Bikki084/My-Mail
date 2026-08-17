@@ -38,8 +38,10 @@ import { randomId } from "@/lib/random-id";
 import { useEmailCampaign } from "./email-campaign-context";
 import {
   cacheToContentReview,
+  composeBodyKey,
   composeContentKey,
   reviewToVerificationCache,
+  verificationStillValid,
   type ContentReviewResult,
   type VerificationStatus,
 } from "./content-verification-types";
@@ -117,37 +119,43 @@ export function EmailEditor({
         composeDraft.subject,
         composeDraft.html,
         composeDraft.senderName,
-        attachmentHtml,
+        attachmentKind ? attachmentHtml : "",
       ),
-    [composeDraft.subject, composeDraft.html, composeDraft.senderName, attachmentHtml],
+    [composeDraft.subject, composeDraft.html, composeDraft.senderName, attachmentKind, attachmentHtml],
+  );
+
+  const verificationMatchesDraft = Boolean(
+    verification &&
+      verificationStillValid(
+        verification,
+        composeDraft.subject,
+        composeDraft.html,
+        composeDraft.senderName,
+        attachmentKind ? attachmentHtml : "",
+      ),
   );
 
   const verificationStatus: VerificationStatus =
-    !verification || verification.composeKey !== currentComposeKey
-      ? "unverified"
-      : verification.status;
+    !verification || !verificationMatchesDraft ? "unverified" : verification.status;
 
   const contentReview = React.useMemo(
-    () =>
-      verification && verification.composeKey === currentComposeKey
-        ? cacheToContentReview(verification)
-        : null,
-    [verification, currentComposeKey],
+    () => (verificationMatchesDraft && verification ? cacheToContentReview(verification) : null),
+    [verification, verificationMatchesDraft],
   );
 
   const contentVerifiedForSend = Boolean(
     verificationStatus === "passed" &&
       verification?.passed &&
       verification.passToken &&
-      verification.composeKey === currentComposeKey,
+      verificationMatchesDraft,
   );
 
-  // Invalidate stale verification when compose content changes.
+  // Drop cache only when body or attachment HTML actually changed (not when attachment is cleared).
   React.useEffect(() => {
-    if (verification && verification.composeKey !== currentComposeKey) {
+    if (verification && !verificationMatchesDraft) {
       clearVerificationCache();
     }
-  }, [verification, currentComposeKey, clearVerificationCache]);
+  }, [verification, verificationMatchesDraft, clearVerificationCache]);
 
   // Restore persisted server verification for current content (no Gemini re-run).
   React.useEffect(() => {
@@ -192,18 +200,29 @@ export function EmailEditor({
             verifiedAt?: string;
           };
           if (cancelled || !res.ok || !j.found || !j.contentFingerprint) return;
-          setVerificationCache({
-            contentFingerprint: j.contentFingerprint,
-            composeKey: currentComposeKey,
-            status: j.passed ? "passed" : "failed",
-            passed: Boolean(j.passed),
-            passToken: j.passToken ?? null,
-            summary: j.summary ?? "",
-            phishingVerdict: j.phishingVerdict ?? null,
-            feedback: j.feedback,
-            issues: j.issues,
-            verifiedAt: j.verifiedAt,
-          });
+          const liveAttachment = attachmentKind ? attachmentHtml : "";
+          setVerificationCache(
+            reviewToVerificationCache(
+              {
+                passed: Boolean(j.passed),
+                passToken: j.passToken ?? null,
+                contentFingerprint: j.contentFingerprint,
+                riskLevel: "low",
+                feedback: j.feedback,
+                issues: j.issues ?? [],
+                summary: j.summary ?? "",
+                suggestedSubject: null,
+                suggestedHtml: null,
+                suggestedAttachmentHtml: null,
+                canonicalFields: null,
+                aiUsed: false,
+                aiNote: null,
+                phishingVerdict: j.phishingVerdict,
+              },
+              composeBodyKey(composeDraft.subject, composeDraft.html, composeDraft.senderName),
+              liveAttachment,
+            ),
+          );
         } catch {
           // ignore — stay unverified
         } finally {
@@ -460,10 +479,6 @@ export function EmailEditor({
       }
     }
 
-    const reviewComposeKey =
-      mode === "ai_generate"
-        ? composeContentKey(`ai:${brief}`, brief, senderName, attachmentForReview)
-        : composeContentKey(subject, html, senderName, attachmentForReview);
     setContentReviewLoading(true);
     try {
       const attachmentsPayload =
@@ -511,21 +526,25 @@ export function EmailEditor({
           attachmentKind: "pdf",
           attachmentHtml: j.generatedContent.attachmentHtml,
         });
+        setComposeMode("manual");
       }
 
-      const appliedComposeKey = j.generatedContent
-        ? composeContentKey(
+      const appliedBodyKey = j.generatedContent
+        ? composeBodyKey(
             j.generatedContent.subject,
             j.generatedContent.bodyHtml,
             resolveCanonicalCompanyName(senderName),
-            j.generatedContent.attachmentHtml,
           )
-        : reviewComposeKey;
+        : composeBodyKey(subject, html, senderName);
+      const appliedAttachmentHtml = j.generatedContent
+        ? j.generatedContent.attachmentHtml
+        : attachmentForReview;
 
       setVerificationCache(
         reviewToVerificationCache(
           { ...j, contentFingerprint: j.contentFingerprint ?? "" },
-          appliedComposeKey,
+          appliedBodyKey,
+          appliedAttachmentHtml,
         ),
       );
       if (!options?.silent) {
@@ -1026,8 +1045,9 @@ export function EmailEditor({
               <div>
                 <p className="text-sm font-medium text-zinc-200">Content verification (required)</p>
                 <p className="mt-1 text-xs text-zinc-500">
-                  Subject, body, and attachment content must pass genuineness checks before Send
-                  unlocks. Edits invalidate a previous pass.
+                  Subject and body (and attachment text, if you keep one) must pass genuineness
+                  checks before Send unlocks. Clearing an attachment keeps a pass. Editing
+                  subject, body, or attachment content requires Verify again.
                 </p>
               </div>
               <Button
