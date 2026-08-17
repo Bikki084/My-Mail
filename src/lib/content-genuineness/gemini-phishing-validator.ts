@@ -32,10 +32,19 @@ function buildPhishingPrompt(input: {
 }): string {
   const attachmentSection = input.hasAttachment
     ? input.attachmentPlain.trim() || "(attachment present but no extractable text)"
-    : "(no attachment provided)";
+    : "(attachment intentionally omitted by sender)";
+  const attachmentPolicy = input.hasAttachment
+    ? `An attachment is included. Compare its facts and topic with the email body.`
+    : `NO ATTACHMENT WILL BE SENT. This is an intentional, allowed body-only email.
+- Do NOT flag "Missing attachment".
+- Do NOT require an attachment or compare the body against one.
+- Judge only the subject and body.`;
   const company = resolveCanonicalCompanyName(input.senderName);
 
-  return `You are a phishing and scam-content detector reviewing an email BEFORE it is sent. You will be given: (1) subject line, (2) email body, (3) extracted text from a PDF attachment. Analyze all three together as a single unit — do not evaluate them in isolation.
+  return `You are a phishing and scam-content detector reviewing an email BEFORE it is sent. You will be given a subject, body, and optionally an attachment.
+
+ATTACHMENT POLICY:
+${attachmentPolicy}
 
 Return FAIL if ANY of the following are true:
 - Any factual field (invoice number, transaction ID, reference number, date, amount, recipient name, company name) differs between the email body and the PDF attachment.
@@ -49,6 +58,7 @@ Return FAIL if ANY of the following are true:
 
 Do NOT fail because links or From addresses use ${APP_DOMAIN} — that is the verified hostname for ${APP_BRAND_NAME}.
 Do NOT fail a genuine status/connectivity notice solely as a subject/body mismatch when both describe the same operational event.
+Do NOT treat "Hello {{{name}}}" or another recipient-name merge tag as a generic greeting; it is personalized at send time.
 Do NOT copy example phrases from this prompt (such as "act now") into flags unless those phrases actually appear in the subject/body/attachment.
 
 Verified support contact for this platform: ${APP_NOREPLY_EMAIL} · ${APP_PUBLIC_URL}
