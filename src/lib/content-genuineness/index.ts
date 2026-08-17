@@ -15,6 +15,7 @@
 export { runGenuinenessReview } from "@/lib/content-genuineness/review";
 export {
   messageContentFingerprint,
+  messageBodyContentFingerprint,
   attachmentListFingerprint,
   issueGenuinenessPassToken,
   verifyGenuinenessPassToken,
