@@ -2,19 +2,13 @@ import "server-only";
 
 import { APP_BRAND_NAME, APP_DOMAIN, APP_NOREPLY_EMAIL, APP_PUBLIC_URL, resolveCanonicalCompanyName } from "@/lib/brand";
 import { generateGeminiJsonText, humanizeGeminiFailure } from "@/lib/gemini/client";
+import {
+  parsePhishingVerdictJson,
+  type PhishingMismatch,
+  type PhishingVerdictJson,
+} from "@/lib/content-genuineness/phishing-verdict-parse";
 
-export type PhishingMismatch = {
-  field: string;
-  body_value: string;
-  attachment_value: string;
-};
-
-export type PhishingVerdictJson = {
-  status: "PASS" | "FAIL";
-  mismatches_found: PhishingMismatch[];
-  flags: string[];
-  reasoning: string;
-};
+export type { PhishingMismatch, PhishingVerdictJson };
 
 export type PhishingValidationResult = {
   /** True when Gemini returned parseable JSON (not on API failure). */
@@ -28,33 +22,6 @@ export type PhishingValidationResult = {
   model: string | null;
   error: string | null;
 };
-
-export function parsePhishingVerdictJson(text: string): PhishingVerdictJson | null {
-  const trimmed = text.trim();
-  const fence = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const raw = fence ? fence[1]!.trim() : trimmed;
-  try {
-    const parsed = JSON.parse(raw) as PhishingVerdictJson;
-    if (parsed.status !== "PASS" && parsed.status !== "FAIL") return null;
-    return {
-      status: parsed.status,
-      mismatches_found: Array.isArray(parsed.mismatches_found) ? parsed.mismatches_found : [],
-      flags: Array.isArray(parsed.flags) ? parsed.flags.map(String) : [],
-      reasoning: String(parsed.reasoning ?? ""),
-    };
-  } catch {
-    const start = raw.indexOf("{");
-    const end = raw.lastIndexOf("}");
-    if (start >= 0 && end > start) {
-      try {
-        return parsePhishingVerdictJson(raw.slice(start, end + 1));
-      } catch {
-        return null;
-      }
-    }
-    return null;
-  }
-}
 
 function buildPhishingPrompt(input: {
   subject: string;
@@ -87,7 +54,7 @@ Do NOT copy example phrases from this prompt (such as "act now") into flags unle
 Verified support contact for this platform: ${APP_NOREPLY_EMAIL} · ${APP_PUBLIC_URL}
 Company display name on file: ${company}
 
-Respond ONLY in this JSON structure, nothing else:
+Respond ONLY with valid JSON — no markdown, no prose before/after. Keep "reasoning" to ONE short sentence (max 80 characters, no newlines):
 {
   "status": "PASS" | "FAIL",
   "mismatches_found": [ { "field": string, "body_value": string, "attachment_value": string } ],
@@ -109,6 +76,32 @@ ${attachmentSection.slice(0, 12_000)}`;
  * Mandatory Gemini 2.5 Flash phishing / consistency validation.
  * Never defaults to PASS on error — returns status ERROR instead.
  */
+async function callAndParsePhishingVerdict(
+  prompt: string,
+): Promise<
+  | { ok: true; parsed: PhishingVerdictJson; raw: string; model: string }
+  | { ok: false; reason: string; raw: string | null; model: string | null }
+> {
+  const gemini = await generateGeminiJsonText(prompt, { preferLite: true });
+  if (!gemini.ok) {
+    return { ok: false, reason: humanizeGeminiFailure(gemini.reason), raw: null, model: null };
+  }
+
+  console.info("[phishing-validator] raw Gemini response:", gemini.text.slice(0, 2000));
+  const parsed = parsePhishingVerdictJson(gemini.text);
+  if (!parsed) {
+    console.error("[phishing-validator] unparseable response:", gemini.text.slice(0, 800));
+    return {
+      ok: false,
+      reason: "Could not parse Gemini phishing verdict JSON.",
+      raw: gemini.text,
+      model: gemini.model,
+    };
+  }
+
+  return { ok: true, parsed, raw: gemini.text, model: gemini.model };
+}
+
 export async function runGeminiPhishingValidation(input: {
   subject: string;
   bodyPlain: string;
@@ -117,10 +110,17 @@ export async function runGeminiPhishingValidation(input: {
   hasAttachment: boolean;
 }): Promise<PhishingValidationResult> {
   const prompt = buildPhishingPrompt(input);
-  const gemini = await generateGeminiJsonText(prompt);
+  let result = await callAndParsePhishingVerdict(prompt);
 
-  if (!gemini.ok) {
-    const error = humanizeGeminiFailure(gemini.reason);
+  if (!result.ok && result.raw) {
+    const retryPrompt =
+      prompt +
+      "\n\nIMPORTANT: Your previous reply was truncated or invalid JSON. Reply again with ONLY compact JSON. reasoning MUST be under 80 characters.";
+    result = await callAndParsePhishingVerdict(retryPrompt);
+  }
+
+  if (!result.ok) {
+    const error = result.reason;
     console.error("[phishing-validator] Gemini call failed:", error);
     return {
       executed: false,
@@ -130,28 +130,13 @@ export async function runGeminiPhishingValidation(input: {
       reasoning: error.includes("quota")
         ? error
         : "Verification could not be completed — send is blocked until this is resolved.",
-      rawResponse: null,
-      model: null,
+      rawResponse: result.raw,
+      model: result.model,
       error,
     };
   }
 
-  console.info("[phishing-validator] raw Gemini response:", gemini.text.slice(0, 2000));
-
-  const parsed = parsePhishingVerdictJson(gemini.text);
-  if (!parsed) {
-    console.error("[phishing-validator] unparseable response:", gemini.text.slice(0, 500));
-    return {
-      executed: false,
-      status: "ERROR",
-      mismatches_found: [],
-      flags: ["Unparseable model response"],
-      reasoning: "Verification could not be completed — send is blocked until this is resolved.",
-      rawResponse: gemini.text,
-      model: gemini.model,
-      error: "Could not parse Gemini phishing verdict JSON.",
-    };
-  }
+  const parsed = result.parsed;
 
   const pass =
     parsed.status === "PASS" &&
@@ -163,8 +148,8 @@ export async function runGeminiPhishingValidation(input: {
     mismatches_found: parsed.mismatches_found,
     flags: parsed.flags,
     reasoning: parsed.reasoning,
-    rawResponse: gemini.text,
-    model: gemini.model,
+    rawResponse: result.raw,
+    model: result.model,
     error: null,
   };
 }

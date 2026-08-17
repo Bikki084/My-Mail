@@ -2,12 +2,14 @@
 
 > **Purpose:** Single source of truth for AI agents and developers. Read this file **before** scanning the whole repo.  
 > **Maintainers:** Update this file whenever you add features, change limits, deploy steps, or infra — same as you would commit code.  
-> **Last updated:** 2026-08-16
+> **Last updated:** 2026-08-17
 
 ---
 
 ## Changelog (recent)
 
+| 2026-08-17 | **Phishing validator:** salvage truncated Gemini PASS JSON + compact retry (fixes false send blocks) |
+| 2026-08-16 | **Old domains:** nginx drops `bulkfirepro.com` / `bulkprofire.com`; site is `mailshooter.in` only |
 | 2026-08-16 | **Brand display:** UI name is `MailShooter` (logo/favicon unchanged) |
 | 2026-08-16 | **nginx cutover:** strip duplicate `gzip_vary` so mailshooter.in HTTPS setup can reload |
 | 2026-08-16 | **Domain cutover:** site + sending → `mailshooter.in` / Mailshooter; script `setup-mailshooter-lightsail.sh` |

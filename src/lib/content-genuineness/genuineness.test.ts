@@ -19,6 +19,7 @@ import { assertCrossArtifactConsistency, assertFinalPersistedConsistency } from 
 import { buildCanonicalContentFields } from "./canonical-fields";
 import { APP_BRAND_NAME, APP_BRAND_WRONG_LETTER_ORDER, APP_NOREPLY_EMAIL, APP_PUBLIC_URL, applyCanonicalBrandName, resolveCanonicalCompanyName, textMentionsCompanyName } from "@/lib/brand";
 import { buildPreviewRecipientRow } from "./preview-recipient";
+import { parsePhishingVerdictJson } from "./phishing-verdict-parse";
 
 describe("content-genuineness checks", () => {
   it("rejects deceptive subject/body mismatch", () => {
@@ -251,5 +252,29 @@ describe("canonical fields + consistency validator", () => {
       previewRecipient: preview,
     });
     assert.equal(good.ok, true);
+  });
+
+  it("salvages truncated Gemini PASS JSON when arrays are empty", () => {
+    const truncated = `{
+  "status": "PASS",
+  "mismatches_found": [],
+  "flags": [],
+  "reasoning": "The email and PDF attachment are perfectly aligned. The test ID (CONN-SCN38L), status (OK), timestamp (2026-08-17T16:54:03Z), and support contact details are consistent across both sources. The company display name 'MailShooter' is correctly used, and there are no financial fields present in this non-billing connectivity email."`;
+    const parsed = parsePhishingVerdictJson(truncated);
+    assert.ok(parsed);
+    assert.equal(parsed!.status, "PASS");
+    assert.equal(parsed!.mismatches_found.length, 0);
+  });
+
+  it("parses normal Gemini PASS JSON", () => {
+    const json = JSON.stringify({
+      status: "PASS",
+      mismatches_found: [],
+      flags: [],
+      reasoning: "Aligned connectivity notice.",
+    });
+    const parsed = parsePhishingVerdictJson(json);
+    assert.ok(parsed);
+    assert.equal(parsed!.status, "PASS");
   });
 });
