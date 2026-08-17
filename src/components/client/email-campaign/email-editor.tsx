@@ -526,7 +526,6 @@ export function EmailEditor({
           attachmentKind: "pdf",
           attachmentHtml: j.generatedContent.attachmentHtml,
         });
-        setComposeMode("manual");
       }
 
       const appliedBodyKey = j.generatedContent
