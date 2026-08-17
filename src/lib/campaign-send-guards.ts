@@ -218,11 +218,11 @@ export async function runGenuinenessPassGuard(
     return { ok: false, message: verified.reason, code: "genuineness_required", status: 400 };
   }
 
-  // Removing a verified attachment cannot add harmful content. The v2 token
-  // still binds the unchanged subject/body and records that an attachment was
-  // present at verification time, so allow this exact clear-attachment flow
-  // without asking Gemini to require the now-intentionally-omitted document.
-  if (!attFp && verified.verifiedAttachmentFingerprint) {
+  // With no current attachment there is no attachment payload to inspect.
+  // The signed token already binds the exact subject/body/sender, so allow the
+  // verified body-only message without a second Gemini call at campaign create
+  // and again at send. Any body edit changes the fingerprint and fails above.
+  if (!attFp) {
     return { ok: true };
   }
 

@@ -164,6 +164,7 @@ Rules:
 - Greet with {{{name}}}, never "Dear Customer".
 - Company/sender display name must appear exactly as: ${company}
 - Reuse the same topic words in the subject and the body (do not write a subject about one event and a body about another).
+- The email body MUST stand alone if the sender removes the optional attachment. Never say "attached", "attachment", "PDF", "enclosed", or "document" in bodyHtml.
 - Keep HTML compact. Attachment must describe the same event as the body.
 
 User brief:
@@ -216,7 +217,11 @@ function localRejectReason(
   bodyHtml: string,
   attachmentHtml: string,
 ): string | null {
-  const blob = `${subject}\n${htmlToPlainText(bodyHtml)}\n${htmlToPlainText(attachmentHtml)}`;
+  const bodyPlain = htmlToPlainText(bodyHtml);
+  const blob = `${subject}\n${bodyPlain}\n${htmlToPlainText(attachmentHtml)}`;
+  if (/\b(attached|attachment|pdf|enclosed|document)\b/i.test(bodyPlain)) {
+    return "bodyHtml must stand alone when the optional attachment is removed. Do not mention attached files, attachments, PDFs, enclosures, or documents in the email body.";
+  }
   if (!contentTypeAllowsFinancialFields(type) && textHasFinancialFields(blob)) {
     return `content_type is ${type} but generated text includes invoice/transaction/amount/renewal fields — omit all financial fields and match the user brief.`;
   }
