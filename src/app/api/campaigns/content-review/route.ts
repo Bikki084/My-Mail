@@ -120,6 +120,21 @@ export async function POST(req: Request) {
         { status: 502 },
       );
     }
+    if (!generated.passedVerification) {
+      return NextResponse.json(
+        {
+          error:
+            generated.phishingVerdict?.reasoning ||
+            "Generated content did not pass genuineness verification — send is blocked.",
+          passed: false,
+          blocked: true,
+          summary: "Generated content was not applied because it is not genuine.",
+          generateAttempts: generated.attempts,
+          generateContentType: generated.contentType,
+        },
+        { status: 422 },
+      );
+    }
     subject = generated.subject;
     bodyHtml = generated.bodyHtml;
     attachments = [
@@ -254,6 +269,10 @@ export async function POST(req: Request) {
           attachmentFingerprint: attFp,
         })
       : null;
+
+  if (!passed) {
+    generatedContent = null;
+  }
 
   void logContentRescoreAttempt(service, {
     userId: user.id,

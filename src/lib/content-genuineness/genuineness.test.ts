@@ -8,6 +8,7 @@ import {
   checkSubjectBodyAlignment,
   checkSubjectGenuineness,
   checkBodyGenuineness,
+  firstBlockingGenuinenessMessage,
 } from "./checks";
 import {
   issueGenuinenessPassToken,
@@ -43,6 +44,24 @@ describe("content-genuineness checks", () => {
       "<p>I hope this email finds you well. Please see the attached. Looking forward to hearing from you. For more information click here.</p>",
     );
     assert.ok(issues.some((i) => i.blocks));
+  });
+
+  it("blocks spam bait on generate and verify with the same local checks", () => {
+    const spam = firstBlockingGenuinenessMessage({
+      subject: "You are a winner — claim your prize",
+      bodyHtml:
+        "<p>Dear customer, click here to claim your prize and verify your account. Act now, limited time crypto offer.</p>",
+      senderName: "MailShooter",
+    });
+    assert.ok(spam);
+
+    const genuine = firstBlockingGenuinenessMessage({
+      subject: "MailShooter connectivity test CONN-LOCAL",
+      bodyHtml:
+        "<p>Hi {{{name}}},</p><p>This is a connectivity test from MailShooter. Test ID CONN-LOCAL completed at 2026-08-18 with status OK. No invoice or payment is involved.</p><p>If you received this as expected, your mailbox path is working. Support: noreply@mailshooter.in · https://mailshooter.in</p>",
+      senderName: "MailShooter",
+    });
+    assert.equal(genuine, null);
   });
 
   it("flags attachment/body topic mismatch", () => {

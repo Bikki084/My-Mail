@@ -29,4 +29,24 @@ describe("content-spam heuristics", () => {
     });
     assert.equal(r.level, "high");
   });
+
+  it("does not treat genuine notices as spam bait", () => {
+    const genuine = analyzeContentHeuristics({
+      subject: "MailShooter account recovery notice",
+      bodyHtml:
+        "<p>Hi {{{name}}}, we received a request to change the password on your MailShooter account. Sign in at https://mailshooter.in if you made this request. Feel free to write to support if you have questions.</p>",
+      senderName: "MailShooter",
+    });
+    assert.equal(
+      genuine.issues.some((i) => i.code === "spam_phrase"),
+      false,
+    );
+
+    const phishingReset = analyzeContentHeuristics({
+      subject: "Reset now",
+      bodyHtml: "<p>Click here to reset your password immediately and verify your account.</p>",
+      senderName: "MailShooter",
+    });
+    assert.ok(phishingReset.issues.some((i) => i.code === "spam_phrase"));
+  });
 });

@@ -55,6 +55,10 @@ Return FAIL if ANY of the following are true:
 - The content overall resembles a known phishing/invoice-scam pattern (fake renewal notice, fake payment confirmation designed to induce a support callback).
 - The attachment topic does not match the email body (e.g. a connectivity-test email with an invoice PDF).
 - Financial fields (invoice number, transaction ID, amount, renewal date) appear in a non-billing email.
+- The copy uses spam or scam bait: "click here", winner, prize, lottery, casino, crypto/bitcoin pitch, wire transfer, "verify your account", "act now", "limited time", "urgent", "claim your", "make money".
+- The message looks like unsolicited promotional blast copy rather than a genuine first-party notice.
+
+For PASS, "flags" MUST be [] and "mismatches_found" MUST be []. If you would add any flag or mismatch, status MUST be FAIL.
 
 Do NOT fail because links or From addresses use ${APP_DOMAIN} — that is the verified hostname for ${APP_BRAND_NAME}.
 Do NOT fail a genuine status/connectivity notice solely as a subject/body mismatch when both describe the same operational event.
@@ -92,7 +96,7 @@ async function callAndParsePhishingVerdict(
   | { ok: true; parsed: PhishingVerdictJson; raw: string; model: string }
   | { ok: false; reason: string; raw: string | null; model: string | null }
 > {
-  const gemini = await generateGeminiJsonText(prompt, { preferLite: true });
+  const gemini = await generateGeminiJsonText(prompt);
   if (!gemini.ok) {
     return { ok: false, reason: humanizeGeminiFailure(gemini.reason), raw: null, model: null };
   }
@@ -150,7 +154,8 @@ export async function runGeminiPhishingValidation(input: {
 
   const pass =
     parsed.status === "PASS" &&
-    (!input.hasAttachment || parsed.mismatches_found.length === 0);
+    parsed.mismatches_found.length === 0 &&
+    parsed.flags.length === 0;
 
   return {
     executed: true,
@@ -168,5 +173,6 @@ export function phishingVerdictBlocksSend(verdict: PhishingValidationResult): bo
   if (!verdict.executed) return true;
   if (verdict.status !== "PASS") return true;
   if (verdict.mismatches_found.length > 0) return true;
+  if (verdict.flags.length > 0) return true;
   return false;
 }

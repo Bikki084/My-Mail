@@ -9,7 +9,7 @@ export type HeuristicIssue = {
 };
 
 const SPAM_PHRASES = [
-  /\bfree\b/i,
+  /\bfree (money|prize|gift|offer|bitcoin|crypto|access)\b/i,
   /\bact now\b/i,
   /\blimited time\b/i,
   /\bclick here\b/i,
@@ -38,7 +38,8 @@ const SPAM_PHRASES = [
   /\blast chance\b/i,
   /\bwire transfer\b/i,
   /\bnigerian?\b/i,
-  /\bpassword reset\b/i,
+  /\b(click|tap) .{0,40}reset .{0,20}password\b/i,
+  /\breset your password (now|immediately|today|here)\b/i,
   /\baccount suspended\b/i,
   /\bclaim your (prize|reward|gift)\b/i,
   /\bdouble your income\b/i,

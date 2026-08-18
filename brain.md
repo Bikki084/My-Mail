@@ -2,12 +2,13 @@
 
 > **Purpose:** Single source of truth for AI agents and developers. Read this file **before** scanning the whole repo.  
 > **Maintainers:** Update this file whenever you add features, change limits, deploy steps, or infra — same as you would commit code.  
-> **Last updated:** 2026-08-17
+> **Last updated:** 2026-08-18
 
 ---
 
 ## Changelog (recent)
 
+| 2026-08-18 | **Generate+Verify spam bar:** generate fails closed (no failed copy in editor); same local spam checks as Verify; phishing gate uses Flash and rejects leftover flags |
 | 2026-08-18 | **Body-only send:** valid body-bound tokens skip redundant no-attachment rechecks; generated bodies no longer reference optional files |
 | 2026-08-17 | **Clear attachment:** keep verification pass; re-verify only if subject/body/attachment HTML changes |
 | 2026-08-17 | **Phishing validator:** salvage truncated Gemini PASS JSON + compact retry (fixes false send blocks) |
@@ -207,13 +208,14 @@ When tripped → **all sends frozen** for `DELIVERABILITY_PAUSE_HOURS` (default 
 
 ## Content spam review (AI + rules)
 
-Pre-send coach in **Email Composer → Verify content**:
+Pre-send coach in **Email Composer → Generate & verify** and **Verify content**:
 
 | Layer | What it does |
 |-------|----------------|
-| **Local heuristics** | Instant score 0–100: caps, spam phrases, thin body, attachment-only pitch, link count |
+| **Local heuristics** | Instant score: caps, spam bait phrases, thin body, attachment-only pitch, link count. **Generate** retries or fails closed if these fire — failed copy is not applied to the editor. |
 | **Genuineness gate** | Hard pass/fail on subject quality, body specificity, subject↔body alignment, attachment text, body↔attachment relevance |
-| **Gemini AI** (optional) | Grounded rewrite of subject + HTML + attachment HTML from one **canonical fields** object (invoice/TXN/date/company/support); consistency validator blocks mismatched IDs; personalizes with CSV merge tags; never auto-approved |
+| **Gemini phishing gate** | Mandatory Flash verdict on subject + body + attachment. PASS requires empty flags and mismatches. Errors never default to PASS. |
+| **Gemini rewrite** (optional) | Grounded rewrite of subject + HTML + attachment HTML from one **canonical fields** object; never auto-approved |
 
 **API:** `POST /api/campaigns/content-review` (authenticated)
 

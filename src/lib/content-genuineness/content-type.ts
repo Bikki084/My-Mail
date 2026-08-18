@@ -28,16 +28,18 @@ export function textHasFinancialFields(text: string): boolean {
 }
 
 /** Shared anti-phishing constraints — same bar as the pre-send verifier. */
-export const SHARED_PHISHING_CONSTRAINTS = `ANTI-PHISHING CONSTRAINTS (generation MUST satisfy these — the same rules the verifier uses):
+export const SHARED_PHISHING_CONSTRAINTS = `ANTI-PHISHING / ANTI-SPAM CONSTRAINTS (generation MUST satisfy these — the same rules the verifier uses):
 - Subject, body, and attachment are one unit. Facts in one must match the others.
 - Do not use generic greetings ("Dear Customer", "Dear User") when {{{name}}} is available — greet with {{{name}}}.
-- No urgency/pressure language ("act now", "immediately", "account will be suspended", "limited time").
+- No urgency/pressure language ("act now", "immediately", "account will be suspended", "limited time", "urgent", "final notice", "last chance").
+- No spam bait: "click here", "click below", winner, prize, lottery, casino, crypto/bitcoin pitch, wire transfer, "verify your account", "claim your", "make money", "work from home".
 - Include the real support contact exactly: ${APP_NOREPLY_EMAIL} · ${APP_PUBLIC_URL}
 - Use company_name from the canonical object verbatim in subject, body, and attachment (exact capitalization). Do not rearrange letters.
 - Subject and body must be the same topic — reuse at least some of the same content words.
 - Attachment content must be the same topic as the body (not an unrelated invoice, PDF bait, or placeholder).
 - Do not invent mismatched invoice numbers, transaction IDs, amounts, or dates.
 - Do not produce a fake renewal notice / fake payment confirmation designed to induce a support callback.
+- Write a genuine first-party notice. Do not write promotional blast copy or phishing lures.
 - No "please see the attached" filler without explaining what the document is.`;
 
 function heuristicClassify(brief: string): CampaignContentType {

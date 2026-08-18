@@ -257,6 +257,26 @@ export function checkSenderTrust(senderName: string): GenuinenessInternalIssue[]
   return issues;
 }
 
+/** First blocking spam/genuineness issue — used by generate and verify so both share the same bar. */
+export function firstBlockingGenuinenessMessage(input: {
+  subject: string;
+  bodyHtml: string;
+  senderName?: string;
+}): string | null {
+  const senderName = input.senderName ?? "";
+  const issues = [
+    ...checkSubjectGenuineness(input.subject),
+    ...checkBodyGenuineness(input.bodyHtml),
+    ...checkSubjectBodyAlignment(input.subject, input.bodyHtml),
+    ...checkHeuristicHardBlocks({
+      subject: input.subject,
+      bodyHtml: input.bodyHtml,
+      senderName,
+    }),
+  ];
+  return issues.find((i) => i.blocks)?.message ?? null;
+}
+
 export function checkHeuristicHardBlocks(input: {
   subject: string;
   bodyHtml: string;

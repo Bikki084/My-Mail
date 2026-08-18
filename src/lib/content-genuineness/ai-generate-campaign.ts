@@ -29,7 +29,7 @@ import {
   humanizeGeminiFailure,
 } from "@/lib/gemini/client";
 import { htmlToPlainText } from "@/lib/html-email";
-import { checkSubjectBodyAlignment } from "@/lib/content-genuineness/checks";
+import { checkHeuristicHardBlocks, firstBlockingGenuinenessMessage } from "@/lib/content-genuineness/checks";
 
 export type GenerateAttemptLog = {
   attempt: number;
@@ -216,9 +216,11 @@ function localRejectReason(
   subject: string,
   bodyHtml: string,
   attachmentHtml: string,
+  senderName: string,
 ): string | null {
   const bodyPlain = htmlToPlainText(bodyHtml);
-  const blob = `${subject}\n${bodyPlain}\n${htmlToPlainText(attachmentHtml)}`;
+  const attachmentPlain = htmlToPlainText(attachmentHtml);
+  const blob = `${subject}\n${bodyPlain}\n${attachmentPlain}`;
   if (/\b(attached|attachment|pdf|enclosed|document)\b/i.test(bodyPlain)) {
     return "bodyHtml must stand alone when the optional attachment is removed. Do not mention attached files, attachments, PDFs, enclosures, or documents in the email body.";
   }
@@ -228,9 +230,21 @@ function localRejectReason(
   if (contentTypeAllowsFinancialFields(type) && !textHasFinancialFields(blob)) {
     return `content_type is ${type} but invoice/amount fields are missing from body or attachment.`;
   }
-  const align = checkSubjectBodyAlignment(subject, bodyHtml);
-  if (align.length > 0) {
-    return `${align[0]!.message} Put the same topic words in the subject and the body.`;
+  const genuineness = firstBlockingGenuinenessMessage({
+    subject,
+    bodyHtml,
+    senderName,
+  });
+  if (genuineness) {
+    return genuineness;
+  }
+  const attachmentSpam = checkHeuristicHardBlocks({
+    subject,
+    bodyHtml: attachmentHtml,
+    senderName,
+  }).find((i) => i.blocks);
+  if (attachmentSpam) {
+    return `Attachment is not genuine: ${attachmentSpam.message}`;
   }
   return null;
 }
@@ -336,17 +350,11 @@ export async function generateCampaignFromBrief(input: {
       branded.subject,
       branded.bodyHtml,
       branded.attachmentHtml,
+      seededCompany,
     );
     if (local) {
       attempts.push({ attempt, contentType, parseOk: true, localReject: local });
       retryNote = local;
-      lastGood = {
-        subject: branded.subject,
-        bodyHtml: branded.bodyHtml,
-        attachmentHtml: branded.attachmentHtml,
-        canonical,
-        verdict: null,
-      };
       continue;
     }
 
@@ -417,6 +425,26 @@ export async function generateCampaignFromBrief(input: {
         fb.attachmentHtml,
       );
       canonical = brandedFb.canonical;
+      const localFb = localRejectReason(
+        contentType,
+        brandedFb.subject,
+        brandedFb.bodyHtml,
+        brandedFb.attachmentHtml,
+        seededCompany,
+      );
+      if (localFb) {
+        attempts.push({
+          attempt: attempts.length + 1,
+          contentType,
+          parseOk: true,
+          localReject: `fallback rejected: ${localFb}`,
+        });
+        return {
+          ok: false,
+          reason: localFb,
+          attempts,
+        };
+      }
       const verdict = await runGeminiPhishingValidation({
         subject: brandedFb.subject,
         bodyPlain: htmlToPlainText(brandedFb.bodyHtml),
@@ -433,6 +461,15 @@ export async function generateCampaignFromBrief(input: {
         phishingReasoning: verdict.reasoning,
         flags: verdict.flags,
       });
+      if (phishingVerdictBlocksSend(verdict)) {
+        return {
+          ok: false,
+          reason:
+            verdict.reasoning ||
+            "Generated fallback content did not pass phishing verification. Try a more specific brief.",
+          attempts,
+        };
+      }
       return {
         ok: true,
         subject: brandedFb.subject,
@@ -440,7 +477,7 @@ export async function generateCampaignFromBrief(input: {
         attachmentHtml: brandedFb.attachmentHtml,
         contentType,
         canonical,
-        passedVerification: !phishingVerdictBlocksSend(verdict),
+        passedVerification: true,
         phishingVerdict: verdict,
         attempts,
       };
@@ -456,14 +493,10 @@ export async function generateCampaignFromBrief(input: {
   }
 
   return {
-    ok: true,
-    subject: lastGood.subject.trim(),
-    bodyHtml: lastGood.bodyHtml.trim(),
-    attachmentHtml: lastGood.attachmentHtml.trim(),
-    contentType,
-    canonical,
-    passedVerification: false,
-    phishingVerdict: lastGood.verdict,
+    ok: false,
+    reason:
+      lastGood.verdict?.reasoning ||
+      "Generated content did not pass genuineness or phishing checks. Try a more specific brief.",
     attempts,
   };
 }
