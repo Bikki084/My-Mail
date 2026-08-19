@@ -9,7 +9,13 @@ import {
   applyCanonicalBrandName,
   resolveCanonicalCompanyName,
 } from "@/lib/brand";
-import { buildCanonicalContentFields } from "@/lib/content-genuineness/canonical-fields";
+import { buildCanonicalContentFields, canonicalFieldsPromptBlock, TRACKED_KEYS, type CanonicalContentFields } from "@/lib/content-genuineness/canonical-fields";
+import {
+  applyCanonicalFieldsToArtifacts,
+  mergeGeneratedCanonical,
+} from "@/lib/content-genuineness/canonical-sync";
+import { assertFinalPersistedConsistency } from "@/lib/content-genuineness/consistency";
+import { brandLogoImgHtml, ensureBrandLogoInAttachmentHtml } from "@/lib/brand-logo";
 import {
   classifyContentType,
   contentTypeAllowsFinancialFields,
@@ -158,6 +164,11 @@ ${
     : ""
 }
 
+${
+  financial
+    ? `${canonicalFieldsPromptBlock(input.canonical as unknown as CanonicalContentFields)}\n`
+    : ""
+}
 Rules:
 - Return JSON only:
   {"canonical":{...},"subject":"...","bodyHtml":"<p>...</p>","attachmentHtml":"<div>...</div>"}
@@ -166,9 +177,30 @@ Rules:
 - Reuse the same topic words in the subject and the body (do not write a subject about one event and a body about another).
 - The email body MUST stand alone if the sender removes the optional attachment. Never say "attached", "attachment", "PDF", "enclosed", or "document" in bodyHtml.
 - Keep HTML compact. Attachment must describe the same event as the body.
+${
+  financial
+    ? `- attachmentHtml MUST start with <!-- BRAND_LOGO --> immediately followed by an invoice/receipt layout. Do not use external logo URLs — the server injects the logo at that marker.
+- Copy every canonical invoice_number, transaction_id, renewal_date, amount, and plan_name verbatim — same characters in subject, body, and attachment.`
+    : ""
+}
 
 User brief:
 ${input.brief.slice(0, 4000)}`;
+}
+
+const BRAND_LOGO_MARKER = "<!-- BRAND_LOGO -->";
+
+function injectBrandLogoMarker(attachmentHtml: string, brief: string, financial: boolean): string {
+  let html = attachmentHtml.trim();
+  const wantsLogo =
+    financial || /\b(logo|brand mark|brand icon|company icon)\b/i.test(brief);
+  if (!wantsLogo) {
+    return ensureBrandLogoInAttachmentHtml(html, { brief, force: false });
+  }
+  if (html.includes(BRAND_LOGO_MARKER)) {
+    return html.replace(BRAND_LOGO_MARKER, brandLogoImgHtml(52));
+  }
+  return ensureBrandLogoInAttachmentHtml(html, { brief, force: true });
 }
 
 function localFallbackCampaign(input: {
@@ -188,7 +220,7 @@ function localFallbackCampaign(input: {
       return {
         subject: `${company} account recovery notice`,
         bodyHtml: `<p>Hi {{{name}}},</p><p>We received a request to change the password on your ${company} account. If you made this request, sign in at ${APP_PUBLIC_URL} and update your password from account settings. If you did not make this request, you can ignore this message — no change has been made.</p><p>Support: ${support}</p>`,
-        attachmentHtml: `<div><h1>${company} account recovery</h1><p>Recipient: {{{name}}}</p><p>Action: password change request received. No payment is involved. Visit ${APP_PUBLIC_URL} only if you initiated this request.</p><p>${support}</p></div>`,
+        attachmentHtml: `<div><h1>${company} account recovery</h1><p>Recipient: {{{name}}}</p><p>Note: password change request received. No payment is involved. Visit ${APP_PUBLIC_URL} only if you initiated this request.</p><p>${support}</p></div>`,
       };
     case "welcome_email":
       return {
@@ -205,7 +237,7 @@ function localFallbackCampaign(input: {
     default:
       return {
         subject: `${company} notice`,
-        bodyHtml: `<p>Hi {{{name}}},</p><p>${company} is sending this notice to confirm your mailbox is reachable. No payment or account action is required.</p><p>Support: ${support}</p>`,
+        bodyHtml: `<p>Hi {{{name}}},</p><p>${company} is sending this notice to confirm your mailbox is reachable. No payment or further steps are required.</p><p>Support: ${support}</p>`,
         attachmentHtml: `<div><h1>${company} notice</h1><p>For {{{name}}}. No invoice or transaction is attached.</p><p>${support}</p></div>`,
       };
   }
@@ -247,6 +279,86 @@ function localRejectReason(
     return `Attachment is not genuine: ${attachmentSpam.message}`;
   }
   return null;
+}
+
+function buildInvoiceFallbackCampaign(input: {
+  canonical: CanonicalContentFields;
+  brief: string;
+}): { subject: string; bodyHtml: string; attachmentHtml: string } {
+  const c = input.canonical;
+  const company = c.company_name;
+  const plan = c.plan_name || "Professional Tier";
+  const subject = `Invoice ${c.invoice_number} for your ${company} ${plan} subscription`;
+  const bodyHtml = `<p>Hi {{{name}}},</p><p>Thank you for choosing ${company}. This email confirms your purchase of the ${plan} plan. Your transaction ID is ${c.transaction_id} for the amount of ${c.amount}. Your next renewal date is scheduled for ${c.renewal_date}.</p><p>If you have questions, please reach out via ${c.support_contact}</p>`;
+  const attachmentHtml = `${BRAND_LOGO_MARKER}<div><h1>${company} Invoice</h1><p><strong>Invoice Number:</strong> ${c.invoice_number}</p><p><strong>Transaction ID:</strong> ${c.transaction_id}</p><p><strong>Plan:</strong> ${plan}</p><p><strong>Amount Paid:</strong> ${c.amount}</p><p><strong>Renewal Date:</strong> ${c.renewal_date}</p><p><strong>Support:</strong> ${c.support_contact}</p></div>`;
+  return { subject, bodyHtml, attachmentHtml };
+}
+
+function finalizeGeneratedArtifacts(input: {
+  subject: string;
+  bodyHtml: string;
+  attachmentHtml: string;
+  canonical: Record<string, string>;
+  contentType: CampaignContentType;
+  brief: string;
+  financial: boolean;
+  senderName: string;
+}): {
+  subject: string;
+  bodyHtml: string;
+  attachmentHtml: string;
+  canonical: Record<string, string>;
+  consistencyError: string | null;
+} {
+  const canonicalFields = buildCanonicalContentFields({
+    subject: input.subject,
+    plainBody: htmlToPlainText(input.bodyHtml),
+    attachmentText: htmlToPlainText(input.attachmentHtml),
+    senderName: input.senderName,
+    seed: JSON.stringify(input.canonical),
+    allowInventedFinancialFields: input.financial,
+  });
+  const merged = {
+    ...canonicalFields,
+    company_name: resolveCanonicalCompanyName(input.senderName),
+  } as CanonicalContentFields;
+
+  if (input.financial) {
+    for (const key of [...TRACKED_KEYS, "plan_name", "support_contact"] as const) {
+      const seeded = String(input.canonical[key] ?? "").trim();
+      if (seeded) (merged as Record<string, string>)[key] = seeded;
+    }
+  } else {
+    Object.assign(
+      merged,
+      Object.fromEntries(
+        Object.entries(input.canonical).filter(([, v]) => String(v ?? "").trim()),
+      ),
+    );
+  }
+
+  const synced = applyCanonicalFieldsToArtifacts({
+    subject: input.subject,
+    bodyHtml: input.bodyHtml,
+    attachmentHtml: injectBrandLogoMarker(input.attachmentHtml, input.brief, input.financial),
+    canonical: merged,
+    contentType: input.contentType,
+  });
+
+  const consistency = assertFinalPersistedConsistency({
+    subject: synced.subject,
+    bodyHtml: synced.bodyHtml,
+    attachmentHtml: synced.attachmentHtml,
+    senderName: input.senderName,
+  });
+
+  return {
+    ...synced,
+    canonical: merged as unknown as Record<string, string>,
+    consistencyError: consistency.ok
+      ? null
+      : consistency.mismatches.map((m) => m.detail).join("; "),
+  };
 }
 
 function applySeededBrand(
@@ -297,6 +409,7 @@ export async function generateCampaignFromBrief(input: {
       });
 
   canonical.company_name = seededCompany;
+  const seededFinancialCanonical = financial ? { ...canonical } : null;
 
   const attempts: GenerateAttemptLog[] = [];
   let lastGood: {
@@ -307,8 +420,9 @@ export async function generateCampaignFromBrief(input: {
     verdict: PhishingValidationResult | null;
   } | null = null;
   let retryNote: string | undefined;
+  const maxAttempts = financial ? 5 : 3;
 
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const prompt = buildGeneratePrompt({
       brief: input.brief,
       senderName: seededCompany,
@@ -333,7 +447,7 @@ export async function generateCampaignFromBrief(input: {
     }
 
     if (parsed.canonical && Object.keys(parsed.canonical).length > 0) {
-      canonical = { ...canonical, ...parsed.canonical };
+      canonical = mergeGeneratedCanonical(canonical, parsed.canonical, financial);
     }
 
     const branded = applySeededBrand(
@@ -345,11 +459,26 @@ export async function generateCampaignFromBrief(input: {
     );
     canonical = branded.canonical;
 
+    const finalized = finalizeGeneratedArtifacts({
+      subject: branded.subject,
+      bodyHtml: branded.bodyHtml,
+      attachmentHtml: branded.attachmentHtml,
+      canonical:
+        financial && seededFinancialCanonical
+          ? { ...seededFinancialCanonical, company_name: seededCompany }
+          : canonical,
+      contentType,
+      brief: input.brief,
+      financial,
+      senderName: seededCompany,
+    });
+    canonical = finalized.canonical;
+
     const local = localRejectReason(
       contentType,
-      branded.subject,
-      branded.bodyHtml,
-      branded.attachmentHtml,
+      finalized.subject,
+      finalized.bodyHtml,
+      finalized.attachmentHtml,
       seededCompany,
     );
     if (local) {
@@ -358,10 +487,21 @@ export async function generateCampaignFromBrief(input: {
       continue;
     }
 
-    const bodyPlain = htmlToPlainText(branded.bodyHtml);
-    const attachmentPlain = htmlToPlainText(branded.attachmentHtml);
+    if (finalized.consistencyError) {
+      attempts.push({
+        attempt,
+        contentType,
+        parseOk: true,
+        localReject: finalized.consistencyError,
+      });
+      retryNote = `${finalized.consistencyError}\n${canonicalFieldsPromptBlock(finalized.canonical as unknown as CanonicalContentFields)}`;
+      continue;
+    }
+
+    const bodyPlain = htmlToPlainText(finalized.bodyHtml);
+    const attachmentPlain = htmlToPlainText(finalized.attachmentHtml);
     const verdict = await runGeminiPhishingValidation({
-      subject: branded.subject,
+      subject: finalized.subject,
       bodyPlain,
       attachmentPlain,
       senderName: seededCompany,
@@ -378,9 +518,9 @@ export async function generateCampaignFromBrief(input: {
     });
 
     lastGood = {
-      subject: branded.subject,
-      bodyHtml: branded.bodyHtml,
-      attachmentHtml: branded.attachmentHtml,
+      subject: finalized.subject,
+      bodyHtml: finalized.bodyHtml,
+      attachmentHtml: finalized.attachmentHtml,
       canonical,
       verdict,
     };
@@ -388,9 +528,9 @@ export async function generateCampaignFromBrief(input: {
     if (!phishingVerdictBlocksSend(verdict)) {
       return {
         ok: true,
-        subject: branded.subject.trim(),
-        bodyHtml: branded.bodyHtml.trim(),
-        attachmentHtml: branded.attachmentHtml.trim(),
+        subject: finalized.subject.trim(),
+        bodyHtml: finalized.bodyHtml.trim(),
+        attachmentHtml: finalized.attachmentHtml.trim(),
         contentType,
         canonical,
         passedVerification: true,
@@ -415,6 +555,72 @@ export async function generateCampaignFromBrief(input: {
   }
 
   if (!lastGood) {
+    if (financial && seededFinancialCanonical) {
+      const fb = buildInvoiceFallbackCampaign({
+        canonical: seededFinancialCanonical as unknown as CanonicalContentFields,
+        brief: input.brief,
+      });
+      const brandedFb = applySeededBrand(
+        seededCompany,
+        seededFinancialCanonical,
+        fb.subject,
+        fb.bodyHtml,
+        fb.attachmentHtml,
+      );
+      const finalizedFb = finalizeGeneratedArtifacts({
+        subject: brandedFb.subject,
+        bodyHtml: brandedFb.bodyHtml,
+        attachmentHtml: brandedFb.attachmentHtml,
+        canonical: seededFinancialCanonical,
+        contentType,
+        brief: input.brief,
+        financial: true,
+        senderName: seededCompany,
+      });
+      if (finalizedFb.consistencyError) {
+        return {
+          ok: false,
+          reason: finalizedFb.consistencyError,
+          attempts,
+        };
+      }
+      const verdict = await runGeminiPhishingValidation({
+        subject: finalizedFb.subject,
+        bodyPlain: htmlToPlainText(finalizedFb.bodyHtml),
+        attachmentPlain: htmlToPlainText(finalizedFb.attachmentHtml),
+        senderName: seededCompany,
+        hasAttachment: true,
+      });
+      attempts.push({
+        attempt: attempts.length + 1,
+        contentType,
+        parseOk: true,
+        localReject: "used local invoice fallback after Gemini generate failures",
+        phishingStatus: verdict.status,
+        phishingReasoning: verdict.reasoning,
+        flags: verdict.flags,
+      });
+      if (phishingVerdictBlocksSend(verdict)) {
+        return {
+          ok: false,
+          reason:
+            verdict.reasoning ||
+            "Generated fallback content did not pass phishing verification. Try a more specific brief.",
+          attempts,
+        };
+      }
+      return {
+        ok: true,
+        subject: finalizedFb.subject,
+        bodyHtml: finalizedFb.bodyHtml,
+        attachmentHtml: finalizedFb.attachmentHtml,
+        contentType,
+        canonical: finalizedFb.canonical,
+        passedVerification: true,
+        phishingVerdict: verdict,
+        attempts,
+      };
+    }
     if (!financial) {
       const fb = localFallbackCampaign({ contentType, canonical, senderName: seededCompany });
       const brandedFb = applySeededBrand(

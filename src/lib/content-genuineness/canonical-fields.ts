@@ -66,6 +66,27 @@ function uniqPreserve(values: string[]): string[] {
   return out;
 }
 
+const TRANSACTION_ID_STOPWORDS = new Set([
+  "action",
+  "number",
+  "invoice",
+  "payment",
+  "details",
+  "required",
+  "customer",
+]);
+
+/** Reject English words misparsed from labels like "transaction ID is …". */
+export function isPlausibleTransactionId(value: string): boolean {
+  const v = value.trim().toUpperCase();
+  if (v.length < 6) return false;
+  if (TRANSACTION_ID_STOPWORDS.has(v.toLowerCase())) return false;
+  if (/^\d{3}[A-Z]{3}\d{4}$/.test(v)) return true;
+  if (/^TXN[- ]?[A-Z0-9]{5,18}$/.test(v)) return true;
+  if (/^\d{7,12}$/.test(v)) return true;
+  return /[A-Z]/.test(v) && /\d/.test(v);
+}
+
 /** Extract candidate dynamic values from free text / HTML. */
 export function extractDynamicFieldCandidates(text: string): Partial<
   Record<CanonicalFieldKey, string[]>
@@ -83,11 +104,14 @@ export function extractDynamicFieldCandidates(text: string): Partial<
 
   const txns = [
     ...t.matchAll(
-      /\b(?:txn|transaction(?:\s*id)?|trans(?:action)?\s*#?)\s*[:#-]?\s*([A-Z0-9-]{6,20})\b/gi,
+      /\b(?:txn|transaction)\s+(?:id|#|number)\b\s*[:#-]?\s*(?:is\s+)?([A-Z0-9-]{6,20})\b/gi,
     ),
-    ...t.matchAll(/\b(TXN[- ]?[A-Z0-9]{5,18})\b/gi),
+    ...t.matchAll(/\b(?:txn|transaction)\s+([A-Z0-9]{6,20})\b/gi),
+    ...t.matchAll(/\bTXN[- ]?([A-Z0-9]{5,18})\b/gi),
     ...t.matchAll(/\b(\d{3}[A-Z]{3}\d{4})\b/g),
-  ].map((m) => m[1]!.replace(/\s+/g, "").toUpperCase());
+  ]
+    .map((m) => m[1]!.replace(/\s+/g, "").toUpperCase())
+    .filter((v) => isPlausibleTransactionId(v));
   if (txns.length) out.transaction_id = uniqPreserve(txns);
 
   const dates = [

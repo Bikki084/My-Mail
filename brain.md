@@ -2,12 +2,13 @@
 
 > **Purpose:** Single source of truth for AI agents and developers. Read this file **before** scanning the whole repo.  
 > **Maintainers:** Update this file whenever you add features, change limits, deploy steps, or infra — same as you would commit code.  
-> **Last updated:** 2026-08-18
+> **Last updated:** 2026-08-19
 
 ---
 
 ## Changelog (recent)
 
+| 2026-08-19 | **Generate self-verify:** fix transaction-ID false parse ("ACTION"); canonical sync + consistency retries before serve; inline MailShooter logo in invoice PDF attachments |
 | 2026-08-18 | **Generate+Verify spam bar:** generate fails closed (no failed copy in editor); same local spam checks as Verify; phishing gate uses Flash and rejects leftover flags |
 | 2026-08-18 | **Body-only send:** valid body-bound tokens skip redundant no-attachment rechecks; generated bodies no longer reference optional files |
 | 2026-08-17 | **Clear attachment:** keep verification pass; re-verify only if subject/body/attachment HTML changes |

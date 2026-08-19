@@ -19,7 +19,7 @@ import {
 } from "./pass-token";
 import { rewriteIntroducesUngroundedClaims } from "./grounding";
 import { assertCrossArtifactConsistency, assertFinalPersistedConsistency } from "./consistency";
-import { buildCanonicalContentFields } from "./canonical-fields";
+import { buildCanonicalContentFields, extractDynamicFieldCandidates } from "./canonical-fields";
 import { APP_BRAND_NAME, APP_BRAND_WRONG_LETTER_ORDER, APP_NOREPLY_EMAIL, APP_PUBLIC_URL, applyCanonicalBrandName, resolveCanonicalCompanyName, textMentionsCompanyName } from "@/lib/brand";
 import { buildPreviewRecipientRow } from "./preview-recipient";
 import { parsePhishingVerdictJson } from "./phishing-verdict-parse";
@@ -330,6 +330,21 @@ describe("canonical fields + consistency validator", () => {
     assert.ok(parsed);
     assert.equal(parsed!.status, "PASS");
     assert.equal(parsed!.mismatches_found.length, 0);
+  });
+
+  it("does not treat transaction ID labels as the word action", () => {
+    const extracted = extractDynamicFieldCandidates("Your transaction ID is 865KR59436");
+    assert.deepEqual(extracted.transaction_id, ["865KR59436"]);
+
+    const consistency = assertFinalPersistedConsistency({
+      subject: "Invoice INV-4393794 for your MailShooter Professional Tier subscription",
+      bodyHtml:
+        "<p>Thank you for choosing MailShooter. Your transaction ID is 865KR59436 for the amount of $149.00. Renewal date 2026-08-19.</p>",
+      attachmentHtml:
+        "<div><p>MailShooter Invoice</p><p>Transaction ID: 865KR59436</p><p>Invoice Number: INV-4393794</p><p>Amount Paid: $149.00</p><p>Renewal Date: 2026-08-19</p></div>",
+      senderName: "MailShooter",
+    });
+    assert.equal(consistency.ok, true);
   });
 
   it("parses normal Gemini PASS JSON", () => {
